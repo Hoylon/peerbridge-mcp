@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible PeerBridge defect without private project data.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach `.peerbridge` databases, credentials, or private transcripts.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: Use a synthetic workspace and include exact commands.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: PeerBridge and Python versions
+    validations:
+      required: true

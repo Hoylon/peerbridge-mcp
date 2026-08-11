@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "peerbridge-mcp"
+version = "0.1.0"
+description = "Local-first, auditable MCP coordination for equal AI coding peers and their human operator."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "oscarho200407-hue" }]
+keywords = ["mcp", "multi-agent", "codex", "claude-code", "sqlite", "human-in-the-loop"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-cov>=5", "build>=1.2"]
+
+[project.scripts]
+peerbridge = "peerbridge_mcp.cli:main"
+peerbridge-monitor = "peerbridge_mcp.monitor:main"
+
+[project.urls]
+Homepage = "https://github.com/oscarho200407-hue/peerbridge-mcp"
+Repository = "https://github.com/oscarho200407-hue/peerbridge-mcp"
+Issues = "https://github.com/oscarho200407-hue/peerbridge-mcp/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-q --basetemp=.pytest-tmp"
+testpaths = ["tests"]

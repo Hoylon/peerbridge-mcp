@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "peerbridge": {
+      "command": "C:\\tools\\peerbridge-mcp\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "peerbridge_mcp",
+        "serve",
+        "--project-root",
+        "C:\\work\\my-project",
+        "--agent-id",
+        "kimi-code",
+        "--scope",
+        "my-project"
+      ]
+    }
+  }
+}

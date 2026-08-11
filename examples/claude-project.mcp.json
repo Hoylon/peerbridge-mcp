@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "peerbridge": {
+      "type": "stdio",
+      "command": "C:\\tools\\peerbridge-mcp\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "peerbridge_mcp",
+        "serve",
+        "--project-root",
+        "${CLAUDE_PROJECT_DIR:-.}",
+        "--agent-id",
+        "claude-code",
+        "--scope",
+        "my-project"
+      ]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+[mcp_servers.peerbridge]
+command = "C:\\tools\\peerbridge-mcp\\.venv\\Scripts\\python.exe"
+args = [
+  "-m", "peerbridge_mcp", "serve",
+  "--project-root", "C:\\work\\my-project",
+  "--agent-id", "codex-main",
+  "--scope", "my-project",
+]
+enabled = true
+required = true
+default_tools_approval_mode = "prompt"
+startup_timeout_sec = 20
+tool_timeout_sec = 60

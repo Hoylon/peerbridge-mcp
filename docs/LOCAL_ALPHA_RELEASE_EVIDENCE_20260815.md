@@ -51,7 +51,7 @@ The exact command profile and final candidate directory are recorded in the crea
 release receipt named below; the source document intentionally does not hard-code a mutable
 candidate sequence number.
 
-- Latest pre-freeze development result: `DEV_CHECK_OK files=143 version=0.1.0a1
+- Latest pre-freeze development result: `DEV_CHECK_OK files=144 version=0.1.0a2
   release_ready=false strict_release_required=true`.
   The final frozen-source result is authoritative only when it is reproduced in the
   create-only receipt described below.
@@ -72,9 +72,9 @@ configured support email and public encryption key are intentional public releas
 The Windows x64 portable ZIP was also extracted into a fresh create-only directory. Its
 unsigned executable passed the packaged UI self-test, launched its frozen MCP child path for
 a real composer-send self-test, initialized a fresh local workspace, and passed `doctor`.
-The latest pre-freeze candidate is 17,879,314 bytes with SHA-256
-`fa981641bc62ba31c7168987a28ee94db6d18b6f652657258d2110bb0f1a156a`; its SBOM SHA-256 is
-`e5c99df6452447dae7885c5a0f241fbbcecd965d7f284ea4511b4b0bbbfd99cc` and its exact
+The latest pre-freeze candidate is 17,879,235 bytes with SHA-256
+`41efb305519cf58b9f94ff56ab08f6a128840726a70e02312c899ba7daaf18ef`; its SBOM SHA-256 is
+`0f5e8beb7e96955630ed3acd31c1e0a72cfc102a1ccbbf8bb85b7e8b921ae3b2` and its exact
 runtime-license manifest SHA-256 is
 `7be5797e2f261e75bf40b8ff184680d5cb0306cd94718b3bb234e28e3996d857`.
 The extracted executable passed encrypted-feedback, MCP-send, create-only initialization,
@@ -82,7 +82,13 @@ audit-doctor, direct zero-argument lifecycle, and command-launcher lifecycle che
 encrypted-feedback check emits a create-only receipt bound to the executable SHA-256,
 product version, frozen runtime kind, and test identity; the verifier rejects a missing,
 malformed, non-PASS, or mismatched receipt. Its passing receipt SHA-256 is
-`5b8ca29c1028fd49b4daa6279f755805df6ab14440ad6623a25263e9c314bca5`.
+`75d26ff2378db7bcc5545935f077fea50e6eb9a290fd26b42e88c12af5196fb7`.
+The first tagged local candidate was rejected by this check because Windows Git line-ending
+conversion changed the public PEM from 625 to 636 bytes while its raw-byte SHA-256 pin still
+described the pre-conversion file. The two public-key paths are now Git byte-stable (`-text`),
+the pin binds the retained 636-byte files, and the Alpha 2 package passes without weakening
+the exact raw-byte fingerprint comparison. The rejected Alpha 1 tag remains local audit
+history and is not a release asset.
 An earlier deep extraction placed `_cffi_backend` at a 251-character absolute path and the
 Windows DLL loader rejected it as too long. The package now removes the redundant inner
 `PeerBridgeControlRoom` directory, and the complete verifier passes from the same deep

@@ -5,7 +5,7 @@ project uses Semantic Versioning after the initial alpha series.
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] - 2026-08-16
+## [0.1.0-alpha.2] - 2026-08-16
 
 ### Added
 
@@ -85,6 +85,6 @@ project uses Semantic Versioning after the initial alpha series.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/oscarho200407-hue/peerbridge-mcp/compare/v0.1.0-alpha.1...HEAD
-[0.1.0-alpha.1]: https://github.com/oscarho200407-hue/peerbridge-mcp/compare/v0.1.0-alpha.0...v0.1.0-alpha.1
+[Unreleased]: https://github.com/oscarho200407-hue/peerbridge-mcp/compare/v0.1.0-alpha.2...HEAD
+[0.1.0-alpha.2]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.0]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.0

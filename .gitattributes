@@ -1,0 +1,5 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+src/peerbridge_mcp/release_support/peerbridge-support-public.pub -text -diff
+support/peerbridge-support-public.pub -text -diff

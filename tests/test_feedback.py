@@ -244,6 +244,32 @@ def test_packaged_release_support_is_pinned_and_provider_independent(tmp_path: P
     assert config.encrypted_secret_available is True
 
 
+def test_packaged_support_key_is_git_byte_stable() -> None:
+    root = Path(__file__).resolve().parents[1]
+    attributes = (root / ".gitattributes").read_text(encoding="utf-8")
+    packaged_key = (
+        root
+        / "src"
+        / "peerbridge_mcp"
+        / "release_support"
+        / "peerbridge-support-public.pub"
+    )
+    repository_key = root / "support" / "peerbridge-support-public.pub"
+    support_config = json.loads(
+        (packaged_key.parent / "support.json").read_text(encoding="utf-8")
+    )
+    expected_sha256 = support_config["public_key_sha256"]
+
+    assert (
+        "src/peerbridge_mcp/release_support/peerbridge-support-public.pub -text"
+        in attributes
+    )
+    assert "support/peerbridge-support-public.pub -text" in attributes
+    assert packaged_key.read_bytes() == repository_key.read_bytes()
+    assert b"\r\n" not in packaged_key.read_bytes()
+    assert hashlib.sha256(packaged_key.read_bytes()).hexdigest() == expected_sha256
+
+
 def test_packaged_feedback_encryption_self_test_is_plaintext_free() -> None:
     result = run_feedback_encryption_self_test()
 

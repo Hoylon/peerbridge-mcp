@@ -163,6 +163,6 @@ jobs:
           gh release create "${GITHUB_REF_NAME}"
           --verify-tag
           --prerelease
-          --title "PeerBridge MCP v0.1.0 Alpha 1"
+          --title "PeerBridge MCP ${GITHUB_REF_NAME}"
           --notes-file docs/GITHUB_ALPHA_RELEASE_DRAFT_20260815.md
           release-assets/*

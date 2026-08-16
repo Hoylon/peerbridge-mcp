@@ -13,7 +13,7 @@ PeerBridge 是本機優先、可稽核的多 Agent 協作層。這個 Alpha 使�
 ### Windows 可攜版（建議）
 
 從 GitHub Alpha pre-release 下載
-`PeerBridgeControlRoom-0.1.0a1-windows-x64-portable.zip`，完整解壓到可寫入的資料夾，
+`PeerBridgeControlRoom-0.1.0a2-windows-x64-portable.zip`，完整解壓到可寫入的資料夾，
 再雙擊 `Launch PeerBridge.cmd`。程式會把本機工作區放在
 `%LOCALAPPDATA%\PeerBridge\workspace`；壓縮檔不包含 provider 憑證或私人執行資料。
 

@@ -88,7 +88,7 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 
 ### Windows portable app
 
-Download `PeerBridgeControlRoom-0.1.0a1-windows-x64-portable.zip` from the GitHub
+Download `PeerBridgeControlRoom-0.1.0a2-windows-x64-portable.zip` from the GitHub
 Alpha pre-release, extract the complete ZIP to a writable folder, and double-click
 `Launch PeerBridge.cmd`. The portable app creates its local workspace under
 `%LOCALAPPDATA%\PeerBridge\workspace`; it does not include provider credentials or

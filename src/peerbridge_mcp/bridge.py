@@ -14,18 +14,41 @@ import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
+from .attachments import (
+    CHAT_ATTACHMENT_ROOT,
+    CHAT_ATTACHMENT_SUFFIXES,
+    MAX_CHAT_ATTACHMENT_BYTES,
+)
+from .secret_scan import contains_secret, contains_secret_bytes
+
 
 ZERO_SHA256 = "0" * 64
 DEFAULT_PRESENCE_TTL_SECONDS = 120
 DEFAULT_LEASE_SECONDS = 900
 MAX_LEASE_SECONDS = 86_400
+DEFAULT_DISPATCH_LEASE_SECONDS = 300
+MAX_DISPATCH_ATTEMPTS = 5
+DEFAULT_DISPATCH_RETRY_SECONDS = 15
+MAX_DISPATCH_RETRY_SECONDS = 86_400
 MAX_TEXT_CHARS = 50_000
-SCHEMA_VERSION = "3"
+SCHEMA_VERSION = "15"
+DEFAULT_ROOM_ID = "lobby"
+HUMAN_OPERATOR_ID = "human-operator"
+ROUTE_CLASSES = {"official", "relay", "local"}
+SECRET_BACKENDS = {"windows-credential-manager", "cc-switch"}
+MEMORY_VISIBILITIES = {"private", "room", "project"}
+ROOM_AUTOMATION_MODES = {"off", "once", "discussion"}
+DISCUSSION_STATUSES = {"active", "paused", "waiting_human", "completed", "stopped"}
+DISCUSSION_SIGNALS = {"CONTINUE", "CONSENSUS", "BLOCKED"}
+DEFAULT_DISCUSSION_MAX_ROUNDS = 4
+DEFAULT_DISCUSSION_MAX_MESSAGES = 40
+DEFAULT_DISCUSSION_STAGNATION_ROUNDS = 2
+MAX_DISCUSSION_ROUNDS = 20
+MAX_DISCUSSION_MESSAGES = 200
+MAX_DISCUSSION_CONTEXT_CHARS = 100_000
+DISCUSSION_ORCHESTRATOR_ID = "peerbridge-orchestrator"
+DISCUSSION_COORDINATOR_ID = "mailbox-supervisor"
 
-SECRET_VALUE = re.compile(
-    r"(?i)(?:sk-|ghp_|github_pat_|Bearer\s+)[A-Za-z0-9_\-.]{16,}|"
-    r"AKIA[0-9A-Z]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"
-)
 SAFE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
 PATCH_DESTRUCTIVE = re.compile(
     r"(?im)^---\s+/dev/null|^\+\+\+\s+/dev/null|^diff --git\s+.*(?:\.git/|\.peerbridge/)"
@@ -34,17 +57,58 @@ SENSITIVE_PARTS = {
     ".env",
     ".aws",
     ".ssh",
+    ".azure",
+    ".config/gcloud",
+    ".docker",
+    ".git-credentials",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    ".terraform.d",
     "credentials",
     "credentials.json",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "id_rsa",
     "secrets",
     "secret",
     "private_key",
 }
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
+SENSITIVE_SUFFIXES = {
+    ".der",
+    ".jks",
+    ".kdbx",
+    ".key",
+    ".mobileconfig",
+    ".ovpn",
+    ".p12",
+    ".pem",
+    ".pfx",
+}
+WINDOWS_RESERVED_NAMES = {
+    "aux",
+    "clock$",
+    "con",
+    "nul",
+    "prn",
+    *(f"com{index}" for index in range(1, 10)),
+    *(f"lpt{index}" for index in range(1, 10)),
+}
 
 
 class BridgeError(Exception):
     """Expected error that is safe to return to an MCP client."""
+
+
+class _ClosingConnection(sqlite3.Connection):
+    """Commit or roll back, then deterministically release the SQLite handle."""
+
+    def __exit__(self, exc_type, exc_value, traceback):  # type: ignore[no-untyped-def]
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
 
 
 def utc_now() -> str:
@@ -84,13 +148,29 @@ def _optional_identifier(value: Any, label: str) -> str | None:
     return _require_identifier(text, label) if text else None
 
 
+def _optional_route_class(value: Any, label: str = "route_class") -> str | None:
+    text = str(value or "").strip().lower()
+    if not text:
+        return None
+    if text not in ROUTE_CLASSES:
+        raise BridgeError(f"{label} must be official, relay or local")
+    return text
+
+
+def _require_sha256(value: Any, label: str) -> str:
+    text = str(value or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", text):
+        raise BridgeError(f"{label} must be a lowercase SHA-256 digest")
+    return text
+
+
 def _require_text(value: Any, label: str, *, limit: int = MAX_TEXT_CHARS) -> str:
     text = str(value or "").strip()
     if not text:
         raise BridgeError(f"{label} is required")
     if len(text) > limit:
         raise BridgeError(f"{label} exceeds {limit} characters")
-    if SECRET_VALUE.search(text):
+    if contains_secret(text):
         raise BridgeError(f"{label} appears to contain a credential or private key")
     return text
 
@@ -106,7 +186,15 @@ def _json_list(value: Any, label: str) -> list[Any]:
 def _path_parts_are_sensitive(path: Path) -> bool:
     for part in path.parts:
         lowered = part.lower()
-        if lowered in SENSITIVE_PARTS or Path(lowered).suffix in SENSITIVE_SUFFIXES:
+        basename = lowered.split(":", 1)[0].rstrip(" .")
+        stem = basename.split(".", 1)[0]
+        if (
+            ":" in lowered
+            or basename.startswith(".env.")
+            or basename in SENSITIVE_PARTS
+            or stem in WINDOWS_RESERVED_NAMES
+            or Path(basename).suffix in SENSITIVE_SUFFIXES
+        ):
             return True
     return False
 
@@ -125,6 +213,9 @@ class Bridge:
         client_name: str | None = None,
         provider_id: str | None = None,
         model_id: str | None = None,
+        reasoning_mode: str | None = None,
+        route_class: str | None = None,
+        discussion_coordinator: bool = False,
         presence_ttl_seconds: int = DEFAULT_PRESENCE_TTL_SECONDS,
         protected_paths: Iterable[str] = (),
     ) -> None:
@@ -140,10 +231,17 @@ class Bridge:
         self.client_name = _optional_identifier(client_name, "client_name")
         self.provider_id = _optional_identifier(provider_id, "provider_id")
         self.model_id = _optional_identifier(model_id, "model_id")
+        self.reasoning_mode = _optional_identifier(reasoning_mode, "reasoning_mode")
+        self.route_class = _optional_route_class(route_class)
+        self._discussion_coordinator = bool(discussion_coordinator)
         self.presence_ttl_seconds = max(30, min(int(presence_ttl_seconds), 3600))
         self.state_root = self.db_path.parent
+        canonical_root = os.path.normcase(str(self.root))
+        if os.name == "nt":
+            canonical_root = canonical_root.casefold()
+        self.workspace_root_key = sha256_bytes(canonical_root.encode("utf-8"))
         self.draft_root = self.state_root / "drafts"
-        defaults = [".git", ".peerbridge"]
+        defaults = [".git", ".peerbridge", ".peerbridge-artifacts"]
         self.protected_paths = tuple(
             sorted({self._normalize_path(item) for item in [*defaults, *protected_paths]})
         )
@@ -152,7 +250,11 @@ class Bridge:
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path, timeout=10)
+        connection = sqlite3.connect(
+            self.db_path,
+            timeout=10,
+            factory=_ClosingConnection,
+        )
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA foreign_keys=ON")
@@ -170,6 +272,7 @@ class Bridge:
                     time.sleep(0.25)
             connection.executescript(
                 """
+                BEGIN EXCLUSIVE;
                 CREATE TABLE IF NOT EXISTS metadata (
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
@@ -178,6 +281,7 @@ class Bridge:
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     message_id TEXT NOT NULL UNIQUE,
                     scope TEXT NOT NULL,
+                    room_id TEXT NOT NULL DEFAULT 'lobby',
                     task_id TEXT NOT NULL,
                     sender TEXT NOT NULL,
                     recipient TEXT NOT NULL,
@@ -186,12 +290,24 @@ class Bridge:
                     priority TEXT NOT NULL,
                     reply_to TEXT,
                     artifact_paths_json TEXT NOT NULL,
+                    route_profile_id TEXT,
+                    route_profile_sha256 TEXT,
+                    requested_provider_id TEXT,
+                    requested_model_id TEXT,
+                    requested_reasoning_mode TEXT,
+                    requested_route_class TEXT,
+                    route_request_sha256 TEXT,
+                    discussion_id TEXT,
+                    discussion_round INTEGER,
+                    discussion_role TEXT,
                     created_utc TEXT NOT NULL,
                     acknowledged_utc TEXT,
                     content_sha256 TEXT NOT NULL
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_inbox
                     ON messages(scope, recipient, sequence);
+                CREATE INDEX IF NOT EXISTS idx_messages_scope_created
+                    ON messages(scope, created_utc DESC, sequence DESC);
                 CREATE TABLE IF NOT EXISTS message_receipts (
                     scope TEXT NOT NULL,
                     message_id TEXT NOT NULL,
@@ -199,6 +315,97 @@ class Bridge:
                     acknowledged_utc TEXT NOT NULL,
                     PRIMARY KEY(scope, message_id, agent_id),
                     FOREIGN KEY(message_id) REFERENCES messages(message_id)
+                );
+                CREATE TABLE IF NOT EXISTS message_route_receipts (
+                    scope TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    observed_provider_id TEXT,
+                    observed_model_id TEXT,
+                    observed_reasoning_mode TEXT,
+                    observed_route_class TEXT,
+                    route_status TEXT NOT NULL,
+                    acknowledged_utc TEXT NOT NULL,
+                    receipt_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, message_id, agent_id, session_id),
+                    FOREIGN KEY(message_id) REFERENCES messages(message_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_message_route_receipt_agent
+                    ON message_route_receipts(scope, message_id, agent_id);
+                CREATE TABLE IF NOT EXISTS message_dispatches (
+                    scope TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    claimed_session_id TEXT,
+                    lease_token_sha256 TEXT,
+                    lease_expires_epoch REAL,
+                    attempt_count INTEGER NOT NULL,
+                    claimed_utc TEXT,
+                    updated_utc TEXT NOT NULL,
+                    completed_utc TEXT,
+                    reply_message_id TEXT,
+                    inference_receipt_sha256 TEXT,
+                    error_code TEXT,
+                    dispatch_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, message_id, agent_id),
+                    FOREIGN KEY(message_id) REFERENCES messages(message_id),
+                    FOREIGN KEY(reply_message_id) REFERENCES messages(message_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_message_dispatches_status
+                    ON message_dispatches(scope, agent_id, status, lease_expires_epoch);
+                CREATE INDEX IF NOT EXISTS idx_message_dispatches_scope_updated
+                    ON message_dispatches(scope, updated_utc DESC, message_id);
+                CREATE TABLE IF NOT EXISTS message_dispatch_retry_schedules (
+                    scope TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    not_before_epoch REAL NOT NULL,
+                    error_code TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    schedule_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, message_id, agent_id, attempt_count),
+                    FOREIGN KEY(message_id) REFERENCES messages(message_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_dispatch_retry_schedule_due
+                    ON message_dispatch_retry_schedules(
+                        scope, agent_id, not_before_epoch, message_id
+                    );
+                CREATE TABLE IF NOT EXISTS route_profiles (
+                    scope TEXT NOT NULL,
+                    route_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    client_name TEXT,
+                    provider_id TEXT,
+                    model_id TEXT,
+                    response_model_id TEXT,
+                    reasoning_mode TEXT,
+                    route_class TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    profile_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, route_id)
+                );
+                CREATE TABLE IF NOT EXISTS provider_connections (
+                    scope TEXT NOT NULL,
+                    connection_id TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    route_class TEXT NOT NULL,
+                    provider_id TEXT,
+                    secret_backend TEXT NOT NULL,
+                    credential_target TEXT NOT NULL,
+                    endpoint_sha256 TEXT NOT NULL,
+                    credential_fingerprint_sha256 TEXT NOT NULL,
+                    descriptor_schema TEXT,
+                    credential_version_sha256 TEXT,
+                    enabled INTEGER NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    connection_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, connection_id)
                 );
                 CREATE TABLE IF NOT EXISTS consumer_cursors (
                     scope TEXT NOT NULL,
@@ -208,9 +415,97 @@ class Bridge:
                     updated_utc TEXT NOT NULL,
                     PRIMARY KEY(scope, channel, consumer)
                 );
+                CREATE TABLE IF NOT EXISTS rooms (
+                    scope TEXT NOT NULL,
+                    room_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    created_by TEXT NOT NULL,
+                    archived INTEGER NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    room_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, room_id)
+                );
+                CREATE TABLE IF NOT EXISTS room_memberships (
+                    scope TEXT NOT NULL,
+                    room_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    route_profile_id TEXT,
+                    room_session_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    joined_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    left_utc TEXT,
+                    membership_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, room_id, agent_id),
+                    FOREIGN KEY(scope, room_id) REFERENCES rooms(scope, room_id)
+                );
+                CREATE TABLE IF NOT EXISTS room_automation_policies (
+                    scope TEXT NOT NULL,
+                    room_id TEXT NOT NULL,
+                    mode TEXT NOT NULL,
+                    max_rounds INTEGER NOT NULL,
+                    max_messages INTEGER NOT NULL,
+                    stagnation_rounds INTEGER NOT NULL,
+                    updated_by TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    policy_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, room_id),
+                    FOREIGN KEY(scope, room_id) REFERENCES rooms(scope, room_id)
+                );
+                CREATE TABLE IF NOT EXISTS room_discussions (
+                    scope TEXT NOT NULL,
+                    discussion_id TEXT NOT NULL,
+                    room_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    starter_agent_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    current_round INTEGER NOT NULL,
+                    processed_round INTEGER NOT NULL,
+                    max_rounds INTEGER NOT NULL,
+                    max_messages INTEGER NOT NULL,
+                    stagnation_rounds INTEGER NOT NULL,
+                    message_count INTEGER NOT NULL,
+                    stagnation_count INTEGER NOT NULL,
+                    last_round_digest TEXT,
+                    stop_reason TEXT,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    discussion_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, discussion_id),
+                    FOREIGN KEY(scope, room_id) REFERENCES rooms(scope, room_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_room_discussions_room_status
+                    ON room_discussions(scope, room_id, status, updated_utc);
+                CREATE TABLE IF NOT EXISTS memories (
+                    scope TEXT NOT NULL,
+                    memory_id TEXT NOT NULL,
+                    visibility TEXT NOT NULL,
+                    room_id TEXT,
+                    owner_agent_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    source_message_id TEXT,
+                    source_message_sha256 TEXT,
+                    artifact_bindings_json TEXT NOT NULL,
+                    parent_memory_id TEXT,
+                    status TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    revoked_utc TEXT,
+                    revocation_reason TEXT,
+                    revocation_sha256 TEXT,
+                    memory_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, memory_id),
+                    FOREIGN KEY(scope, room_id) REFERENCES rooms(scope, room_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_memories_visibility_room_time
+                    ON memories(scope, visibility, room_id, status, created_utc);
                 CREATE TABLE IF NOT EXISTS tasks (
                     scope TEXT NOT NULL,
                     task_id TEXT NOT NULL,
+                    workspace_root_key TEXT NOT NULL,
                     summary TEXT NOT NULL,
                     owner TEXT,
                     status TEXT NOT NULL,
@@ -256,6 +551,8 @@ class Bridge:
                 );
                 CREATE INDEX IF NOT EXISTS idx_work_updates_scope_task_time
                     ON work_updates(scope, task_id, created_utc);
+                CREATE INDEX IF NOT EXISTS idx_work_updates_scope_created
+                    ON work_updates(scope, created_utc DESC, update_id);
                 CREATE TABLE IF NOT EXISTS peer_calls (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     request_id TEXT NOT NULL UNIQUE,
@@ -276,6 +573,8 @@ class Bridge:
                 );
                 CREATE INDEX IF NOT EXISTS idx_peer_calls_inbox
                     ON peer_calls(scope, recipient, status, sequence);
+                CREATE INDEX IF NOT EXISTS idx_peer_calls_scope_request_time
+                    ON peer_calls(scope, request_utc DESC, sequence DESC);
                 CREATE TABLE IF NOT EXISTS peer_reviews (
                     review_id TEXT PRIMARY KEY,
                     scope TEXT NOT NULL,
@@ -291,6 +590,8 @@ class Bridge:
                     UNIQUE(scope, request_id, reviewer),
                     FOREIGN KEY(request_id) REFERENCES peer_calls(request_id)
                 );
+                CREATE INDEX IF NOT EXISTS idx_peer_reviews_scope_review_time
+                    ON peer_reviews(scope, review_utc DESC, review_id);
                 CREATE TABLE IF NOT EXISTS integration_records (
                     record_id TEXT PRIMARY KEY,
                     scope TEXT NOT NULL,
@@ -309,6 +610,8 @@ class Bridge:
                 );
                 CREATE INDEX IF NOT EXISTS idx_integration_records_task_time
                     ON integration_records(scope, task_id, recorded_utc);
+                CREATE INDEX IF NOT EXISTS idx_integration_records_scope_recorded
+                    ON integration_records(scope, recorded_utc DESC, record_id);
                 CREATE TABLE IF NOT EXISTS agent_presence (
                     scope TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
@@ -317,6 +620,8 @@ class Bridge:
                     client_name TEXT,
                     provider_id TEXT,
                     model_id TEXT,
+                    reasoning_mode TEXT,
+                    route_class TEXT,
                     last_seen_utc TEXT NOT NULL,
                     last_seen_epoch REAL NOT NULL,
                     PRIMARY KEY(scope, agent_id, session_id)
@@ -338,18 +643,44 @@ class Bridge:
                 );
                 CREATE INDEX IF NOT EXISTS idx_events_scope_time
                     ON events(scope, sequence);
+                CREATE INDEX IF NOT EXISTS idx_events_scope_created
+                    ON events(scope, created_utc DESC, sequence DESC);
                 """
             )
             row = connection.execute(
                 "SELECT value FROM metadata WHERE key='schema_version'"
             ).fetchone()
-            if row and row["value"] not in {"1", "2", SCHEMA_VERSION}:
+            if row and row["value"] not in {
+                "1",
+                "2",
+                "3",
+                "4",
+                "5",
+                "6",
+                "7",
+                "8",
+                "9",
+                "10",
+                "11",
+                "12",
+                "13",
+                "14",
+                SCHEMA_VERSION,
+            }:
                 raise BridgeError(
                     f"unsupported database schema {row['value']}; expected {SCHEMA_VERSION}"
                 )
             task_columns = {
                 item["name"] for item in connection.execute("PRAGMA table_info(tasks)")
             }
+            if "workspace_root_key" not in task_columns:
+                connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN workspace_root_key TEXT"
+                )
+                connection.execute(
+                    "UPDATE tasks SET workspace_root_key=? WHERE workspace_root_key IS NULL",
+                    (self.workspace_root_key,),
+                )
             if "review_quorum" not in task_columns:
                 connection.execute(
                     "ALTER TABLE tasks ADD COLUMN review_quorum INTEGER NOT NULL DEFAULT 1"
@@ -358,11 +689,228 @@ class Bridge:
                 item["name"]
                 for item in connection.execute("PRAGMA table_info(agent_presence)")
             }
-            for column in ("client_name", "provider_id", "model_id"):
+            for column in (
+                "client_name",
+                "provider_id",
+                "model_id",
+                "reasoning_mode",
+                "route_class",
+            ):
                 if column not in presence_columns:
                     connection.execute(
                         f"ALTER TABLE agent_presence ADD COLUMN {column} TEXT"
                     )
+            message_columns = {
+                item["name"] for item in connection.execute("PRAGMA table_info(messages)")
+            }
+            for column in (
+                "room_id",
+                "route_profile_id",
+                "route_profile_sha256",
+                "requested_provider_id",
+                "requested_model_id",
+                "requested_reasoning_mode",
+                "requested_route_class",
+                "route_request_sha256",
+                "discussion_id",
+                "discussion_round",
+                "discussion_role",
+            ):
+                if column not in message_columns:
+                    if column == "room_id":
+                        connection.execute(
+                            "ALTER TABLE messages ADD COLUMN room_id TEXT NOT NULL DEFAULT 'lobby'"
+                        )
+                    elif column == "discussion_round":
+                        connection.execute(
+                            "ALTER TABLE messages ADD COLUMN discussion_round INTEGER"
+                        )
+                    else:
+                        connection.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
+            route_receipt_columns = {
+                item["name"]
+                for item in connection.execute(
+                    "PRAGMA table_info(message_route_receipts)"
+                )
+            }
+            if "observed_route_class" not in route_receipt_columns:
+                connection.execute(
+                    "ALTER TABLE message_route_receipts "
+                    "ADD COLUMN observed_route_class TEXT"
+                )
+            provider_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(provider_connections)")
+            }
+            for column in (
+                "provider_id",
+                "descriptor_schema",
+                "credential_version_sha256",
+            ):
+                if column not in provider_columns:
+                    connection.execute(
+                        f"ALTER TABLE provider_connections ADD COLUMN {column} TEXT"
+                    )
+            route_profile_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(route_profiles)")
+            }
+            if "response_model_id" not in route_profile_columns:
+                connection.execute(
+                    "ALTER TABLE route_profiles ADD COLUMN response_model_id TEXT"
+                )
+            discussion_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(room_discussions)")
+            }
+            if "processed_round" not in discussion_columns:
+                connection.execute(
+                    "ALTER TABLE room_discussions "
+                    "ADD COLUMN processed_round INTEGER NOT NULL DEFAULT 0"
+                )
+                connection.execute(
+                    """UPDATE room_discussions
+                          SET processed_round = CASE
+                              WHEN status IN ('completed', 'stopped', 'waiting_human')
+                                  THEN current_round
+                              WHEN current_round > 0 THEN current_round - 1
+                              ELSE 0
+                          END"""
+                )
+                for migrated_discussion in connection.execute(
+                    "SELECT * FROM room_discussions"
+                ).fetchall():
+                    connection.execute(
+                        """UPDATE room_discussions SET discussion_sha256=?
+                            WHERE scope=? AND discussion_id=?""",
+                        (
+                            stable_sha256(
+                                self._discussion_row_payload(migrated_discussion)
+                            ),
+                            migrated_discussion["scope"],
+                            migrated_discussion["discussion_id"],
+                        ),
+                    )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_room_inbox "
+                "ON messages(scope, room_id, recipient, sequence)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_messages_discussion_round "
+                "ON messages(scope, discussion_id, discussion_round, discussion_role, sequence)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_room_memberships_agent "
+                "ON room_memberships(scope, agent_id, status, room_id)"
+            )
+            for existing_room in connection.execute(
+                "SELECT scope, room_id, created_utc FROM rooms"
+            ).fetchall():
+                default_mode = "once"
+                created_utc = str(existing_room["created_utc"])
+                policy_payload = {
+                    "scope": str(existing_room["scope"]),
+                    "room_id": str(existing_room["room_id"]),
+                    "mode": default_mode,
+                    "max_rounds": DEFAULT_DISCUSSION_MAX_ROUNDS,
+                    "max_messages": DEFAULT_DISCUSSION_MAX_MESSAGES,
+                    "stagnation_rounds": DEFAULT_DISCUSSION_STAGNATION_ROUNDS,
+                    "updated_by": "peerbridge-system",
+                }
+                connection.execute(
+                    """INSERT OR IGNORE INTO room_automation_policies(
+                           scope, room_id, mode, max_rounds, max_messages,
+                           stagnation_rounds, updated_by, created_utc, updated_utc,
+                           policy_sha256
+                       ) VALUES (?, ?, ?, ?, ?, ?, 'peerbridge-system', ?, ?, ?)""",
+                    (
+                        existing_room["scope"],
+                        existing_room["room_id"],
+                        default_mode,
+                        DEFAULT_DISCUSSION_MAX_ROUNDS,
+                        DEFAULT_DISCUSSION_MAX_MESSAGES,
+                        DEFAULT_DISCUSSION_STAGNATION_ROUNDS,
+                        created_utc,
+                        created_utc,
+                        stable_sha256(policy_payload),
+                    ),
+                )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_scope_updated "
+                "ON tasks(scope, updated_utc DESC, task_id)"
+            )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tasks_workspace_lease "
+                "ON tasks(workspace_root_key, status, lease_expires_epoch)"
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO consumer_cursors(
+                    scope, channel, consumer, position, updated_utc
+                ) SELECT scope, 'messages:lobby', consumer, position, updated_utc
+                  FROM consumer_cursors
+                 WHERE scope=? AND channel='messages'""",
+                (self.scope,),
+            )
+            lobby_created = "1970-01-01T00:00:00Z"
+            lobby_payload = {
+                "scope": self.scope,
+                "room_id": DEFAULT_ROOM_ID,
+                "name": "Lobby",
+                "created_by": "peerbridge-system",
+                "archived": False,
+            }
+            connection.execute(
+                """INSERT OR IGNORE INTO rooms(
+                    scope, room_id, name, created_by, archived, created_utc,
+                    updated_utc, room_sha256
+                ) VALUES (?, ?, 'Lobby', 'peerbridge-system', 0, ?, ?, ?)""",
+                (
+                    self.scope,
+                    DEFAULT_ROOM_ID,
+                    lobby_created,
+                    lobby_created,
+                    stable_sha256(lobby_payload),
+                ),
+            )
+            lobby_policy = {
+                "scope": self.scope,
+                "room_id": DEFAULT_ROOM_ID,
+                "mode": "once",
+                "max_rounds": DEFAULT_DISCUSSION_MAX_ROUNDS,
+                "max_messages": DEFAULT_DISCUSSION_MAX_MESSAGES,
+                "stagnation_rounds": DEFAULT_DISCUSSION_STAGNATION_ROUNDS,
+                "updated_by": "peerbridge-system",
+            }
+            connection.execute(
+                """INSERT OR IGNORE INTO room_automation_policies(
+                       scope, room_id, mode, max_rounds, max_messages,
+                       stagnation_rounds, updated_by, created_utc, updated_utc,
+                       policy_sha256
+                   ) VALUES (?, ?, 'once', ?, ?, ?, 'peerbridge-system', ?, ?, ?)""",
+                (
+                    self.scope,
+                    DEFAULT_ROOM_ID,
+                    DEFAULT_DISCUSSION_MAX_ROUNDS,
+                    DEFAULT_DISCUSSION_MAX_MESSAGES,
+                    DEFAULT_DISCUSSION_STAGNATION_ROUNDS,
+                    lobby_created,
+                    lobby_created,
+                    stable_sha256(lobby_policy),
+                ),
+            )
+            # Upgrade only the original system default. A user-selected OFF
+            # policy remains untouched.
+            connection.execute(
+                """UPDATE room_automation_policies
+                      SET mode='once', policy_sha256=?
+                    WHERE scope=? AND room_id=? AND mode='off'
+                      AND updated_by='peerbridge-system'""",
+                (
+                    stable_sha256(lobby_policy),
+                    self.scope,
+                    DEFAULT_ROOM_ID,
+                ),
+            )
             connection.execute(
                 """INSERT OR IGNORE INTO task_required_peers(scope, task_id, peer_id)
                    SELECT scope, task_id, required_peer FROM tasks
@@ -397,6 +945,8 @@ class Bridge:
                 "client_name": self.client_name,
                 "provider_id": self.provider_id,
                 "model_id": self.model_id,
+                "reasoning_mode": self.reasoning_mode,
+                "route_class": self.route_class,
             },
         }
         payload_json = json.dumps(
@@ -449,6 +999,11 @@ class Bridge:
         normalized = relative.as_posix()
         return "." if normalized in {"", "."} else normalized.rstrip("/")
 
+    @staticmethod
+    def _path_collision_key(normalized: str) -> str:
+        """Return the filesystem collision identity used by task leases."""
+        return normalized.casefold() if os.name == "nt" else normalized
+
     def _resolve_path(self, value: Any, *, must_exist: bool = False) -> Path:
         normalized = self._normalize_path(value)
         resolved = self.root if normalized == "." else self.root / normalized
@@ -458,6 +1013,8 @@ class Bridge:
 
     @staticmethod
     def _path_overlaps(left: str, right: str) -> bool:
+        left = Bridge._path_collision_key(left)
+        right = Bridge._path_collision_key(right)
         if left == "." or right == ".":
             return True
         return (
@@ -468,7 +1025,37 @@ class Bridge:
 
     @staticmethod
     def _path_within(path: str, prefix: str) -> bool:
+        path = Bridge._path_collision_key(path)
+        prefix = Bridge._path_collision_key(prefix)
         return prefix == "." or path == prefix or path.startswith(prefix + "/")
+
+    @staticmethod
+    def _hash_file_streaming(path: Path, *, prefix_bytes: int = 0) -> dict[str, Any]:
+        """Hash a stable file without allocating its full contents."""
+        before = path.stat()
+        hasher = hashlib.sha256()
+        prefix = bytearray()
+        total = 0
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                hasher.update(chunk)
+                total += len(chunk)
+                if len(prefix) < prefix_bytes:
+                    prefix.extend(chunk[: prefix_bytes - len(prefix)])
+        after = path.stat()
+        identity_before = (before.st_size, before.st_mtime_ns)
+        identity_after = (after.st_size, after.st_mtime_ns)
+        if identity_before != identity_after or total != after.st_size:
+            raise BridgeError("artifact changed while it was being hashed")
+        return {
+            "bytes": total,
+            "sha256": hasher.hexdigest(),
+            "prefix": bytes(prefix),
+            "identity": identity_after,
+        }
 
     def _is_protected(self, normalized: str) -> bool:
         path = Path(normalized)
@@ -480,9 +1067,23 @@ class Bridge:
         clean: list[str] = []
         for value in _json_list(values, "artifact_paths"):
             normalized = self._normalize_path(value)
-            if self._is_protected(normalized):
+            staged_chat_attachment = normalized.startswith(CHAT_ATTACHMENT_ROOT + "/")
+            if self._is_protected(normalized) and not staged_chat_attachment:
                 raise BridgeError(f"protected or sensitive artifact is not exposed: {normalized}")
             resolved = self._resolve_path(normalized, must_exist=True)
+            if staged_chat_attachment:
+                relative = Path(normalized)
+                digest = relative.stem.lower()
+                valid_shape = (
+                    relative.parent.as_posix() == CHAT_ATTACHMENT_ROOT
+                    and relative.suffix.lower() in CHAT_ATTACHMENT_SUFFIXES
+                    and re.fullmatch(r"[0-9a-f]{64}", digest) is not None
+                    and resolved.stat().st_size <= MAX_CHAT_ATTACHMENT_BYTES
+                )
+                if not valid_shape or sha256_bytes(resolved.read_bytes()) != digest:
+                    raise BridgeError(
+                        "staged chat attachment is not a valid content-addressed file"
+                    )
             clean.append(resolved.relative_to(self.root).as_posix())
         return clean
 
@@ -502,13 +1103,15 @@ class Bridge:
             connection.execute(
                 """INSERT INTO agent_presence(
                     scope, agent_id, session_id, transport, client_name, provider_id,
-                    model_id, last_seen_utc, last_seen_epoch
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    model_id, reasoning_mode, route_class, last_seen_utc, last_seen_epoch
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(scope, agent_id, session_id) DO UPDATE SET
                     transport=excluded.transport,
                     client_name=excluded.client_name,
                     provider_id=excluded.provider_id,
                     model_id=excluded.model_id,
+                    reasoning_mode=excluded.reasoning_mode,
+                    route_class=excluded.route_class,
                     last_seen_utc=excluded.last_seen_utc,
                     last_seen_epoch=excluded.last_seen_epoch""",
                 (
@@ -519,6 +1122,8 @@ class Bridge:
                     self.client_name,
                     self.provider_id,
                     self.model_id,
+                    self.reasoning_mode,
+                    self.route_class,
                     now_utc,
                     now_epoch,
                 ),
@@ -536,7 +1141,7 @@ class Bridge:
         with self._connect() as connection:
             rows = connection.execute(
                 """SELECT agent_id, session_id, transport, client_name, provider_id,
-                          model_id, last_seen_utc
+                          model_id, reasoning_mode, route_class, last_seen_utc
                    FROM agent_presence
                    WHERE scope=? AND last_seen_epoch>=?
                    ORDER BY agent_id, last_seen_epoch DESC""",
@@ -614,6 +1219,14 @@ class Bridge:
             event_count = connection.execute(
                 "SELECT COUNT(*) AS n FROM events WHERE scope=?", (self.scope,)
             ).fetchone()["n"]
+            dispatch_counts = {
+                row["status"]: row["n"]
+                for row in connection.execute(
+                    """SELECT status, COUNT(*) AS n FROM message_dispatches
+                       WHERE scope=? GROUP BY status""",
+                    (self.scope,),
+                ).fetchall()
+            }
         return {
             "scope": self.scope,
             "agent_id": self.agent_id,
@@ -622,18 +1235,1392 @@ class Bridge:
                 "client_name": self.client_name,
                 "provider_id": self.provider_id,
                 "model_id": self.model_id,
+                "reasoning_mode": self.reasoning_mode,
+                "route_class": self.route_class,
             },
             "transport": "stdio",
             "network_listener": False,
             "database": str(self.db_path),
             "message_count": message_count,
+            "message_dispatch_counts": dispatch_counts,
             "task_counts": counts,
             "audit_event_count": event_count,
             "schema_version": SCHEMA_VERSION,
             "presence": self.presence_snapshot(),
         }
 
+    def upsert_route_profile(self, args: dict[str, Any]) -> dict[str, Any]:
+        route_id = _require_identifier(args.get("route_id"), "route_id")
+        agent_id = _require_identifier(args.get("agent_id"), "agent_id")
+        if self.agent_id not in {HUMAN_OPERATOR_ID, agent_id}:
+            raise BridgeError(
+                "only the human operator or route owner can register a route profile"
+            )
+        client_name = _optional_identifier(args.get("client_name"), "client_name")
+        provider_id = _optional_identifier(args.get("provider_id"), "provider_id")
+        model_id = _optional_identifier(args.get("model_id"), "model_id")
+        response_model_id = _optional_identifier(
+            args.get("response_model_id"), "response_model_id"
+        )
+        reasoning_mode = _optional_identifier(
+            args.get("reasoning_mode"), "reasoning_mode"
+        )
+        route_class = str(args.get("route_class") or "local").strip().lower()
+        if route_class not in ROUTE_CLASSES:
+            raise BridgeError("route_class must be official, relay or local")
+        if not any((provider_id, model_id, reasoning_mode)):
+            raise BridgeError(
+                "a route profile requires provider_id, model_id or reasoning_mode"
+            )
+        enabled = bool(args.get("enabled", True))
+        now = utc_now()
+        profile = {
+            "scope": self.scope,
+            "route_id": route_id,
+            "agent_id": agent_id,
+            "client_name": client_name,
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "response_model_id": response_model_id,
+            "reasoning_mode": reasoning_mode,
+            "route_class": route_class,
+            "enabled": enabled,
+        }
+        profile_sha = stable_sha256(profile)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                """SELECT profile_sha256, updated_utc FROM route_profiles
+                   WHERE scope=? AND route_id=?""",
+                (self.scope, route_id),
+            ).fetchone()
+            if existing is not None:
+                if existing["profile_sha256"] != profile_sha:
+                    raise BridgeError(
+                        "route profiles are immutable; create a new route_id"
+                    )
+                return {
+                    **profile,
+                    "profile_sha256": profile_sha,
+                    "updated_utc": existing["updated_utc"],
+                }
+            connection.execute(
+                """INSERT INTO route_profiles(
+                    scope, route_id, agent_id, client_name, provider_id, model_id,
+                    response_model_id,
+                    reasoning_mode, route_class, enabled, created_utc, updated_utc,
+                    profile_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.scope,
+                    route_id,
+                    agent_id,
+                    client_name,
+                    provider_id,
+                    model_id,
+                    response_model_id,
+                    reasoning_mode,
+                    route_class,
+                    int(enabled),
+                    now,
+                    now,
+                    profile_sha,
+                ),
+            )
+            self._event(
+                connection,
+                "route.profile_upserted",
+                {
+                    "route_id": route_id,
+                    "agent_id": agent_id,
+                    "profile_sha256": profile_sha,
+                    "enabled": enabled,
+                },
+            )
+        return {**profile, "profile_sha256": profile_sha, "updated_utc": now}
+
+    def upsert_provider_connection(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Record redacted provider metadata after a local secret backend accepts it."""
+        if self.agent_id != HUMAN_OPERATOR_ID:
+            raise BridgeError(
+                "only the human operator can register a provider connection"
+            )
+        connection_id = _require_identifier(args.get("connection_id"), "connection_id")
+        display_name = _require_text(args.get("display_name"), "display_name", limit=200)
+        route_class = str(args.get("route_class") or "relay").strip().lower()
+        if route_class not in ROUTE_CLASSES:
+            raise BridgeError("route_class must be official, relay or local")
+        provider_id = _require_identifier(args.get("provider_id"), "provider_id")
+        secret_backend = str(args.get("secret_backend") or "").strip().lower()
+        if secret_backend not in SECRET_BACKENDS:
+            raise BridgeError(
+                "secret_backend must be windows-credential-manager or cc-switch"
+            )
+        stored_credential_target = _require_identifier(
+            args.get("credential_target"), "credential_target"
+        )
+        if secret_backend == "windows-credential-manager":
+            from .credentials import credential_target as expected_credential_target
+
+            expected = expected_credential_target(self.scope, connection_id)
+            if stored_credential_target != expected:
+                raise BridgeError("credential_target does not match this scope and connection")
+        endpoint_sha = _require_sha256(args.get("endpoint_sha256"), "endpoint_sha256")
+        credential_sha = _require_sha256(
+            args.get("credential_fingerprint_sha256"),
+            "credential_fingerprint_sha256",
+        )
+        descriptor_schema = _require_identifier(
+            args.get("descriptor_schema"), "descriptor_schema"
+        )
+        credential_version_sha = _require_sha256(
+            args.get("credential_version_sha256"),
+            "credential_version_sha256",
+        )
+        enabled = bool(args.get("enabled", True))
+        now = utc_now()
+        metadata = {
+            "scope": self.scope,
+            "connection_id": connection_id,
+            "display_name": display_name,
+            "route_class": route_class,
+            "provider_id": provider_id,
+            "secret_backend": secret_backend,
+            "credential_target": stored_credential_target,
+            "endpoint_sha256": endpoint_sha,
+            "credential_fingerprint_sha256": credential_sha,
+            "descriptor_schema": descriptor_schema,
+            "credential_version_sha256": credential_version_sha,
+            "enabled": enabled,
+        }
+        connection_sha = stable_sha256(metadata)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                """INSERT INTO provider_connections(
+                    scope, connection_id, display_name, route_class, provider_id, secret_backend,
+                    credential_target, endpoint_sha256, credential_fingerprint_sha256,
+                    descriptor_schema, credential_version_sha256,
+                    enabled, created_utc, updated_utc, connection_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(scope, connection_id) DO UPDATE SET
+                    display_name=excluded.display_name,
+                    route_class=excluded.route_class,
+                    provider_id=excluded.provider_id,
+                    secret_backend=excluded.secret_backend,
+                    credential_target=excluded.credential_target,
+                    endpoint_sha256=excluded.endpoint_sha256,
+                    credential_fingerprint_sha256=excluded.credential_fingerprint_sha256,
+                    descriptor_schema=excluded.descriptor_schema,
+                    credential_version_sha256=excluded.credential_version_sha256,
+                    enabled=excluded.enabled,
+                    updated_utc=excluded.updated_utc,
+                    connection_sha256=excluded.connection_sha256""",
+                (
+                    self.scope,
+                    connection_id,
+                    display_name,
+                    route_class,
+                    provider_id,
+                    secret_backend,
+                    stored_credential_target,
+                    endpoint_sha,
+                    credential_sha,
+                    descriptor_schema,
+                    credential_version_sha,
+                    int(enabled),
+                    now,
+                    now,
+                    connection_sha,
+                ),
+            )
+            self._event(
+                connection,
+                "provider.connection_upserted",
+                {
+                    "connection_id": connection_id,
+                    "connection_sha256": connection_sha,
+                    "endpoint_sha256": endpoint_sha,
+                    "secret_backend": secret_backend,
+                    "enabled": enabled,
+                },
+            )
+        return {
+            **metadata,
+            "connection_sha256": connection_sha,
+            "updated_utc": now,
+        }
+
+    def list_provider_connections(self, args: dict[str, Any]) -> dict[str, Any]:
+        enabled_only = bool(args.get("enabled_only", True))
+        where = ["scope=?"]
+        params: list[Any] = [self.scope]
+        if enabled_only:
+            where.append("enabled=1")
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM provider_connections
+                    WHERE {' AND '.join(where)} ORDER BY display_name, connection_id""",
+                tuple(params),
+            ).fetchall()
+        connections = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item["enabled"])
+            connections.append(item)
+        return {"connections": connections, "count": len(connections)}
+
+    def list_route_profiles(self, args: dict[str, Any]) -> dict[str, Any]:
+        raw_agent = str(args.get("agent_id") or "").strip()
+        agent_id = _require_identifier(raw_agent, "agent_id") if raw_agent else None
+        enabled_only = bool(args.get("enabled_only", True))
+        where = ["scope=?"]
+        params: list[Any] = [self.scope]
+        if agent_id:
+            where.append("agent_id=?")
+            params.append(agent_id)
+        if enabled_only:
+            where.append("enabled=1")
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM route_profiles WHERE {' AND '.join(where)}
+                    ORDER BY route_id""",
+                tuple(params),
+            ).fetchall()
+        profiles = []
+        for row in rows:
+            item = dict(row)
+            item["enabled"] = bool(item["enabled"])
+            profiles.append(item)
+        return {"profiles": profiles, "count": len(profiles)}
+
+    def list_agents(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Return persistent global identities independently of room seats."""
+        include_disabled_routes = bool(args.get("include_disabled_routes", False))
+        cutoff = time.time() - self.presence_ttl_seconds
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT agent_id FROM agent_presence WHERE scope=?
+                   UNION SELECT agent_id FROM route_profiles WHERE scope=?
+                   UNION SELECT agent_id FROM room_memberships WHERE scope=?
+                   UNION SELECT sender AS agent_id FROM messages WHERE scope=?
+                   UNION SELECT recipient AS agent_id FROM messages
+                         WHERE scope=? AND recipient!='*'
+                   ORDER BY agent_id""",
+                (self.scope,) * 5,
+            ).fetchall()
+            agents: list[dict[str, Any]] = []
+            for row in rows:
+                agent_id = str(row["agent_id"])
+                sessions = [
+                    dict(item)
+                    for item in connection.execute(
+                        """SELECT session_id, transport, client_name, provider_id,
+                                  model_id, reasoning_mode, route_class, last_seen_utc
+                           FROM agent_presence
+                           WHERE scope=? AND agent_id=? AND last_seen_epoch>=?
+                           ORDER BY last_seen_epoch DESC, session_id""",
+                        (self.scope, agent_id, cutoff),
+                    ).fetchall()
+                ]
+                route_where = "" if include_disabled_routes else "AND enabled=1"
+                profiles = [
+                    {**dict(item), "enabled": bool(item["enabled"])}
+                    for item in connection.execute(
+                        f"""SELECT * FROM route_profiles
+                            WHERE scope=? AND agent_id=? {route_where}
+                            ORDER BY route_id""",
+                        (self.scope, agent_id),
+                    ).fetchall()
+                ]
+                active_room_ids = [
+                    str(item["room_id"])
+                    for item in connection.execute(
+                        """SELECT room_id FROM room_memberships
+                           WHERE scope=? AND agent_id=? AND status='active'
+                           ORDER BY room_id""",
+                        (self.scope, agent_id),
+                    ).fetchall()
+                ]
+                catalog_payload = {
+                    "scope": self.scope,
+                    "agent_id": agent_id,
+                    "online_sessions": sessions,
+                    "route_profiles": profiles,
+                    "active_room_ids": active_room_ids,
+                }
+                agents.append(
+                    {
+                        **catalog_payload,
+                        "online": bool(sessions),
+                        "catalog_sha256": stable_sha256(catalog_payload),
+                    }
+                )
+        return {
+            "agents": agents,
+            "count": len(agents),
+            "presence_ttl_seconds": self.presence_ttl_seconds,
+            "observed_utc": utc_now(),
+        }
+
+    def create_room(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Create one durable conversation room and join its creator."""
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        if room_id == DEFAULT_ROOM_ID:
+            raise BridgeError("the built-in lobby room already exists")
+        name = _require_text(args.get("name"), "name", limit=200)
+        now = utc_now()
+        payload = {
+            "scope": self.scope,
+            "room_id": room_id,
+            "name": name,
+            "created_by": self.agent_id,
+            "archived": False,
+        }
+        room_sha = stable_sha256(payload)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                connection.execute(
+                    """INSERT INTO rooms(
+                        scope, room_id, name, created_by, archived, created_utc,
+                        updated_utc, room_sha256
+                    ) VALUES (?, ?, ?, ?, 0, ?, ?, ?)""",
+                    (
+                        self.scope,
+                        room_id,
+                        name,
+                        self.agent_id,
+                        now,
+                        now,
+                        room_sha,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise BridgeError("room already exists") from exc
+            self._upsert_room_membership(
+                connection,
+                room_id=room_id,
+                agent_id=self.agent_id,
+                route_profile_id=None,
+                now=now,
+            )
+            policy_payload = {
+                "scope": self.scope,
+                "room_id": room_id,
+                "mode": "once",
+                "max_rounds": DEFAULT_DISCUSSION_MAX_ROUNDS,
+                "max_messages": DEFAULT_DISCUSSION_MAX_MESSAGES,
+                "stagnation_rounds": DEFAULT_DISCUSSION_STAGNATION_ROUNDS,
+                "updated_by": self.agent_id,
+            }
+            policy_sha = stable_sha256(policy_payload)
+            connection.execute(
+                """INSERT INTO room_automation_policies(
+                       scope, room_id, mode, max_rounds, max_messages,
+                       stagnation_rounds, updated_by, created_utc, updated_utc,
+                       policy_sha256
+                   ) VALUES (?, ?, 'once', ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.scope,
+                    room_id,
+                    DEFAULT_DISCUSSION_MAX_ROUNDS,
+                    DEFAULT_DISCUSSION_MAX_MESSAGES,
+                    DEFAULT_DISCUSSION_STAGNATION_ROUNDS,
+                    self.agent_id,
+                    now,
+                    now,
+                    policy_sha,
+                ),
+            )
+            event = self._event(
+                connection,
+                "room.created",
+                {"room_id": room_id, "room_sha256": room_sha},
+            )
+        return {
+            **payload,
+            "room_sha256": room_sha,
+            "created_utc": now,
+            "creator_joined": True,
+            "automation_mode": "once",
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def _room(self, connection: sqlite3.Connection, room_id: str) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM rooms WHERE scope=? AND room_id=?",
+            (self.scope, room_id),
+        ).fetchone()
+        if row is None:
+            raise BridgeError("room not found")
+        if row["archived"]:
+            raise BridgeError("room is archived")
+        return row
+
+    def _require_room_manager(
+        self, connection: sqlite3.Connection, room_id: str
+    ) -> sqlite3.Row:
+        room = self._room(connection, room_id)
+        if self.agent_id not in {str(room["created_by"]), "human-operator"}:
+            raise BridgeError("only the room creator or human operator may manage seats")
+        return room
+
+    @staticmethod
+    def _bounded_integer(
+        value: Any, label: str, *, minimum: int, maximum: int
+    ) -> int:
+        try:
+            result = int(value)
+        except (TypeError, ValueError) as exc:
+            raise BridgeError(f"{label} must be an integer") from exc
+        if result < minimum or result > maximum:
+            raise BridgeError(f"{label} must be between {minimum} and {maximum}")
+        return result
+
+    @staticmethod
+    def _policy_payload(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        return {
+            "scope": str(row["scope"]),
+            "room_id": str(row["room_id"]),
+            "mode": str(row["mode"]),
+            "max_rounds": int(row["max_rounds"]),
+            "max_messages": int(row["max_messages"]),
+            "stagnation_rounds": int(row["stagnation_rounds"]),
+            "updated_by": str(row["updated_by"]),
+        }
+
+    def _room_policy(
+        self, connection: sqlite3.Connection, room_id: str
+    ) -> sqlite3.Row:
+        self._room(connection, room_id)
+        row = connection.execute(
+            """SELECT * FROM room_automation_policies
+               WHERE scope=? AND room_id=?""",
+            (self.scope, room_id),
+        ).fetchone()
+        if row is None:
+            raise BridgeError("room automation policy is missing")
+        return row
+
+    def get_room_automation(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        with self._connect() as connection:
+            policy = self._room_policy(connection, room_id)
+            active = connection.execute(
+                """SELECT * FROM room_discussions
+                   WHERE scope=? AND room_id=?
+                     AND status IN ('active', 'paused', 'waiting_human')
+                   ORDER BY updated_utc DESC, discussion_id DESC LIMIT 1""",
+                (self.scope, room_id),
+            ).fetchone()
+        result = dict(policy)
+        result["policy_sha256_valid"] = (
+            stable_sha256(self._policy_payload(policy)) == policy["policy_sha256"]
+        )
+        result["active_discussion"] = dict(active) if active else None
+        return result
+
+    def set_room_automation(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        mode = str(args.get("mode") or "").strip().lower()
+        if mode not in ROOM_AUTOMATION_MODES:
+            raise BridgeError("mode must be off, once or discussion")
+        max_rounds = self._bounded_integer(
+            args.get("max_rounds", DEFAULT_DISCUSSION_MAX_ROUNDS),
+            "max_rounds",
+            minimum=1,
+            maximum=MAX_DISCUSSION_ROUNDS,
+        )
+        max_messages = self._bounded_integer(
+            args.get("max_messages", DEFAULT_DISCUSSION_MAX_MESSAGES),
+            "max_messages",
+            minimum=2,
+            maximum=MAX_DISCUSSION_MESSAGES,
+        )
+        stagnation_rounds = self._bounded_integer(
+            args.get("stagnation_rounds", DEFAULT_DISCUSSION_STAGNATION_ROUNDS),
+            "stagnation_rounds",
+            minimum=1,
+            maximum=5,
+        )
+        if stagnation_rounds > max_rounds:
+            raise BridgeError("stagnation_rounds cannot exceed max_rounds")
+        now = utc_now()
+        payload = {
+            "scope": self.scope,
+            "room_id": room_id,
+            "mode": mode,
+            "max_rounds": max_rounds,
+            "max_messages": max_messages,
+            "stagnation_rounds": stagnation_rounds,
+            "updated_by": self.agent_id,
+        }
+        policy_sha = stable_sha256(payload)
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_room_manager(connection, room_id)
+            existing = self._room_policy(connection, room_id)
+            connection.execute(
+                """UPDATE room_automation_policies
+                      SET mode=?, max_rounds=?, max_messages=?, stagnation_rounds=?,
+                          updated_by=?, updated_utc=?, policy_sha256=?
+                    WHERE scope=? AND room_id=?""",
+                (
+                    mode,
+                    max_rounds,
+                    max_messages,
+                    stagnation_rounds,
+                    self.agent_id,
+                    now,
+                    policy_sha,
+                    self.scope,
+                    room_id,
+                ),
+            )
+            if mode != "discussion":
+                open_discussions = connection.execute(
+                    """SELECT * FROM room_discussions
+                        WHERE scope=? AND room_id=?
+                          AND status IN ('active', 'paused', 'waiting_human')""",
+                    (self.scope, room_id),
+                ).fetchall()
+                for discussion in open_discussions:
+                    self._store_discussion_state(
+                        connection,
+                        discussion,
+                        now=now,
+                        status="stopped",
+                        stop_reason="policy_changed",
+                    )
+            event = self._event(
+                connection,
+                "room.automation_updated",
+                {
+                    "room_id": room_id,
+                    "previous_policy_sha256": existing["policy_sha256"],
+                    "policy_sha256": policy_sha,
+                    "mode": mode,
+                    "max_rounds": max_rounds,
+                    "max_messages": max_messages,
+                    "stagnation_rounds": stagnation_rounds,
+                },
+            )
+        return {
+            **payload,
+            "created_utc": existing["created_utc"],
+            "updated_utc": now,
+            "policy_sha256": policy_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def _active_room_member(
+        self, connection: sqlite3.Connection, room_id: str, agent_id: str
+    ) -> sqlite3.Row | None:
+        return connection.execute(
+            """SELECT * FROM room_memberships
+               WHERE scope=? AND room_id=? AND agent_id=? AND status='active'""",
+            (self.scope, room_id, agent_id),
+        ).fetchone()
+
+    def _require_room_member(
+        self, connection: sqlite3.Connection, room_id: str, agent_id: str
+    ) -> sqlite3.Row | None:
+        self._room(connection, room_id)
+        if room_id == DEFAULT_ROOM_ID:
+            # Lobby membership is implicit unless an audited ``left`` override
+            # exists.  This lets the UI remove one Agent from Lobby without
+            # deleting its global identity, route profiles, or message history.
+            row = connection.execute(
+                """SELECT * FROM room_memberships
+                   WHERE scope=? AND room_id=? AND agent_id=?""",
+                (self.scope, room_id, agent_id),
+            ).fetchone()
+            if row is not None and row["status"] != "active":
+                raise BridgeError(f"agent is not an active member of room {room_id}")
+            return row
+        row = self._active_room_member(connection, room_id, agent_id)
+        if row is None:
+            raise BridgeError(f"agent is not an active member of room {room_id}")
+        return row
+
+    def _upsert_room_membership(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        room_id: str,
+        agent_id: str,
+        route_profile_id: str | None,
+        now: str,
+    ) -> dict[str, Any]:
+        existing = connection.execute(
+            "SELECT room_session_id, joined_utc, route_profile_id, status "
+            "FROM room_memberships "
+            "WHERE scope=? AND room_id=? AND agent_id=?",
+            (self.scope, room_id, agent_id),
+        ).fetchone()
+        reuse_session = bool(
+            existing
+            and existing["status"] == "active"
+            and existing["route_profile_id"] == route_profile_id
+        )
+        room_session_id = str(existing["room_session_id"]) if reuse_session else uuid.uuid4().hex
+        joined_utc = str(existing["joined_utc"]) if reuse_session else now
+        payload = {
+            "scope": self.scope,
+            "room_id": room_id,
+            "agent_id": agent_id,
+            "route_profile_id": route_profile_id,
+            "room_session_id": room_session_id,
+            "status": "active",
+            "joined_utc": joined_utc,
+        }
+        membership_sha = stable_sha256(payload)
+        connection.execute(
+            """INSERT INTO room_memberships(
+                scope, room_id, agent_id, route_profile_id, room_session_id,
+                status, joined_utc, updated_utc, left_utc, membership_sha256
+            ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, NULL, ?)
+            ON CONFLICT(scope, room_id, agent_id) DO UPDATE SET
+                route_profile_id=excluded.route_profile_id,
+                room_session_id=excluded.room_session_id,
+                status='active', joined_utc=excluded.joined_utc,
+                updated_utc=excluded.updated_utc,
+                left_utc=NULL, membership_sha256=excluded.membership_sha256""",
+            (
+                self.scope,
+                room_id,
+                agent_id,
+                route_profile_id,
+                room_session_id,
+                joined_utc,
+                now,
+                membership_sha,
+            ),
+        )
+        return {**payload, "membership_sha256": membership_sha, "updated_utc": now}
+
+    def join_room(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        agent_id = _require_identifier(args.get("agent_id", self.agent_id), "agent_id")
+        route_profile_id = _optional_identifier(
+            args.get("route_profile_id"), "route_profile_id"
+        )
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_room_manager(connection, room_id)
+            if route_profile_id:
+                profile = connection.execute(
+                    """SELECT agent_id FROM route_profiles
+                       WHERE scope=? AND route_id=? AND enabled=1""",
+                    (self.scope, route_profile_id),
+                ).fetchone()
+                if profile is None:
+                    raise BridgeError("route profile is missing or disabled")
+                if profile["agent_id"] != agent_id:
+                    raise BridgeError("route profile targets a different agent")
+            membership = self._upsert_room_membership(
+                connection,
+                room_id=room_id,
+                agent_id=agent_id,
+                route_profile_id=route_profile_id,
+                now=now,
+            )
+            event = self._event(
+                connection,
+                "room.member_joined",
+                {
+                    "room_id": room_id,
+                    "agent_id": agent_id,
+                    "membership_sha256": membership["membership_sha256"],
+                },
+            )
+        return {**membership, "audit_chain_sha256": event["chain_sha256"]}
+
+    def leave_room(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        agent_id = _require_identifier(args.get("agent_id", self.agent_id), "agent_id")
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._room(connection, room_id)
+            if agent_id != self.agent_id:
+                self._require_room_manager(connection, room_id)
+            row = (
+                connection.execute(
+                    """SELECT * FROM room_memberships
+                       WHERE scope=? AND room_id=? AND agent_id=?""",
+                    (self.scope, room_id, agent_id),
+                ).fetchone()
+                if room_id == DEFAULT_ROOM_ID
+                else self._active_room_member(connection, room_id, agent_id)
+            )
+            if row is not None and row["status"] != "active":
+                raise BridgeError("agent is not an active room member")
+            if row is None and room_id != DEFAULT_ROOM_ID:
+                raise BridgeError("agent is not an active room member")
+            route_profile_id = row["route_profile_id"] if row is not None else None
+            room_session_id = (
+                str(row["room_session_id"]) if row is not None else uuid.uuid4().hex
+            )
+            joined_utc = str(row["joined_utc"]) if row is not None else now
+            payload = {
+                "scope": self.scope,
+                "room_id": room_id,
+                "agent_id": agent_id,
+                "route_profile_id": route_profile_id,
+                "room_session_id": room_session_id,
+                "status": "left",
+                "joined_utc": joined_utc,
+                "left_utc": now,
+            }
+            membership_sha = stable_sha256(payload)
+            connection.execute(
+                """INSERT INTO room_memberships(
+                       scope, room_id, agent_id, route_profile_id, room_session_id,
+                       status, joined_utc, updated_utc, left_utc, membership_sha256
+                   ) VALUES (?, ?, ?, ?, ?, 'left', ?, ?, ?, ?)
+                   ON CONFLICT(scope, room_id, agent_id) DO UPDATE SET
+                       route_profile_id=excluded.route_profile_id,
+                       room_session_id=excluded.room_session_id,
+                       status='left', joined_utc=excluded.joined_utc,
+                       updated_utc=excluded.updated_utc,
+                       left_utc=excluded.left_utc,
+                       membership_sha256=excluded.membership_sha256""",
+                (
+                    self.scope,
+                    room_id,
+                    agent_id,
+                    route_profile_id,
+                    room_session_id,
+                    joined_utc,
+                    now,
+                    now,
+                    membership_sha,
+                ),
+            )
+            event = self._event(
+                connection,
+                "room.member_left",
+                {
+                    "room_id": room_id,
+                    "agent_id": agent_id,
+                    "membership_sha256": membership_sha,
+                },
+            )
+        return {
+            **payload,
+            "membership_sha256": membership_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def list_rooms(self, args: dict[str, Any]) -> dict[str, Any]:
+        include_archived = bool(args.get("include_archived", False))
+        where = "" if include_archived else "AND r.archived=0"
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT r.*, rap.mode AS automation_mode,
+                            rap.max_rounds AS automation_max_rounds,
+                            rap.max_messages AS automation_max_messages,
+                            rap.stagnation_rounds AS automation_stagnation_rounds,
+                            rap.policy_sha256 AS automation_policy_sha256,
+                    (SELECT COUNT(*) FROM room_memberships rm
+                     WHERE rm.scope=r.scope AND rm.room_id=r.room_id
+                       AND rm.status='active') AS active_member_count,
+                    (SELECT COUNT(*) FROM messages m
+                     WHERE m.scope=r.scope AND m.room_id=r.room_id) AS message_count
+                    FROM rooms r
+                    LEFT JOIN room_automation_policies rap
+                      ON rap.scope=r.scope AND rap.room_id=r.room_id
+                    WHERE r.scope=? {where}
+                    ORDER BY CASE WHEN r.room_id=? THEN 0 ELSE 1 END,
+                             r.updated_utc DESC, r.room_id""",
+                (self.scope, DEFAULT_ROOM_ID),
+            ).fetchall()
+        rooms = []
+        for row in rows:
+            item = dict(row)
+            item["archived"] = bool(item["archived"])
+            rooms.append(item)
+        return {"rooms": rooms, "count": len(rooms)}
+
+    def room_members(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        include_inactive = bool(args.get("include_inactive", False))
+        with self._connect() as connection:
+            self._room(connection, room_id)
+            where = "" if include_inactive else "AND rm.status='active'"
+            rows = connection.execute(
+                f"""SELECT rm.*, rp.client_name, rp.provider_id, rp.model_id,
+                            rp.reasoning_mode, rp.route_class,
+                            CASE WHEN EXISTS(
+                                SELECT 1 FROM agent_presence ap
+                                WHERE ap.scope=rm.scope AND ap.agent_id=rm.agent_id
+                                  AND ap.last_seen_epoch>=?
+                            ) THEN 1 ELSE 0 END AS online
+                    FROM room_memberships rm
+                    LEFT JOIN route_profiles rp
+                      ON rp.scope=rm.scope AND rp.route_id=rm.route_profile_id
+                    WHERE rm.scope=? AND rm.room_id=? {where}
+                    ORDER BY rm.status, rm.agent_id""",
+                (time.time() - self.presence_ttl_seconds, self.scope, room_id),
+            ).fetchall()
+        members = []
+        for row in rows:
+            item = dict(row)
+            item["online"] = bool(item["online"])
+            members.append(item)
+        return {"room_id": room_id, "members": members, "count": len(members)}
+
+    def _memory_artifact_bindings(self, values: Any) -> list[dict[str, Any]]:
+        bindings = []
+        for normalized in self._clean_artifacts(values):
+            resolved = self._resolve_path(normalized, must_exist=True)
+            data = resolved.read_bytes()
+            bindings.append(
+                {
+                    "path": normalized,
+                    "bytes": len(data),
+                    "sha256": sha256_bytes(data),
+                }
+            )
+        return bindings
+
+    def _memory_row(
+        self, connection: sqlite3.Connection, memory_id: str
+    ) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM memories WHERE scope=? AND memory_id=?",
+            (self.scope, memory_id),
+        ).fetchone()
+        if row is None:
+            raise BridgeError("memory not found")
+        return row
+
+    def _require_memory_read_access(
+        self, connection: sqlite3.Connection, row: sqlite3.Row
+    ) -> None:
+        visibility = str(row["visibility"])
+        if visibility == "project":
+            return
+        if visibility == "private":
+            if row["owner_agent_id"] != self.agent_id:
+                raise BridgeError("private memory belongs to another agent")
+            self._require_room_member(
+                connection, str(row["room_id"] or ""), self.agent_id
+            )
+            return
+        room_id = str(row["room_id"] or "")
+        self._require_room_member(connection, room_id, self.agent_id)
+
+    def _source_message_binding(
+        self, connection: sqlite3.Connection, message_id: str
+    ) -> dict[str, Any]:
+        row = connection.execute(
+            """SELECT message_id, room_id, sender, recipient, content_sha256
+               FROM messages WHERE scope=? AND message_id=?""",
+            (self.scope, message_id),
+        ).fetchone()
+        if row is None:
+            raise BridgeError("source message not found")
+        room_id = str(row["room_id"])
+        self._require_room_member(connection, room_id, self.agent_id)
+        if self.agent_id != "human-operator" and self.agent_id not in {
+            str(row["sender"]),
+            str(row["recipient"]),
+        } and row["recipient"] != "*":
+            raise BridgeError("source message is not visible to this agent")
+        return {
+            "message_id": str(row["message_id"]),
+            "room_id": room_id,
+            "content_sha256": str(row["content_sha256"]),
+        }
+
+    @staticmethod
+    def _memory_result(row: sqlite3.Row) -> dict[str, Any]:
+        result = dict(row)
+        result["artifact_bindings"] = json.loads(
+            result.pop("artifact_bindings_json")
+        )
+        return result
+
+    def record_memory(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Record an explicit memory without copying a model's private reasoning."""
+        visibility = str(args.get("visibility") or "private").strip().lower()
+        if visibility not in MEMORY_VISIBILITIES:
+            raise BridgeError("visibility must be private, room or project")
+        room_id = _optional_identifier(args.get("room_id"), "room_id")
+        if visibility in {"private", "room"} and not room_id:
+            raise BridgeError("private and room memory require room_id")
+        if visibility == "project" and room_id:
+            raise BridgeError("project memory must not bind one room_id")
+        if visibility == "project" and self.agent_id != "human-operator":
+            raise BridgeError("only human-operator may publish project memory")
+
+        title = _require_text(args.get("title"), "title", limit=500)
+        body = _require_text(args.get("body"), "body")
+        source_message_id = _optional_identifier(
+            args.get("source_message_id"), "source_message_id"
+        )
+        parent_memory_id = _optional_identifier(
+            args.get("parent_memory_id"), "parent_memory_id"
+        )
+        artifact_bindings = self._memory_artifact_bindings(
+            args.get("artifact_paths", [])
+        )
+        memory_id = uuid.uuid4().hex
+        created = utc_now()
+
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if visibility in {"private", "room"}:
+                assert room_id is not None
+                self._require_room_member(connection, room_id, self.agent_id)
+
+            source = None
+            if source_message_id:
+                source = self._source_message_binding(connection, source_message_id)
+                if visibility in {"private", "room"} and source["room_id"] != room_id:
+                    raise BridgeError(
+                        "private or room memory source_message_id must be from the same room"
+                    )
+
+            parent = None
+            if parent_memory_id:
+                parent = self._memory_row(connection, parent_memory_id)
+                self._require_memory_read_access(connection, parent)
+                if parent["status"] != "active":
+                    raise BridgeError("parent memory is revoked")
+                if visibility in {"private", "room"} and (
+                    parent["visibility"] != visibility
+                    or parent["room_id"] != room_id
+                ):
+                    raise BridgeError(
+                        "private or room memory parent must have the same visibility and room"
+                    )
+
+            if visibility == "project" and not any(
+                (source, parent, artifact_bindings)
+            ):
+                raise BridgeError(
+                    "project memory requires a source message, parent memory or artifact"
+                )
+
+            payload = {
+                "scope": self.scope,
+                "memory_id": memory_id,
+                "visibility": visibility,
+                "room_id": room_id,
+                "owner_agent_id": self.agent_id,
+                "title": title,
+                "body": body,
+                "source_message_id": source_message_id,
+                "source_message_sha256": (
+                    source["content_sha256"] if source else None
+                ),
+                "source_room_id": source["room_id"] if source else None,
+                "artifact_bindings": artifact_bindings,
+                "parent_memory_id": parent_memory_id,
+                "parent_memory_sha256": (
+                    str(parent["memory_sha256"]) if parent else None
+                ),
+                "status": "active",
+                "created_utc": created,
+            }
+            memory_sha = stable_sha256(payload)
+            connection.execute(
+                """INSERT INTO memories(
+                    scope, memory_id, visibility, room_id, owner_agent_id,
+                    title, body, source_message_id, source_message_sha256,
+                    artifact_bindings_json, parent_memory_id, status,
+                    created_utc, revoked_utc, revocation_reason,
+                    revocation_sha256, memory_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?,
+                          NULL, NULL, NULL, ?)""",
+                (
+                    self.scope,
+                    memory_id,
+                    visibility,
+                    room_id,
+                    self.agent_id,
+                    title,
+                    body,
+                    source_message_id,
+                    source["content_sha256"] if source else None,
+                    json.dumps(
+                        artifact_bindings,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    parent_memory_id,
+                    created,
+                    memory_sha,
+                ),
+            )
+            event = self._event(
+                connection,
+                "memory.recorded",
+                {
+                    "memory_id": memory_id,
+                    "visibility": visibility,
+                    "room_id": room_id,
+                    "memory_sha256": memory_sha,
+                },
+            )
+        return {
+            **payload,
+            "memory_sha256": memory_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def list_memories(self, args: dict[str, Any]) -> dict[str, Any]:
+        visibility = str(args.get("visibility") or "").strip().lower() or None
+        if visibility and visibility not in MEMORY_VISIBILITIES:
+            raise BridgeError("visibility must be private, room or project")
+        room_id = _optional_identifier(args.get("room_id"), "room_id")
+        if visibility in {"private", "room"} and not room_id:
+            raise BridgeError("listing private or room memory requires room_id")
+        if room_id:
+            with self._connect() as connection:
+                self._require_room_member(connection, room_id, self.agent_id)
+        query = str(args.get("query") or "").strip().lower()
+        if len(query) > 500:
+            raise BridgeError("query exceeds 500 characters")
+        include_revoked = bool(args.get("include_revoked", False))
+        limit = max(1, min(int(args.get("limit", 100)), 500))
+
+        where = ["scope=?"]
+        params: list[Any] = [self.scope]
+        if not include_revoked:
+            where.append("status='active'")
+        if visibility:
+            where.append("visibility=?")
+            params.append(visibility)
+        if room_id:
+            where.append("(visibility='project' OR room_id=?)")
+            params.append(room_id)
+        else:
+            where.append("visibility='project'")
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM memories WHERE {' AND '.join(where)}
+                    ORDER BY created_utc DESC, memory_id LIMIT ?""",
+                (*params, limit * 4),
+            ).fetchall()
+            memories = []
+            for row in rows:
+                try:
+                    self._require_memory_read_access(connection, row)
+                except BridgeError:
+                    continue
+                if query and query not in str(row["title"]).lower() and query not in str(
+                    row["body"]
+                ).lower():
+                    continue
+                memories.append(self._memory_result(row))
+                if len(memories) >= limit:
+                    break
+        return {
+            "memories": memories,
+            "count": len(memories),
+            "room_id": room_id,
+            "visibility": visibility,
+            "access_contract": "project + owner-private + explicitly selected room",
+        }
+
+    def read_memory(self, args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = _require_identifier(args.get("memory_id"), "memory_id")
+        with self._connect() as connection:
+            row = self._memory_row(connection, memory_id)
+            self._require_memory_read_access(connection, row)
+            return self._memory_result(row)
+
+    def revoke_memory(self, args: dict[str, Any]) -> dict[str, Any]:
+        memory_id = _require_identifier(args.get("memory_id"), "memory_id")
+        reason = _require_text(args.get("reason"), "reason", limit=2_000)
+        revoked = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._memory_row(connection, memory_id)
+            if row["status"] != "active":
+                raise BridgeError("memory is already revoked")
+            visibility = str(row["visibility"])
+            if visibility == "project":
+                if self.agent_id != "human-operator":
+                    raise BridgeError("only human-operator may revoke project memory")
+            elif visibility == "private":
+                if row["owner_agent_id"] != self.agent_id:
+                    raise BridgeError("private memory belongs to another agent")
+            elif row["owner_agent_id"] != self.agent_id:
+                self._require_room_manager(connection, str(row["room_id"]))
+            revocation = {
+                "scope": self.scope,
+                "memory_id": memory_id,
+                "memory_sha256": str(row["memory_sha256"]),
+                "revoked_by": self.agent_id,
+                "revoked_utc": revoked,
+                "reason": reason,
+            }
+            revocation_sha = stable_sha256(revocation)
+            connection.execute(
+                """UPDATE memories SET status='revoked', revoked_utc=?,
+                   revocation_reason=?, revocation_sha256=?
+                   WHERE scope=? AND memory_id=?""",
+                (revoked, reason, revocation_sha, self.scope, memory_id),
+            )
+            event = self._event(
+                connection,
+                "memory.revoked",
+                {
+                    "memory_id": memory_id,
+                    "memory_sha256": row["memory_sha256"],
+                    "revocation_sha256": revocation_sha,
+                },
+            )
+        return {
+            **revocation,
+            "status": "revoked",
+            "revocation_sha256": revocation_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    @staticmethod
+    def _route_profile_identity_payload(
+        row: sqlite3.Row | dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "scope": row["scope"],
+            "route_id": row["route_id"],
+            "agent_id": row["agent_id"],
+            "client_name": row["client_name"],
+            "provider_id": row["provider_id"],
+            "model_id": row["model_id"],
+            "response_model_id": row["response_model_id"],
+            "reasoning_mode": row["reasoning_mode"],
+            "route_class": row["route_class"],
+            "enabled": bool(row["enabled"]),
+        }
+
+    @classmethod
+    def _verified_route_profile_sha256(
+        cls, row: sqlite3.Row | dict[str, Any]
+    ) -> str:
+        stored = row["profile_sha256"]
+        expected = stable_sha256(cls._route_profile_identity_payload(row))
+        if (
+            not isinstance(stored, str)
+            or re.fullmatch(r"[0-9a-f]{64}", stored) is None
+            or not secrets.compare_digest(stored, expected)
+        ):
+            raise BridgeError("route profile identity SHA mismatch")
+        return stored
+
+    def _resolve_route_request(
+        self,
+        connection: sqlite3.Connection,
+        recipient: str,
+        args: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        route_profile_id = _optional_identifier(
+            args.get("route_profile_id"), "route_profile_id"
+        )
+        route_profile_sha256: str | None = None
+        requested = {
+            "provider_id": _optional_identifier(
+                args.get("requested_provider_id"), "requested_provider_id"
+            ),
+            "model_id": _optional_identifier(
+                args.get("requested_model_id"), "requested_model_id"
+            ),
+            "reasoning_mode": _optional_identifier(
+                args.get("requested_reasoning_mode"), "requested_reasoning_mode"
+            ),
+            "route_class": _optional_route_class(
+                args.get("requested_route_class"), "requested_route_class"
+            ),
+        }
+        if route_profile_id:
+            row = connection.execute(
+                """SELECT * FROM route_profiles
+                   WHERE scope=? AND route_id=? AND enabled=1""",
+                (self.scope, route_profile_id),
+            ).fetchone()
+            if row is None:
+                raise BridgeError("route profile is not found or is disabled")
+            route_profile_sha256 = self._verified_route_profile_sha256(row)
+            if recipient != row["agent_id"]:
+                raise BridgeError(
+                    f"route profile {route_profile_id} targets {row['agent_id']}, not {recipient}"
+                )
+            for key in (
+                "provider_id",
+                "model_id",
+                "reasoning_mode",
+                "route_class",
+            ):
+                profile_value = row[key]
+                if requested[key] and profile_value and requested[key] != profile_value:
+                    raise BridgeError(
+                        f"requested_{key} conflicts with route profile {route_profile_id}"
+                    )
+                requested[key] = requested[key] or profile_value
+        if not route_profile_id and not any(requested.values()):
+            return None
+        if recipient == "*":
+            raise BridgeError("model-routed messages require one explicit recipient")
+        if requested["route_class"] is None:
+            raise BridgeError(
+                "routed messages require route_profile_id or requested_route_class"
+            )
+        request = {
+            "route_profile_id": route_profile_id,
+            "target_agent_id": recipient,
+            "requested_provider_id": requested["provider_id"],
+            "requested_model_id": requested["model_id"],
+            "requested_reasoning_mode": requested["reasoning_mode"],
+            "requested_route_class": requested["route_class"],
+        }
+        if route_profile_id:
+            request["route_profile_sha256"] = route_profile_sha256
+        return {**request, "route_request_sha256": stable_sha256(request)}
+
+    @staticmethod
+    def _route_request_from_row(
+        row: sqlite3.Row | dict[str, Any],
+    ) -> dict[str, Any] | None:
+        row_keys = row.keys()
+        route_profile_sha256 = (
+            row["route_profile_sha256"]
+            if "route_profile_sha256" in row_keys
+            else None
+        )
+        route_fields = {
+            "route_profile_id": row["route_profile_id"],
+            "target_agent_id": row["recipient"],
+            "requested_provider_id": row["requested_provider_id"],
+            "requested_model_id": row["requested_model_id"],
+            "requested_reasoning_mode": row["requested_reasoning_mode"],
+            "requested_route_class": row["requested_route_class"],
+        }
+        if route_fields["route_profile_id"] or route_profile_sha256 is not None:
+            route_fields["route_profile_sha256"] = route_profile_sha256
+        if not row["route_request_sha256"] and not any(
+            route_fields[key]
+            for key in route_fields
+            if key != "target_agent_id"
+        ):
+            return None
+        return {
+            **route_fields,
+            "route_request_sha256": row["route_request_sha256"],
+        }
+
+    @staticmethod
+    def _route_request_content_binding(
+        route_request: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        if route_request is None:
+            return None
+        # The request digest binds the profile digest while preserving legacy receipts.
+        return {
+            key: value
+            for key, value in route_request.items()
+            if key != "route_profile_sha256"
+        }
+
+    def _evaluate_route(
+        self,
+        row: sqlite3.Row | dict[str, Any],
+        consumer: str,
+        *,
+        connection: sqlite3.Connection | None = None,
+    ) -> dict[str, Any]:
+        request = self._route_request_from_row(row)
+        observed = {
+            "agent_id": self.agent_id,
+            "session_id": self.session_id,
+            "provider_id": self.provider_id,
+            "model_id": self.model_id,
+            "reasoning_mode": self.reasoning_mode,
+            "route_class": self.route_class,
+        }
+        if request is None:
+            return {"status": "not_requested", "observed": observed, "mismatches": []}
+        mismatches = []
+        if consumer != self.agent_id or request["target_agent_id"] != self.agent_id:
+            mismatches.append("agent_id")
+        request_content = {
+            key: value
+            for key, value in request.items()
+            if key != "route_request_sha256"
+        }
+        expected_request_sha = stable_sha256(request_content)
+        stored_request_sha = request["route_request_sha256"]
+        if not isinstance(stored_request_sha, str) or not secrets.compare_digest(
+            stored_request_sha, expected_request_sha
+        ):
+            mismatches.append("route_request_sha256")
+        route_profile_id = request["route_profile_id"]
+        route_profile_sha256 = request.get("route_profile_sha256")
+        if route_profile_id:
+            def profile_identity_matches(
+                active_connection: sqlite3.Connection,
+            ) -> bool:
+                current = active_connection.execute(
+                    """SELECT * FROM route_profiles
+                       WHERE scope=? AND route_id=? AND enabled=1""",
+                    (self.scope, route_profile_id),
+                ).fetchone()
+                if current is None:
+                    return False
+                try:
+                    current_sha256 = self._verified_route_profile_sha256(current)
+                except BridgeError:
+                    return False
+                return (
+                    isinstance(route_profile_sha256, str)
+                    and re.fullmatch(r"[0-9a-f]{64}", route_profile_sha256)
+                    is not None
+                    and secrets.compare_digest(route_profile_sha256, current_sha256)
+                )
+
+            if connection is None:
+                with self._connect() as profile_connection:
+                    profile_matches = profile_identity_matches(profile_connection)
+            else:
+                profile_matches = profile_identity_matches(connection)
+            if not profile_matches:
+                mismatches.append("route_profile_sha256")
+        elif route_profile_sha256 is not None:
+            mismatches.append("route_profile_sha256")
+        expected_route_class = request["requested_route_class"]
+        if (
+            expected_route_class not in ROUTE_CLASSES
+            or observed["route_class"] not in ROUTE_CLASSES
+            or expected_route_class != observed["route_class"]
+        ):
+            mismatches.append("route_class")
+        for requested_key, observed_key in (
+            ("requested_provider_id", "provider_id"),
+            ("requested_model_id", "model_id"),
+            ("requested_reasoning_mode", "reasoning_mode"),
+        ):
+            expected = request[requested_key]
+            if expected and expected != observed[observed_key]:
+                mismatches.append(observed_key)
+        return {
+            "status": "verified" if not mismatches else "mismatch",
+            "request": request,
+            "observed": observed,
+            "mismatches": mismatches,
+        }
+
     def send_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(
+            args.get("room_id", DEFAULT_ROOM_ID), "room_id"
+        )
         raw_recipient = str(args.get("recipient") or "").strip()
         recipient = "*" if raw_recipient == "*" else _require_identifier(raw_recipient, "recipient")
         task_id = _require_identifier(args.get("task_id"), "task_id")
@@ -644,33 +2631,51 @@ class Bridge:
             raise BridgeError("priority must be low, normal, high or critical")
         reply_to = str(args.get("reply_to") or "").strip() or None
         artifacts = self._clean_artifacts(args.get("artifact_paths", []))
-        message_id = uuid.uuid4().hex
-        created = utc_now()
-        content = {
-            "message_id": message_id,
-            "scope": self.scope,
-            "task_id": task_id,
-            "sender": self.agent_id,
-            "recipient": recipient,
-            "subject": subject,
-            "body": body,
-            "priority": priority,
-            "reply_to": reply_to,
-            "artifact_paths": artifacts,
-            "created_utc": created,
-        }
-        content_sha = stable_sha256(content)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            self._require_room_member(connection, room_id, self.agent_id)
+            if room_id != DEFAULT_ROOM_ID and recipient != "*":
+                if self._active_room_member(connection, room_id, recipient) is None:
+                    raise BridgeError("recipient is not an active member of this room")
+            if reply_to:
+                parent = connection.execute(
+                    "SELECT room_id FROM messages WHERE scope=? AND message_id=?",
+                    (self.scope, reply_to),
+                ).fetchone()
+                if parent is None or parent["room_id"] != room_id:
+                    raise BridgeError("reply_to must reference a message in the same room")
+            route_request = self._resolve_route_request(connection, recipient, args)
+            message_id = uuid.uuid4().hex
+            created = utc_now()
+            content = {
+                "message_id": message_id,
+                "scope": self.scope,
+                "room_id": room_id,
+                "task_id": task_id,
+                "sender": self.agent_id,
+                "recipient": recipient,
+                "subject": subject,
+                "body": body,
+                "priority": priority,
+                "reply_to": reply_to,
+                "artifact_paths": artifacts,
+                "route_request": self._route_request_content_binding(route_request),
+                "created_utc": created,
+            }
+            content_sha = stable_sha256(content)
             cursor = connection.execute(
                 """INSERT INTO messages(
-                    message_id, scope, task_id, sender, recipient, subject, body,
-                    priority, reply_to, artifact_paths_json, created_utc,
+                    message_id, scope, room_id, task_id, sender, recipient, subject, body,
+                    priority, reply_to, artifact_paths_json, route_profile_id,
+                    route_profile_sha256, requested_provider_id, requested_model_id,
+                    requested_reasoning_mode, requested_route_class,
+                    route_request_sha256, created_utc,
                     acknowledged_utc, content_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
                 (
                     message_id,
                     self.scope,
+                    room_id,
                     task_id,
                     self.agent_id,
                     recipient,
@@ -679,6 +2684,13 @@ class Bridge:
                     priority,
                     reply_to,
                     json.dumps(artifacts, ensure_ascii=False),
+                    route_request["route_profile_id"] if route_request else None,
+                    route_request.get("route_profile_sha256") if route_request else None,
+                    route_request["requested_provider_id"] if route_request else None,
+                    route_request["requested_model_id"] if route_request else None,
+                    route_request["requested_reasoning_mode"] if route_request else None,
+                    route_request["requested_route_class"] if route_request else None,
+                    route_request["route_request_sha256"] if route_request else None,
                     created,
                     content_sha,
                 ),
@@ -688,16 +2700,708 @@ class Bridge:
                 "message.sent",
                 {
                     "message_id": message_id,
+                    "room_id": room_id,
                     "sequence": cursor.lastrowid,
                     "content_sha256": content_sha,
+                    "route_request_sha256": (
+                        route_request["route_request_sha256"] if route_request else None
+                    ),
+                    "route_profile_sha256": (
+                        route_request.get("route_profile_sha256")
+                        if route_request
+                        else None
+                    ),
                 },
                 task_id,
             )
         return {
             "message_id": message_id,
+            "room_id": room_id,
             "sequence": cursor.lastrowid,
             "content_sha256": content_sha,
+            "route_request": route_request,
+            "route_status": "requested" if route_request else "not_requested",
             "created_utc": created,
+        }
+
+    def _send_room_fanout_locked(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        room_id: str,
+        task_id: str,
+        subject: str,
+        body: str,
+        priority: str,
+        artifacts: list[str],
+        enforce_once_policy: bool = True,
+    ) -> dict[str, Any]:
+        """Insert one complete fan-out while the caller holds a write transaction."""
+        self._require_room_member(connection, room_id, self.agent_id)
+        if enforce_once_policy:
+            policy = self._room_policy(connection, room_id)
+            if str(policy["mode"]) != "once":
+                raise BridgeError(
+                    "direct room fanout requires automation mode once; "
+                    "use post_room_message for off or discussion mode"
+                )
+        fanout_id = uuid.uuid4().hex
+        created = utc_now()
+        seats = connection.execute(
+            """SELECT agent_id, route_profile_id
+                 FROM room_memberships
+                WHERE scope=? AND room_id=? AND status='active'
+                  AND agent_id!=? AND agent_id!='human-operator'
+                ORDER BY agent_id""",
+            (self.scope, room_id, self.agent_id),
+        ).fetchall()
+        if not seats:
+            raise BridgeError("room has no active Agent seats")
+
+        prepared: list[tuple[str, str, dict[str, Any]]] = []
+        for seat in seats:
+            agent_id = str(seat["agent_id"])
+            route_profile_id = str(seat["route_profile_id"] or "")
+            if not route_profile_id:
+                raise BridgeError(
+                    f"room seat {agent_id} has no route profile; fanout was not written"
+                )
+            route_request = self._resolve_route_request(
+                connection,
+                agent_id,
+                {"route_profile_id": route_profile_id},
+            )
+            if route_request is None:
+                raise BridgeError(f"room seat {agent_id} has no runnable route request")
+            prepared.append((agent_id, route_profile_id, route_request))
+
+        messages: list[dict[str, Any]] = []
+        for agent_id, route_profile_id, route_request in prepared:
+            message_id = uuid.uuid4().hex
+            content = {
+                "message_id": message_id,
+                "scope": self.scope,
+                "room_id": room_id,
+                "task_id": task_id,
+                "sender": self.agent_id,
+                "recipient": agent_id,
+                "subject": subject,
+                "body": body,
+                "priority": priority,
+                "reply_to": None,
+                "artifact_paths": artifacts,
+                "route_request": self._route_request_content_binding(route_request),
+                "created_utc": created,
+            }
+            content_sha = stable_sha256(content)
+            cursor = connection.execute(
+                """INSERT INTO messages(
+                    message_id, scope, room_id, task_id, sender, recipient,
+                    subject, body, priority, reply_to, artifact_paths_json,
+                    route_profile_id, route_profile_sha256, requested_provider_id,
+                    requested_model_id, requested_reasoning_mode,
+                    requested_route_class, route_request_sha256, created_utc,
+                    acknowledged_utc, content_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                (
+                    message_id,
+                    self.scope,
+                    room_id,
+                    task_id,
+                    self.agent_id,
+                    agent_id,
+                    subject,
+                    body,
+                    priority,
+                    json.dumps(artifacts, ensure_ascii=False),
+                    route_profile_id,
+                    route_request["route_profile_sha256"],
+                    route_request["requested_provider_id"],
+                    route_request["requested_model_id"],
+                    route_request["requested_reasoning_mode"],
+                    route_request["requested_route_class"],
+                    route_request["route_request_sha256"],
+                    created,
+                    content_sha,
+                ),
+            )
+            messages.append(
+                {
+                    "agent_id": agent_id,
+                    "message_id": message_id,
+                    "sequence": int(cursor.lastrowid),
+                    "route_profile_id": route_profile_id,
+                    "route_profile_sha256": route_request["route_profile_sha256"],
+                    "route_request_sha256": route_request["route_request_sha256"],
+                    "content_sha256": content_sha,
+                }
+            )
+
+        fanout = {
+            "fanout_id": fanout_id,
+            "scope": self.scope,
+            "room_id": room_id,
+            "task_id": task_id,
+            "sender": self.agent_id,
+            "recipients": messages,
+            "created_utc": created,
+        }
+        fanout_sha = stable_sha256(fanout)
+        event = self._event(
+            connection,
+            "message.room_fanout_sent",
+            {
+                "fanout_id": fanout_id,
+                "fanout_sha256": fanout_sha,
+                "room_id": room_id,
+                "recipient_count": len(messages),
+                "recipients": messages,
+            },
+            task_id,
+        )
+        return {
+            **fanout,
+            "fanout_count": len(messages),
+            "fanout_sha256": fanout_sha,
+            "content_sha256": fanout_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def send_room_fanout(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Atomically route one room member message under the room's once policy."""
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        task_id = _require_identifier(args.get("task_id"), "task_id")
+        subject = _require_text(args.get("subject"), "subject", limit=500)
+        body = _require_text(args.get("body"), "body")
+        priority = str(args.get("priority", "normal")).strip().lower()
+        if priority not in {"low", "normal", "high", "critical"}:
+            raise BridgeError("priority must be low, normal, high or critical")
+        artifacts = self._clean_artifacts(args.get("artifact_paths", []))
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            return self._send_room_fanout_locked(
+                connection,
+                room_id=room_id,
+                task_id=task_id,
+                subject=subject,
+                body=body,
+                priority=priority,
+                artifacts=artifacts,
+            )
+
+    def _routed_room_seats(
+        self,
+        connection: sqlite3.Connection,
+        room_id: str,
+        *,
+        exclude_agent_id: str | None = None,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        params: list[Any] = [self.scope, room_id]
+        exclusion = ""
+        if exclude_agent_id:
+            exclusion = "AND agent_id!=?"
+            params.append(exclude_agent_id)
+        rows = connection.execute(
+            f"""SELECT agent_id, route_profile_id
+                  FROM room_memberships
+                 WHERE scope=? AND room_id=? AND status='active'
+                   AND agent_id!='human-operator' {exclusion}
+                 ORDER BY agent_id""",
+            tuple(params),
+        ).fetchall()
+        if not rows:
+            raise BridgeError("room has no active Agent seats")
+        prepared: list[tuple[str, str, dict[str, Any]]] = []
+        for row in rows:
+            agent_id = str(row["agent_id"])
+            route_profile_id = str(row["route_profile_id"] or "")
+            if not route_profile_id:
+                raise BridgeError(
+                    f"room seat {agent_id} has no route profile; room post was not written"
+                )
+            request = self._resolve_route_request(
+                connection, agent_id, {"route_profile_id": route_profile_id}
+            )
+            if request is None:
+                raise BridgeError(
+                    f"room seat {agent_id} has no runnable route request"
+                )
+            prepared.append((agent_id, route_profile_id, request))
+        return prepared
+
+    def _insert_discussion_prompt(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        room_id: str,
+        task_id: str,
+        sender: str,
+        recipient: str,
+        subject: str,
+        body: str,
+        priority: str,
+        artifacts: list[str],
+        route_profile_id: str,
+        route_request: dict[str, Any],
+        discussion_id: str,
+        discussion_round: int,
+        created: str,
+    ) -> dict[str, Any]:
+        message_id = uuid.uuid4().hex
+        content = {
+            "message_id": message_id,
+            "scope": self.scope,
+            "room_id": room_id,
+            "task_id": task_id,
+            "sender": sender,
+            "recipient": recipient,
+            "subject": subject,
+            "body": body,
+            "priority": priority,
+            "reply_to": None,
+            "artifact_paths": artifacts,
+            "route_request": self._route_request_content_binding(route_request),
+            "discussion_id": discussion_id,
+            "discussion_round": discussion_round,
+            "discussion_role": "prompt",
+            "created_utc": created,
+        }
+        content_sha = stable_sha256(content)
+        cursor = connection.execute(
+            """INSERT INTO messages(
+                   message_id, scope, room_id, task_id, sender, recipient,
+                   subject, body, priority, reply_to, artifact_paths_json,
+                   route_profile_id, route_profile_sha256, requested_provider_id,
+                   requested_model_id,
+                   requested_reasoning_mode, requested_route_class,
+                   route_request_sha256, discussion_id, discussion_round,
+                   discussion_role, created_utc, acknowledged_utc, content_sha256
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?,
+                          ?, ?, 'prompt', ?, NULL, ?)""",
+            (
+                message_id,
+                self.scope,
+                room_id,
+                task_id,
+                sender,
+                recipient,
+                subject,
+                body,
+                priority,
+                json.dumps(artifacts, ensure_ascii=False),
+                route_profile_id,
+                route_request["route_profile_sha256"],
+                route_request["requested_provider_id"],
+                route_request["requested_model_id"],
+                route_request["requested_reasoning_mode"],
+                route_request["requested_route_class"],
+                route_request["route_request_sha256"],
+                discussion_id,
+                discussion_round,
+                created,
+                content_sha,
+            ),
+        )
+        return {
+            "agent_id": recipient,
+            "message_id": message_id,
+            "sequence": int(cursor.lastrowid),
+            "route_profile_id": route_profile_id,
+            "route_profile_sha256": route_request["route_profile_sha256"],
+            "route_request_sha256": route_request["route_request_sha256"],
+            "content_sha256": content_sha,
+        }
+
+    @staticmethod
+    def _discussion_row_payload(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        return {
+            "scope": str(row["scope"]),
+            "discussion_id": str(row["discussion_id"]),
+            "room_id": str(row["room_id"]),
+            "task_id": str(row["task_id"]),
+            "subject": str(row["subject"]),
+            "starter_agent_id": str(row["starter_agent_id"]),
+            "status": str(row["status"]),
+            "current_round": int(row["current_round"]),
+            "processed_round": int(row["processed_round"]),
+            "max_rounds": int(row["max_rounds"]),
+            "max_messages": int(row["max_messages"]),
+            "stagnation_rounds": int(row["stagnation_rounds"]),
+            "message_count": int(row["message_count"]),
+            "stagnation_count": int(row["stagnation_count"]),
+            "last_round_digest": row["last_round_digest"],
+            "stop_reason": row["stop_reason"],
+        }
+
+    def _store_discussion_state(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row | dict[str, Any],
+        *,
+        now: str,
+        **changes: Any,
+    ) -> tuple[dict[str, Any], str]:
+        """Write one complete discussion state while keeping its SHA binding valid."""
+        payload = {**self._discussion_row_payload(row), **changes}
+        discussion_sha = stable_sha256(payload)
+        connection.execute(
+            """UPDATE room_discussions
+                  SET status=?, current_round=?, processed_round=?, max_rounds=?,
+                      max_messages=?, stagnation_rounds=?, message_count=?,
+                      stagnation_count=?, last_round_digest=?, stop_reason=?,
+                      updated_utc=?, discussion_sha256=?
+                WHERE scope=? AND discussion_id=?""",
+            (
+                payload["status"],
+                payload["current_round"],
+                payload["processed_round"],
+                payload["max_rounds"],
+                payload["max_messages"],
+                payload["stagnation_rounds"],
+                payload["message_count"],
+                payload["stagnation_count"],
+                payload["last_round_digest"],
+                payload["stop_reason"],
+                now,
+                discussion_sha,
+                self.scope,
+                payload["discussion_id"],
+            ),
+        )
+        return payload, discussion_sha
+
+    def _cancel_discussion_dispatches(
+        self,
+        connection: sqlite3.Connection,
+        discussion_id: str,
+        *,
+        error_code: str,
+        now: str,
+    ) -> int:
+        """Fence every unfinished prompt in a terminal discussion."""
+        rows = connection.execute(
+            """SELECT d.* FROM message_dispatches d
+                 JOIN messages m
+                   ON m.scope=d.scope AND m.message_id=d.message_id
+                WHERE m.scope=? AND m.discussion_id=?
+                  AND m.discussion_role='prompt'
+                  AND d.status IN ('claimed', 'retryable')
+                ORDER BY m.sequence""",
+            (self.scope, discussion_id),
+        ).fetchall()
+        for row in rows:
+            failed = {
+                **self._dispatch_payload(row),
+                "status": "failed",
+                "claimed_session_id": None,
+                "lease_token_sha256": None,
+                "lease_expires_epoch": None,
+                "updated_utc": now,
+                "completed_utc": now,
+                "reply_message_id": None,
+                "inference_receipt_sha256": None,
+                "error_code": error_code,
+            }
+            dispatch_sha = stable_sha256(failed)
+            connection.execute(
+                """UPDATE message_dispatches
+                      SET status='failed', claimed_session_id=NULL,
+                          lease_token_sha256=NULL, lease_expires_epoch=NULL,
+                          updated_utc=?, completed_utc=?, reply_message_id=NULL,
+                          inference_receipt_sha256=NULL, error_code=?,
+                          dispatch_sha256=?
+                    WHERE scope=? AND message_id=? AND agent_id=?""",
+                (
+                    now,
+                    now,
+                    error_code,
+                    dispatch_sha,
+                    self.scope,
+                    row["message_id"],
+                    row["agent_id"],
+                ),
+            )
+        return len(rows)
+
+    def _discussion_participants(
+        self,
+        connection: sqlite3.Connection,
+        discussion_id: str,
+    ) -> list[tuple[str, str, dict[str, Any]]]:
+        """Return the immutable round-one participant and route snapshot."""
+        rows = connection.execute(
+            """SELECT * FROM messages
+                 WHERE scope=? AND discussion_id=? AND discussion_round=1
+                   AND discussion_role='prompt'
+                 ORDER BY recipient""",
+            (self.scope, discussion_id),
+        ).fetchall()
+        if not rows:
+            raise BridgeError("discussion participant snapshot is missing")
+        participants: list[tuple[str, str, dict[str, Any]]] = []
+        for row in rows:
+            agent_id = str(row["recipient"])
+            route_id = str(row["route_profile_id"] or "")
+            if not route_id:
+                raise BridgeError(
+                    f"discussion participant {agent_id} has no bound route profile"
+                )
+            membership = connection.execute(
+                """SELECT route_profile_id FROM room_memberships
+                     WHERE scope=? AND room_id=? AND agent_id=? AND status='active'""",
+                (self.scope, row["room_id"], agent_id),
+            ).fetchone()
+            if membership is None or str(membership["route_profile_id"] or "") != route_id:
+                raise BridgeError(
+                    f"discussion participant {agent_id} is unavailable or changed route"
+                )
+            bound = self._route_request_from_row(row)
+            if bound is None:
+                raise BridgeError(
+                    f"discussion participant {agent_id} has no bound route request"
+                )
+            bound_payload = {key: value for key, value in bound.items() if key != "route_request_sha256"}
+            if stable_sha256(bound_payload) != str(bound["route_request_sha256"]):
+                raise BridgeError(
+                    f"discussion participant {agent_id} route request SHA mismatch"
+                )
+            current = self._resolve_route_request(
+                connection, agent_id, {"route_profile_id": route_id}
+            )
+            if current != bound:
+                raise BridgeError(
+                    f"discussion participant {agent_id} route profile changed"
+                )
+            participants.append((agent_id, route_id, bound))
+        return participants
+
+    def post_room_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Post once according to the room policy and optionally open a discussion."""
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        task_id = _require_identifier(args.get("task_id"), "task_id")
+        subject = _require_text(args.get("subject"), "subject", limit=500)
+        body = _require_text(args.get("body"), "body")
+        priority = str(args.get("priority", "normal")).strip().lower()
+        if priority not in {"low", "normal", "high", "critical"}:
+            raise BridgeError("priority must be low, normal, high or critical")
+        artifacts = self._clean_artifacts(args.get("artifact_paths", []))
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_room_member(connection, room_id, self.agent_id)
+            policy = self._room_policy(connection, room_id)
+            mode = str(policy["mode"])
+            if mode == "off":
+                message_id = uuid.uuid4().hex
+                content = {
+                    "message_id": message_id,
+                    "scope": self.scope,
+                    "room_id": room_id,
+                    "task_id": task_id,
+                    "sender": self.agent_id,
+                    "recipient": self.agent_id,
+                    "subject": subject,
+                    "body": body,
+                    "priority": priority,
+                    "reply_to": None,
+                    "artifact_paths": artifacts,
+                    "route_request": None,
+                    "created_utc": now,
+                }
+                content_sha = stable_sha256(content)
+                cursor = connection.execute(
+                    """INSERT INTO messages(
+                           message_id, scope, room_id, task_id, sender, recipient,
+                           subject, body, priority, reply_to, artifact_paths_json,
+                           route_profile_id, route_profile_sha256,
+                           requested_provider_id, requested_model_id,
+                           requested_reasoning_mode, requested_route_class,
+                           route_request_sha256, created_utc, acknowledged_utc,
+                           content_sha256
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL,
+                                 NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)""",
+                    (
+                        message_id,
+                        self.scope,
+                        room_id,
+                        task_id,
+                        self.agent_id,
+                        self.agent_id,
+                        subject,
+                        body,
+                        priority,
+                        json.dumps(artifacts, ensure_ascii=False),
+                        now,
+                        content_sha,
+                    ),
+                )
+                event = self._event(
+                    connection,
+                    "message.room_history_posted",
+                    {
+                        "message_id": message_id,
+                        "room_id": room_id,
+                        "sequence": int(cursor.lastrowid),
+                        "content_sha256": content_sha,
+                    },
+                    task_id,
+                )
+                return {
+                    "message_id": message_id,
+                    "room_id": room_id,
+                    "sequence": int(cursor.lastrowid),
+                    "content_sha256": content_sha,
+                    "route_request": None,
+                    "route_status": "not_requested",
+                    "created_utc": now,
+                    "automation_mode": mode,
+                    "fanout_count": 0,
+                    "audit_chain_sha256": event["chain_sha256"],
+                }
+            if mode == "once":
+                receipt = self._send_room_fanout_locked(
+                    connection,
+                    room_id=room_id,
+                    task_id=task_id,
+                    subject=subject,
+                    body=body,
+                    priority=priority,
+                    artifacts=artifacts,
+                    enforce_once_policy=False,
+                )
+                return {**receipt, "automation_mode": mode}
+
+            if mode != "discussion":
+                raise BridgeError("unsupported room automation mode")
+            discussion_id = uuid.uuid4().hex
+            prepared = self._routed_room_seats(
+                connection, room_id, exclude_agent_id=self.agent_id
+            )
+            minimum_complete_round_messages = 2 * len(prepared)
+            if int(policy["max_messages"]) < minimum_complete_round_messages:
+                raise BridgeError(
+                    "max_messages cannot fit one complete discussion round for all "
+                    f"{len(prepared)} routed Agent seats; requires at least "
+                    f"{minimum_complete_round_messages}"
+                )
+            superseded = connection.execute(
+                """SELECT * FROM room_discussions
+                    WHERE scope=? AND room_id=?
+                      AND status IN ('active', 'paused', 'waiting_human')""",
+                (self.scope, room_id),
+            ).fetchall()
+            for previous in superseded:
+                cancelled = self._cancel_discussion_dispatches(
+                    connection,
+                    str(previous["discussion_id"]),
+                    error_code="discussion_superseded",
+                    now=now,
+                )
+                self._store_discussion_state(
+                    connection,
+                    previous,
+                    now=now,
+                    status="stopped",
+                    stop_reason="superseded_by_new_post",
+                )
+                self._event(
+                    connection,
+                    "discussion.superseded",
+                    {
+                        "discussion_id": previous["discussion_id"],
+                        "replacement_discussion_id": discussion_id,
+                        "cancelled_dispatch_count": cancelled,
+                    },
+                    str(previous["task_id"]),
+                )
+            messages = [
+                self._insert_discussion_prompt(
+                    connection,
+                    room_id=room_id,
+                    task_id=task_id,
+                    sender=self.agent_id,
+                    recipient=agent_id,
+                    subject=subject,
+                    body=body,
+                    priority=priority,
+                    artifacts=artifacts,
+                    route_profile_id=route_id,
+                    route_request=request,
+                    discussion_id=discussion_id,
+                    discussion_round=1,
+                    created=now,
+                )
+                for agent_id, route_id, request in prepared
+            ]
+            discussion = {
+                "scope": self.scope,
+                "discussion_id": discussion_id,
+                "room_id": room_id,
+                "task_id": task_id,
+                "subject": subject,
+                "starter_agent_id": self.agent_id,
+                "status": "active",
+                "current_round": 1,
+                "processed_round": 0,
+                "max_rounds": int(policy["max_rounds"]),
+                "max_messages": int(policy["max_messages"]),
+                "stagnation_rounds": int(policy["stagnation_rounds"]),
+                "message_count": len(messages),
+                "stagnation_count": 0,
+                "last_round_digest": None,
+                "stop_reason": None,
+            }
+            discussion_sha = stable_sha256(discussion)
+            connection.execute(
+                """INSERT INTO room_discussions(
+                       scope, discussion_id, room_id, task_id, subject,
+                       starter_agent_id, status, current_round, processed_round,
+                       max_rounds, max_messages, stagnation_rounds, message_count,
+                       stagnation_count, last_round_digest, stop_reason,
+                       created_utc, updated_utc, discussion_sha256
+                   ) VALUES (?, ?, ?, ?, ?, ?, 'active', 1, 0, ?, ?, ?, ?, 0,
+                             NULL, NULL, ?, ?, ?)""",
+                (
+                    self.scope,
+                    discussion_id,
+                    room_id,
+                    task_id,
+                    subject,
+                    self.agent_id,
+                    discussion["max_rounds"],
+                    discussion["max_messages"],
+                    discussion["stagnation_rounds"],
+                    len(messages),
+                    now,
+                    now,
+                    discussion_sha,
+                ),
+            )
+            event = self._event(
+                connection,
+                "discussion.started",
+                {
+                    "discussion_id": discussion_id,
+                    "discussion_sha256": discussion_sha,
+                    "room_id": room_id,
+                    "round": 1,
+                    "message_count": len(messages),
+                    "policy_sha256": policy["policy_sha256"],
+                },
+                task_id,
+            )
+        return {
+            "automation_mode": "discussion",
+            "discussion_id": discussion_id,
+            "room_id": room_id,
+            "task_id": task_id,
+            "round": 1,
+            "fanout_count": len(messages),
+            "recipients": messages,
+            "discussion_sha256": discussion_sha,
+            "content_sha256": discussion_sha,
+            "created_utc": now,
+            "audit_chain_sha256": event["chain_sha256"],
         }
 
     def _consumer_cursor(
@@ -710,19 +3414,33 @@ class Bridge:
         ).fetchone()
         return int(row["position"]) if row else 0
 
+    def _bound_consumer(self, args: dict[str, Any]) -> str:
+        """Return the runtime identity and reject caller-selected impersonation."""
+        requested = args.get("agent_id")
+        if requested is None:
+            return self.agent_id
+        consumer = _require_identifier(requested, "agent_id")
+        if consumer != self.agent_id:
+            raise BridgeError("agent_id must match the current runtime identity")
+        return consumer
+
     def poll_messages(self, args: dict[str, Any]) -> dict[str, Any]:
-        consumer = _require_identifier(
-            args.get("agent_id", self.agent_id), "agent_id"
+        room_id = _require_identifier(
+            args.get("room_id", DEFAULT_ROOM_ID), "room_id"
         )
+        consumer = self._bound_consumer(args)
         limit = max(1, min(int(args.get("limit", 50)), 500))
         include_sent = bool(args.get("include_sent", False))
         with self._connect() as connection:
-            stored_cursor = self._consumer_cursor(connection, "messages", consumer)
+            self._require_room_member(connection, room_id, consumer)
+            channel = f"messages:{room_id}"
+            stored_cursor = self._consumer_cursor(connection, channel, consumer)
             cursor = int(args.get("after_cursor", stored_cursor))
             sender_clause = " OR m.sender=?" if include_sent else ""
             params: list[Any] = [
                 consumer,
                 self.scope,
+                room_id,
                 cursor,
                 consumer,
             ]
@@ -734,19 +3452,24 @@ class Bridge:
                     FROM messages m
                     LEFT JOIN message_receipts r
                       ON r.scope=m.scope AND r.message_id=m.message_id AND r.agent_id=?
-                    WHERE m.scope=? AND m.sequence>?
+                    WHERE m.scope=? AND m.room_id=? AND m.sequence>?
                       AND (m.recipient=? OR m.recipient='*'{sender_clause})
                     ORDER BY m.sequence ASC LIMIT ?""",
                 tuple(params),
             ).fetchall()
-        messages = []
-        for row in rows:
-            item = dict(row)
-            item["artifact_paths"] = json.loads(item.pop("artifact_paths_json"))
-            item["acknowledged"] = bool(item["acknowledged"])
-            messages.append(item)
+            messages = []
+            for row in rows:
+                item = dict(row)
+                item["artifact_paths"] = json.loads(item.pop("artifact_paths_json"))
+                item["acknowledged"] = bool(item["acknowledged"])
+                item["route_request"] = self._route_request_from_row(item)
+                item["route_evaluation"] = self._evaluate_route(
+                    item, consumer, connection=connection
+                )
+                messages.append(item)
         return {
             "messages": messages,
+            "room_id": room_id,
             "count": len(messages),
             "stored_cursor": stored_cursor,
             "requested_cursor": cursor,
@@ -755,39 +3478,96 @@ class Bridge:
 
     def ack_message(self, args: dict[str, Any]) -> dict[str, Any]:
         message_id = _require_identifier(args.get("message_id"), "message_id")
-        consumer = _require_identifier(
-            args.get("agent_id", self.agent_id), "agent_id"
-        )
+        consumer = self._bound_consumer(args)
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT sequence, recipient FROM messages WHERE scope=? AND message_id=?",
+                """SELECT sequence, room_id, recipient, route_profile_id,
+                          route_profile_sha256,
+                          requested_provider_id, requested_model_id,
+                          requested_reasoning_mode, requested_route_class,
+                          route_request_sha256
+                   FROM messages WHERE scope=? AND message_id=?""",
                 (self.scope, message_id),
             ).fetchone()
             if row is None or row["recipient"] not in {consumer, "*"}:
                 raise BridgeError("message is not addressed to this consumer")
+            room_id = _require_identifier(row["room_id"], "room_id")
+            self._require_room_member(connection, room_id, consumer)
             acknowledged = utc_now()
+            route_evaluation = self._evaluate_route(
+                row, consumer, connection=connection
+            )
+            if route_evaluation["status"] == "mismatch":
+                raise BridgeError(
+                    "route request is not satisfied by this runtime identity: "
+                    + ", ".join(route_evaluation["mismatches"])
+                )
             connection.execute(
                 """INSERT OR IGNORE INTO message_receipts(
                     scope, message_id, agent_id, acknowledged_utc
                 ) VALUES (?, ?, ?, ?)""",
                 (self.scope, message_id, consumer, acknowledged),
             )
+            route_receipt = None
+            if route_evaluation["status"] == "verified":
+                route_receipt_content = {
+                    "scope": self.scope,
+                    "message_id": message_id,
+                    "agent_id": consumer,
+                    "session_id": self.session_id,
+                    "observed_provider_id": self.provider_id,
+                    "observed_model_id": self.model_id,
+                    "observed_reasoning_mode": self.reasoning_mode,
+                    "observed_route_class": self.route_class,
+                    "route_status": "verified",
+                    "acknowledged_utc": acknowledged,
+                    "route_request_sha256": row["route_request_sha256"],
+                }
+                receipt_sha = stable_sha256(route_receipt_content)
+                connection.execute(
+                    """INSERT OR IGNORE INTO message_route_receipts(
+                        scope, message_id, agent_id, session_id,
+                        observed_provider_id, observed_model_id,
+                        observed_reasoning_mode, observed_route_class, route_status,
+                        acknowledged_utc, receipt_sha256
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?, ?)""",
+                    (
+                        self.scope,
+                        message_id,
+                        consumer,
+                        self.session_id,
+                        self.provider_id,
+                        self.model_id,
+                        self.reasoning_mode,
+                        self.route_class,
+                        acknowledged,
+                        receipt_sha,
+                    ),
+                )
+                stored_receipt = connection.execute(
+                    """SELECT * FROM message_route_receipts
+                       WHERE scope=? AND message_id=? AND agent_id=?""",
+                    (self.scope, message_id, consumer),
+                ).fetchone()
+                route_receipt = dict(stored_receipt) if stored_receipt else None
             if row["recipient"] != "*":
                 connection.execute(
                     "UPDATE messages SET acknowledged_utc=COALESCE(acknowledged_utc, ?) WHERE message_id=?",
                     (acknowledged, message_id),
                 )
-            current = self._consumer_cursor(connection, "messages", consumer)
+            channel = f"messages:{room_id}"
+            current = self._consumer_cursor(connection, channel, consumer)
             eligible = connection.execute(
                 """SELECT m.sequence,
                           CASE WHEN r.message_id IS NULL THEN 0 ELSE 1 END AS acknowledged
                    FROM messages m
                    LEFT JOIN message_receipts r
                      ON r.scope=m.scope AND r.message_id=m.message_id AND r.agent_id=?
-                   WHERE m.scope=? AND m.sequence>? AND (m.recipient=? OR m.recipient='*')
+                   WHERE m.scope=? AND m.room_id=? AND m.sequence>?
+                     AND (m.recipient=? OR m.recipient='*')
                    ORDER BY m.sequence ASC""",
-                (consumer, self.scope, current, consumer),
+                (consumer, self.scope, room_id, current, consumer),
             ).fetchall()
             advanced = current
             for item in eligible:
@@ -796,22 +3576,1335 @@ class Bridge:
                 advanced = int(item["sequence"])
             connection.execute(
                 """INSERT INTO consumer_cursors(scope, channel, consumer, position, updated_utc)
-                   VALUES (?, 'messages', ?, ?, ?)
+                   VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(scope, channel, consumer) DO UPDATE SET
                      position=excluded.position, updated_utc=excluded.updated_utc""",
-                (self.scope, consumer, advanced, utc_now()),
+                (self.scope, channel, consumer, advanced, utc_now()),
             )
             self._event(
                 connection,
                 "message.acknowledged",
-                {"message_id": message_id, "consumer": consumer, "cursor": advanced},
+                {
+                    "message_id": message_id,
+                    "room_id": room_id,
+                    "consumer": consumer,
+                    "cursor": advanced,
+                    "route_status": route_evaluation["status"],
+                    "route_receipt_sha256": (
+                        route_receipt["receipt_sha256"] if route_receipt else None
+                    ),
+                },
             )
         return {
             "message_id": message_id,
+            "room_id": room_id,
             "acknowledged": True,
             "consumer": consumer,
             "cursor": advanced,
+            "route_evaluation": route_evaluation,
+            "route_receipt": route_receipt,
         }
+
+    @staticmethod
+    def _dispatch_payload(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        return {
+            "scope": row["scope"],
+            "message_id": row["message_id"],
+            "agent_id": row["agent_id"],
+            "status": row["status"],
+            "claimed_session_id": row["claimed_session_id"],
+            "lease_token_sha256": row["lease_token_sha256"],
+            "lease_expires_epoch": row["lease_expires_epoch"],
+            "attempt_count": int(row["attempt_count"]),
+            "claimed_utc": row["claimed_utc"],
+            "updated_utc": row["updated_utc"],
+            "completed_utc": row["completed_utc"],
+            "reply_message_id": row["reply_message_id"],
+            "inference_receipt_sha256": row["inference_receipt_sha256"],
+            "error_code": row["error_code"],
+        }
+
+    @classmethod
+    def _public_dispatch(cls, row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+        item = cls._dispatch_payload(row)
+        item.pop("lease_token_sha256", None)
+        item["dispatch_sha256"] = row["dispatch_sha256"]
+        return item
+
+    def _require_dispatch_lease(
+        self,
+        connection: sqlite3.Connection,
+        message_id: str,
+        lease_token: Any,
+        *,
+        allow_completed: bool = False,
+    ) -> sqlite3.Row:
+        token = str(lease_token or "")
+        if not token:
+            raise BridgeError("lease_token is required")
+        row = connection.execute(
+            """SELECT * FROM message_dispatches
+               WHERE scope=? AND message_id=? AND agent_id=?""",
+            (self.scope, message_id, self.agent_id),
+        ).fetchone()
+        if row is None:
+            raise BridgeError("message dispatch is not claimed by this agent")
+        if allow_completed and row["status"] == "completed":
+            if row["claimed_session_id"] != self.session_id:
+                raise BridgeError("message dispatch was completed by another session")
+        elif row["status"] != "claimed":
+            raise BridgeError("message dispatch has no active lease")
+        if row["claimed_session_id"] != self.session_id:
+            raise BridgeError("message dispatch is claimed by another session")
+        if not secrets.compare_digest(
+            str(row["lease_token_sha256"] or ""),
+            sha256_bytes(token.encode("utf-8")),
+        ):
+            raise BridgeError("message dispatch lease token does not match")
+        if (
+            row["status"] == "claimed"
+            and row["lease_expires_epoch"] is not None
+            and float(row["lease_expires_epoch"]) <= time.time()
+        ):
+            raise BridgeError("message dispatch lease has expired")
+        return row
+
+    def claim_message_dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Claim one addressed message without allowing duplicate active workers."""
+        requested_message_id = _optional_identifier(
+            args.get("message_id"), "message_id"
+        )
+        requested_room_id = _optional_identifier(args.get("room_id"), "room_id")
+        requested_route_profile_id = _optional_identifier(
+            args.get("route_profile_id"), "route_profile_id"
+        )
+        require_route = bool(args.get("require_route", False))
+        lease_seconds = max(
+            30,
+            min(
+                int(args.get("lease_seconds", DEFAULT_DISPATCH_LEASE_SECONDS)),
+                MAX_LEASE_SECONDS,
+            ),
+        )
+        max_attempts = max(
+            1, min(int(args.get("max_attempts", MAX_DISPATCH_ATTEMPTS)), 100)
+        )
+        now_epoch = time.time()
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            where = [
+                "m.scope=?",
+                "(m.recipient=? OR m.recipient='*')",
+                "m.sender!=?",
+                "m.reply_to IS NULL",
+                "r.message_id IS NULL",
+                "(m.discussion_id IS NULL OR EXISTS ("
+                "SELECT 1 FROM room_discussions rd "
+                "WHERE rd.scope=m.scope AND rd.discussion_id=m.discussion_id "
+                "AND rd.status='active'))",
+            ]
+            if require_route:
+                where.append("m.route_request_sha256 IS NOT NULL")
+            params: list[Any] = [
+                self.agent_id,
+                self.agent_id,
+                self.scope,
+                self.agent_id,
+                self.agent_id,
+            ]
+            if requested_message_id:
+                where.append("m.message_id=?")
+                params.append(requested_message_id)
+            if requested_room_id:
+                where.append("m.room_id=?")
+                params.append(requested_room_id)
+            if requested_route_profile_id:
+                where.append("m.route_profile_id=?")
+                params.append(requested_route_profile_id)
+            rows = connection.execute(
+                f"""SELECT m.*, d.status AS dispatch_status,
+                            d.claimed_session_id AS dispatch_session_id,
+                            d.lease_expires_epoch AS dispatch_lease_expires_epoch,
+                            d.attempt_count AS dispatch_attempt_count,
+                            s.not_before_epoch AS dispatch_retry_not_before_epoch,
+                            s.error_code AS dispatch_retry_error_code,
+                            s.created_utc AS dispatch_retry_created_utc,
+                            s.schedule_sha256 AS dispatch_retry_schedule_sha256
+                     FROM messages m
+                     LEFT JOIN message_receipts r
+                       ON r.scope=m.scope AND r.message_id=m.message_id AND r.agent_id=?
+                     LEFT JOIN message_dispatches d
+                       ON d.scope=m.scope AND d.message_id=m.message_id AND d.agent_id=?
+                     LEFT JOIN message_dispatch_retry_schedules s
+                       ON s.scope=d.scope AND s.message_id=d.message_id
+                      AND s.agent_id=d.agent_id AND s.attempt_count=d.attempt_count
+                     WHERE {' AND '.join(where)}
+                     ORDER BY m.sequence ASC LIMIT 500""",
+                tuple(params),
+            ).fetchall()
+
+            selected: sqlite3.Row | None = None
+            for candidate in rows:
+                if candidate["room_id"] != DEFAULT_ROOM_ID and self._active_room_member(
+                    connection, candidate["room_id"], self.agent_id
+                ) is None:
+                    continue
+                if (
+                    candidate["route_profile_id"]
+                    and requested_message_id
+                    and not requested_route_profile_id
+                ):
+                    raise BridgeError(
+                        "route_profile_id is required to claim this routed message"
+                    )
+                route = self._evaluate_route(
+                    candidate, self.agent_id, connection=connection
+                )
+                if route["status"] == "mismatch":
+                    if requested_message_id:
+                        raise BridgeError(
+                            "route request is not satisfied by this runtime identity: "
+                            + ", ".join(route["mismatches"])
+                        )
+                    continue
+                status = candidate["dispatch_status"]
+                attempts = int(candidate["dispatch_attempt_count"] or 0)
+                if status in {"completed", "failed"}:
+                    continue
+                schedule_sha = str(candidate["dispatch_retry_schedule_sha256"] or "")
+                if schedule_sha:
+                    retry_schedule = {
+                        "scope": self.scope,
+                        "message_id": candidate["message_id"],
+                        "agent_id": self.agent_id,
+                        "attempt_count": attempts,
+                        "not_before_epoch": float(
+                            candidate["dispatch_retry_not_before_epoch"]
+                        ),
+                        "error_code": candidate["dispatch_retry_error_code"],
+                        "created_utc": candidate["dispatch_retry_created_utc"],
+                    }
+                    if stable_sha256(retry_schedule) != schedule_sha:
+                        raise BridgeError("message dispatch retry schedule SHA mismatch")
+                    if (
+                        status == "retryable"
+                        and retry_schedule["not_before_epoch"] > now_epoch
+                    ):
+                        continue
+                if status == "claimed" and float(
+                    candidate["dispatch_lease_expires_epoch"] or 0
+                ) > now_epoch:
+                    continue
+                if attempts >= max_attempts:
+                    continue
+                selected = candidate
+                break
+
+            if selected is None:
+                if requested_message_id and not rows:
+                    raise BridgeError("message is not available to this agent")
+                return {"claimed": False, "message": None, "dispatch": None}
+
+            token = secrets.token_urlsafe(32)
+            token_sha = sha256_bytes(token.encode("utf-8"))
+            expires = now_epoch + lease_seconds
+            attempts = int(selected["dispatch_attempt_count"] or 0) + 1
+            dispatch = {
+                "scope": self.scope,
+                "message_id": selected["message_id"],
+                "agent_id": self.agent_id,
+                "status": "claimed",
+                "claimed_session_id": self.session_id,
+                "lease_token_sha256": token_sha,
+                "lease_expires_epoch": expires,
+                "attempt_count": attempts,
+                "claimed_utc": now,
+                "updated_utc": now,
+                "completed_utc": None,
+                "reply_message_id": None,
+                "inference_receipt_sha256": None,
+                "error_code": None,
+            }
+            dispatch_sha = stable_sha256(dispatch)
+            connection.execute(
+                """INSERT INTO message_dispatches(
+                       scope, message_id, agent_id, status, claimed_session_id,
+                       lease_token_sha256, lease_expires_epoch, attempt_count,
+                       claimed_utc, updated_utc, completed_utc, reply_message_id,
+                       inference_receipt_sha256, error_code, dispatch_sha256
+                   ) VALUES (?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?)
+                   ON CONFLICT(scope, message_id, agent_id) DO UPDATE SET
+                       status='claimed', claimed_session_id=excluded.claimed_session_id,
+                       lease_token_sha256=excluded.lease_token_sha256,
+                       lease_expires_epoch=excluded.lease_expires_epoch,
+                       attempt_count=excluded.attempt_count,
+                       claimed_utc=excluded.claimed_utc, updated_utc=excluded.updated_utc,
+                       completed_utc=NULL, reply_message_id=NULL,
+                       inference_receipt_sha256=NULL, error_code=NULL,
+                       dispatch_sha256=excluded.dispatch_sha256""",
+                (
+                    self.scope,
+                    selected["message_id"],
+                    self.agent_id,
+                    self.session_id,
+                    token_sha,
+                    expires,
+                    attempts,
+                    now,
+                    now,
+                    dispatch_sha,
+                ),
+            )
+            event = self._event(
+                connection,
+                "message.dispatch_claimed",
+                {
+                    "message_id": selected["message_id"],
+                    "room_id": selected["room_id"],
+                    "attempt_count": attempts,
+                    "lease_expires_epoch": expires,
+                    "dispatch_sha256": dispatch_sha,
+                },
+                selected["task_id"],
+            )
+            message = dict(selected)
+            for key in tuple(message):
+                if key.startswith("dispatch_"):
+                    message.pop(key)
+            message["artifact_paths"] = json.loads(message.pop("artifact_paths_json"))
+            message["route_request"] = self._route_request_from_row(message)
+            message["route_evaluation"] = self._evaluate_route(
+                message, self.agent_id, connection=connection
+            )
+            return {
+                "claimed": True,
+                "lease_token": token,
+                "message": message,
+                "dispatch": {
+                    **self._public_dispatch({**dispatch, "dispatch_sha256": dispatch_sha}),
+                    "audit_chain_sha256": event["chain_sha256"],
+                },
+            }
+
+    def complete_message_dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Atomically create one reply and mark its source message completed."""
+        message_id = _require_identifier(args.get("message_id"), "message_id")
+        lease_token = str(args.get("lease_token") or "")
+        body = _require_text(args.get("body"), "body")
+        inference_receipt_sha = _require_sha256(
+            args.get("inference_receipt_sha256"), "inference_receipt_sha256"
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            dispatch_row = self._require_dispatch_lease(
+                connection, message_id, lease_token, allow_completed=True
+            )
+            if dispatch_row["status"] == "completed":
+                return {
+                    "completed": True,
+                    "idempotent_replay": True,
+                    "reply_message_id": dispatch_row["reply_message_id"],
+                    "dispatch": self._public_dispatch(dispatch_row),
+                }
+            source = connection.execute(
+                "SELECT * FROM messages WHERE scope=? AND message_id=?",
+                (self.scope, message_id),
+            ).fetchone()
+            if source is None or source["recipient"] not in {self.agent_id, "*"}:
+                raise BridgeError("source message is not addressed to this agent")
+            if source["discussion_id"]:
+                discussion = connection.execute(
+                    """SELECT status FROM room_discussions
+                         WHERE scope=? AND discussion_id=?""",
+                    (self.scope, source["discussion_id"]),
+                ).fetchone()
+                if discussion is None or str(discussion["status"]) not in {
+                    "active",
+                    "paused",
+                }:
+                    raise BridgeError(
+                        "discussion is no longer active; reply completion is fenced"
+                    )
+            self._require_room_member(connection, source["room_id"], self.agent_id)
+            route_evaluation = self._evaluate_route(
+                source, self.agent_id, connection=connection
+            )
+            if route_evaluation["status"] == "mismatch":
+                raise BridgeError(
+                    "route request is not satisfied by this runtime identity: "
+                    + ", ".join(route_evaluation["mismatches"])
+                )
+            subject = str(args.get("subject") or f"Re: {source['subject']}").strip()
+            subject = _require_text(subject, "subject", limit=500)
+            created = utc_now()
+            reply_id = uuid.uuid4().hex
+            content = {
+                "message_id": reply_id,
+                "scope": self.scope,
+                "room_id": source["room_id"],
+                "task_id": source["task_id"],
+                "sender": self.agent_id,
+                "recipient": source["sender"],
+                "subject": subject,
+                "body": body,
+                "priority": "normal",
+                "reply_to": message_id,
+                "artifact_paths": [],
+                "route_request": None,
+                "discussion_id": source["discussion_id"],
+                "discussion_round": source["discussion_round"],
+                "discussion_role": (
+                    "response" if source["discussion_id"] else None
+                ),
+                "created_utc": created,
+            }
+            content_sha = stable_sha256(content)
+            cursor = connection.execute(
+                """INSERT INTO messages(
+                       message_id, scope, room_id, task_id, sender, recipient,
+                       subject, body, priority, reply_to, artifact_paths_json,
+                       route_profile_id, route_profile_sha256,
+                       requested_provider_id, requested_model_id,
+                       requested_reasoning_mode, requested_route_class,
+                       route_request_sha256, discussion_id, discussion_round,
+                       discussion_role, created_utc, acknowledged_utc, content_sha256
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?, '[]',
+                             NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?)""",
+                (
+                    reply_id,
+                    self.scope,
+                    source["room_id"],
+                    source["task_id"],
+                    self.agent_id,
+                    source["sender"],
+                    subject,
+                    body,
+                    message_id,
+                    source["discussion_id"],
+                    source["discussion_round"],
+                    "response" if source["discussion_id"] else None,
+                    created,
+                    content_sha,
+                ),
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO message_receipts(
+                       scope, message_id, agent_id, acknowledged_utc
+                   ) VALUES (?, ?, ?, ?)""",
+                (self.scope, message_id, self.agent_id, created),
+            )
+            route_receipt_sha = None
+            if route_evaluation["status"] == "verified":
+                route_receipt_content = {
+                    "scope": self.scope,
+                    "message_id": message_id,
+                    "agent_id": self.agent_id,
+                    "session_id": self.session_id,
+                    "observed_provider_id": self.provider_id,
+                    "observed_model_id": self.model_id,
+                    "observed_reasoning_mode": self.reasoning_mode,
+                    "observed_route_class": self.route_class,
+                    "route_status": "verified",
+                    "acknowledged_utc": created,
+                    "route_request_sha256": source["route_request_sha256"],
+                }
+                route_receipt_sha = stable_sha256(route_receipt_content)
+                connection.execute(
+                    """INSERT OR IGNORE INTO message_route_receipts(
+                           scope, message_id, agent_id, session_id,
+                           observed_provider_id, observed_model_id,
+                           observed_reasoning_mode, observed_route_class,
+                           route_status, acknowledged_utc, receipt_sha256
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'verified', ?, ?)""",
+                    (
+                        self.scope,
+                        message_id,
+                        self.agent_id,
+                        self.session_id,
+                        self.provider_id,
+                        self.model_id,
+                        self.reasoning_mode,
+                        self.route_class,
+                        created,
+                        route_receipt_sha,
+                    ),
+                )
+            if source["recipient"] != "*":
+                connection.execute(
+                    """UPDATE messages
+                       SET acknowledged_utc=COALESCE(acknowledged_utc, ?)
+                       WHERE scope=? AND message_id=?""",
+                    (created, self.scope, message_id),
+                )
+            channel = f"messages:{source['room_id']}"
+            current = self._consumer_cursor(connection, channel, self.agent_id)
+            eligible = connection.execute(
+                """SELECT m.sequence,
+                          CASE WHEN r.message_id IS NULL THEN 0 ELSE 1 END AS acknowledged
+                   FROM messages m
+                   LEFT JOIN message_receipts r
+                     ON r.scope=m.scope AND r.message_id=m.message_id AND r.agent_id=?
+                   WHERE m.scope=? AND m.room_id=? AND m.sequence>?
+                     AND (m.recipient=? OR m.recipient='*')
+                   ORDER BY m.sequence ASC""",
+                (self.agent_id, self.scope, source["room_id"], current, self.agent_id),
+            ).fetchall()
+            advanced = current
+            for item in eligible:
+                if not item["acknowledged"]:
+                    break
+                advanced = int(item["sequence"])
+            connection.execute(
+                """INSERT INTO consumer_cursors(scope, channel, consumer, position, updated_utc)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(scope, channel, consumer) DO UPDATE SET
+                     position=excluded.position, updated_utc=excluded.updated_utc""",
+                (self.scope, channel, self.agent_id, advanced, created),
+            )
+            completed = {
+                **self._dispatch_payload(dispatch_row),
+                "status": "completed",
+                "lease_expires_epoch": None,
+                "updated_utc": created,
+                "completed_utc": created,
+                "reply_message_id": reply_id,
+                "inference_receipt_sha256": inference_receipt_sha,
+                "error_code": None,
+            }
+            dispatch_sha = stable_sha256(completed)
+            connection.execute(
+                """UPDATE message_dispatches
+                   SET status='completed', lease_expires_epoch=NULL,
+                       updated_utc=?, completed_utc=?, reply_message_id=?,
+                       inference_receipt_sha256=?, error_code=NULL,
+                       dispatch_sha256=?
+                   WHERE scope=? AND message_id=? AND agent_id=?""",
+                (
+                    created,
+                    created,
+                    reply_id,
+                    inference_receipt_sha,
+                    dispatch_sha,
+                    self.scope,
+                    message_id,
+                    self.agent_id,
+                ),
+            )
+            self._event(
+                connection,
+                "message.sent",
+                {
+                    "message_id": reply_id,
+                    "room_id": source["room_id"],
+                    "sequence": cursor.lastrowid,
+                    "content_sha256": content_sha,
+                    "route_request_sha256": None,
+                },
+                source["task_id"],
+            )
+            event = self._event(
+                connection,
+                "message.dispatch_completed",
+                {
+                    "message_id": message_id,
+                    "reply_message_id": reply_id,
+                    "dispatch_sha256": dispatch_sha,
+                    "inference_receipt_sha256": inference_receipt_sha,
+                    "route_receipt_sha256": route_receipt_sha,
+                },
+                source["task_id"],
+            )
+        return {
+            "completed": True,
+            "idempotent_replay": False,
+            "reply_message_id": reply_id,
+            "reply_content_sha256": content_sha,
+            "cursor": advanced,
+            "dispatch": {
+                **self._public_dispatch({**completed, "dispatch_sha256": dispatch_sha}),
+                "audit_chain_sha256": event["chain_sha256"],
+            },
+        }
+
+    def renew_message_dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Extend an active dispatch lease without exposing its lease credential."""
+        message_id = _require_identifier(args.get("message_id"), "message_id")
+        lease_seconds = max(
+            30,
+            min(
+                int(args.get("lease_seconds", DEFAULT_DISPATCH_LEASE_SECONDS)),
+                MAX_LEASE_SECONDS,
+            ),
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._require_dispatch_lease(
+                connection, message_id, args.get("lease_token")
+            )
+            source = connection.execute(
+                "SELECT task_id FROM messages WHERE scope=? AND message_id=?",
+                (self.scope, message_id),
+            ).fetchone()
+            if source is None:
+                raise BridgeError("source message is absent")
+            updated = utc_now()
+            expires = time.time() + lease_seconds
+            renewed = {
+                **self._dispatch_payload(row),
+                "lease_expires_epoch": expires,
+                "updated_utc": updated,
+            }
+            dispatch_sha = stable_sha256(renewed)
+            connection.execute(
+                """UPDATE message_dispatches
+                   SET lease_expires_epoch=?, updated_utc=?, dispatch_sha256=?
+                   WHERE scope=? AND message_id=? AND agent_id=?""",
+                (
+                    expires,
+                    updated,
+                    dispatch_sha,
+                    self.scope,
+                    message_id,
+                    self.agent_id,
+                ),
+            )
+            event = self._event(
+                connection,
+                "message.dispatch_renewed",
+                {
+                    "message_id": message_id,
+                    "lease_expires_epoch": expires,
+                    "dispatch_sha256": dispatch_sha,
+                },
+            )
+        return {
+            "renewed": True,
+            "dispatch": {
+                **self._public_dispatch(
+                    {**renewed, "dispatch_sha256": dispatch_sha}
+                ),
+                "audit_chain_sha256": event["chain_sha256"],
+            },
+        }
+
+    @staticmethod
+    def _discussion_signal(body: str) -> str:
+        lines = [line.strip() for line in body.splitlines() if line.strip()]
+        if not lines:
+            return "INVALID"
+        pattern = re.compile(
+            r"^PEERBRIDGE_SIGNAL\s*:\s*(CONTINUE|CONSENSUS|BLOCKED)$",
+            re.IGNORECASE,
+        )
+        matches = [pattern.fullmatch(line) for line in lines]
+        signal_indexes = [index for index, match in enumerate(matches) if match]
+        if len(signal_indexes) != 1 or signal_indexes[0] != len(lines) - 1:
+            return "INVALID"
+        return str(matches[-1].group(1)).upper()
+
+    @staticmethod
+    def _normalized_discussion_digest(rows: Iterable[sqlite3.Row]) -> str:
+        normalized = []
+        for row in rows:
+            body = re.sub(r"\s+", " ", str(row["body"])).strip().lower()
+            normalized.append(
+                {
+                    "sender": str(row["sender"]),
+                    "signal": Bridge._discussion_signal(str(row["body"])),
+                    "body_sha256": sha256_bytes(body.encode("utf-8")),
+                }
+            )
+        return stable_sha256(sorted(normalized, key=lambda item: item["sender"]))
+
+    @staticmethod
+    def _discussion_context(rows: Iterable[sqlite3.Row], round_number: int) -> str:
+        parts = [
+            f"DISCUSSION ROUND {round_number} COMPLETE.",
+            "Review the peer contributions below. Add only new evidence, resolve disagreements, "
+            "or state a concrete blocker. End with exactly one line: "
+            "PEERBRIDGE_SIGNAL: CONTINUE, CONSENSUS, or BLOCKED.",
+        ]
+        for row in rows:
+            parts.append(f"\n[{row['sender']}]\n{str(row['body']).strip()}")
+        return "\n".join(parts)
+
+    def advance_discussions(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Advance complete discussion rounds exactly once under a global DB transaction."""
+        if (
+            self.agent_id != DISCUSSION_COORDINATOR_ID
+            or not self._discussion_coordinator
+        ):
+            raise BridgeError("only the discussion coordinator may advance rounds")
+        raw_room_id = str(args.get("room_id") or "").strip()
+        room_id = _require_identifier(raw_room_id, "room_id") if raw_room_id else None
+        limit = self._bounded_integer(
+            args.get("limit", 10), "limit", minimum=1, maximum=100
+        )
+        advanced: list[dict[str, Any]] = []
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            where = ["scope=?", "status='active'", "processed_round<current_round"]
+            params: list[Any] = [self.scope]
+            if room_id:
+                where.append("room_id=?")
+                params.append(room_id)
+            params.append(limit)
+            discussions = connection.execute(
+                f"""SELECT * FROM room_discussions
+                     WHERE {' AND '.join(where)}
+                     ORDER BY updated_utc, discussion_id LIMIT ?""",
+                tuple(params),
+            ).fetchall()
+            for discussion in discussions:
+                discussion_id = str(discussion["discussion_id"])
+                current_round = int(discussion["current_round"])
+                prompts = connection.execute(
+                    """SELECT * FROM messages
+                       WHERE scope=? AND discussion_id=? AND discussion_round=?
+                         AND discussion_role='prompt'
+                       ORDER BY recipient""",
+                    (self.scope, discussion_id, current_round),
+                ).fetchall()
+                if not prompts:
+                    continue
+                try:
+                    participants = self._discussion_participants(
+                        connection, discussion_id
+                    )
+                except BridgeError as exc:
+                    now = utc_now()
+                    cancelled = self._cancel_discussion_dispatches(
+                        connection,
+                        discussion_id,
+                        error_code="discussion_participant_unavailable",
+                        now=now,
+                    )
+                    updated, updated_sha = self._store_discussion_state(
+                        connection,
+                        discussion,
+                        now=now,
+                        status="waiting_human",
+                        processed_round=current_round,
+                        stop_reason="participant_unavailable",
+                    )
+                    event = self._event(
+                        connection,
+                        "discussion.round_blocked",
+                        {
+                            "discussion_id": discussion_id,
+                            "processed_round": current_round,
+                            "status": "waiting_human",
+                            "stop_reason": "participant_unavailable",
+                            "detail": str(exc),
+                            "cancelled_dispatch_count": cancelled,
+                            "discussion_sha256": updated_sha,
+                        },
+                        str(discussion["task_id"]),
+                    )
+                    advanced.append(
+                        {
+                            "discussion_id": discussion_id,
+                            "room_id": discussion["room_id"],
+                            "processed_round": current_round,
+                            "current_round": updated["current_round"],
+                            "status": "waiting_human",
+                            "stop_reason": "participant_unavailable",
+                            "new_prompt_count": 0,
+                            "discussion_sha256": updated_sha,
+                            "audit_chain_sha256": event["chain_sha256"],
+                        }
+                    )
+                    continue
+                if len(prompts) != len(participants):
+                    raise BridgeError("discussion prompt participant set drifted")
+                responses = connection.execute(
+                    """SELECT reply.* FROM messages prompt
+                       JOIN message_dispatches d
+                         ON d.scope=prompt.scope AND d.message_id=prompt.message_id
+                        AND d.status='completed'
+                       JOIN messages reply
+                         ON reply.scope=d.scope AND reply.message_id=d.reply_message_id
+                      WHERE prompt.scope=? AND prompt.discussion_id=?
+                        AND prompt.discussion_round=? AND prompt.discussion_role='prompt'
+                      ORDER BY reply.sender""",
+                    (self.scope, discussion_id, current_round),
+                ).fetchall()
+                terminal = connection.execute(
+                    """SELECT COUNT(*) FROM message_dispatches d
+                       JOIN messages prompt
+                         ON prompt.scope=d.scope AND prompt.message_id=d.message_id
+                      WHERE prompt.scope=? AND prompt.discussion_id=?
+                        AND prompt.discussion_round=? AND prompt.discussion_role='prompt'
+                        AND d.status='failed'""",
+                    (self.scope, discussion_id, current_round),
+                ).fetchone()[0]
+                if len(responses) + int(terminal) < len(prompts):
+                    continue
+
+                digest = self._normalized_discussion_digest(responses)
+                stagnant = bool(
+                    discussion["last_round_digest"]
+                    and digest == discussion["last_round_digest"]
+                )
+                stagnation_count = int(discussion["stagnation_count"]) + (1 if stagnant else 0)
+                if not stagnant:
+                    stagnation_count = 0
+                signals = [self._discussion_signal(str(row["body"])) for row in responses]
+                complete_response_set = len(responses) == len(prompts)
+                malformed_signal = complete_response_set and any(
+                    signal == "INVALID" for signal in signals
+                )
+                consensus = complete_response_set and all(
+                    signal == "CONSENSUS" for signal in signals
+                )
+                blocked = complete_response_set and all(
+                    signal == "BLOCKED" for signal in signals
+                )
+                message_count = int(discussion["message_count"]) + len(responses)
+                next_round = current_round + 1
+                stop_reason = None
+                next_status = "active"
+                if int(terminal):
+                    next_status, stop_reason = "waiting_human", "agent_dispatch_failed"
+                elif malformed_signal:
+                    next_status, stop_reason = "waiting_human", "malformed_signal"
+                elif consensus:
+                    next_status, stop_reason = "completed", "consensus"
+                elif blocked:
+                    next_status, stop_reason = "waiting_human", "all_agents_blocked"
+                elif current_round >= int(discussion["max_rounds"]):
+                    next_status, stop_reason = "waiting_human", "round_limit"
+                elif message_count + (2 * len(participants)) > int(
+                    discussion["max_messages"]
+                ):
+                    next_status, stop_reason = "waiting_human", "message_limit"
+                elif stagnation_count >= int(discussion["stagnation_rounds"]):
+                    next_status, stop_reason = "waiting_human", "stagnation"
+
+                new_messages: list[dict[str, Any]] = []
+                now = utc_now()
+                if next_status == "active":
+                    context = self._discussion_context(responses, current_round)
+                    if len(context) > MAX_DISCUSSION_CONTEXT_CHARS:
+                        next_status, stop_reason = "waiting_human", "context_limit"
+                    for agent_id, route_id, request in (
+                        participants if next_status == "active" else []
+                    ):
+                        new_messages.append(
+                            self._insert_discussion_prompt(
+                                connection,
+                                room_id=str(discussion["room_id"]),
+                                task_id=str(discussion["task_id"]),
+                                sender=DISCUSSION_ORCHESTRATOR_ID,
+                                recipient=agent_id,
+                                subject=f"Re: {discussion['subject']} // round {next_round}",
+                                body=context,
+                                artifacts=[],
+                                priority="normal",
+                                route_profile_id=route_id,
+                                route_request=request,
+                                discussion_id=discussion_id,
+                                discussion_round=next_round,
+                                created=now,
+                            )
+                        )
+                    message_count += len(new_messages)
+
+                updated, updated_sha = self._store_discussion_state(
+                    connection,
+                    discussion,
+                    now=now,
+                    status=next_status,
+                    current_round=(
+                        next_round if next_status == "active" else current_round
+                    ),
+                    processed_round=current_round,
+                    message_count=message_count,
+                    stagnation_count=stagnation_count,
+                    last_round_digest=digest,
+                    stop_reason=stop_reason,
+                )
+                event = self._event(
+                    connection,
+                    "discussion.round_advanced",
+                    {
+                        "discussion_id": discussion_id,
+                        "processed_round": current_round,
+                        "next_round": updated["current_round"],
+                        "status": next_status,
+                        "stop_reason": stop_reason,
+                        "response_count": len(responses),
+                        "terminal_failure_count": int(terminal),
+                        "new_prompt_count": len(new_messages),
+                        "round_digest": digest,
+                        "discussion_sha256": updated_sha,
+                    },
+                    str(discussion["task_id"]),
+                )
+                advanced.append(
+                    {
+                        "discussion_id": discussion_id,
+                        "room_id": discussion["room_id"],
+                        "processed_round": current_round,
+                        "current_round": updated["current_round"],
+                        "status": next_status,
+                        "stop_reason": stop_reason,
+                        "new_prompt_count": len(new_messages),
+                        "discussion_sha256": updated_sha,
+                        "audit_chain_sha256": event["chain_sha256"],
+                    }
+                )
+        return {"advanced": advanced, "count": len(advanced)}
+
+    def control_discussion(self, args: dict[str, Any]) -> dict[str, Any]:
+        discussion_id = _require_identifier(args.get("discussion_id"), "discussion_id")
+        action = str(args.get("action") or "").strip().lower()
+        if action not in {"pause", "resume", "stop", "continue"}:
+            raise BridgeError("action must be pause, resume, stop or continue")
+        extra_rounds = self._bounded_integer(
+            args.get("extra_rounds", 2), "extra_rounds", minimum=1, maximum=10
+        )
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM room_discussions WHERE scope=? AND discussion_id=?",
+                (self.scope, discussion_id),
+            ).fetchone()
+            if row is None:
+                raise BridgeError("discussion not found")
+            self._require_room_manager(connection, str(row["room_id"]))
+            status = str(row["status"])
+            max_rounds = int(row["max_rounds"])
+            max_messages = int(row["max_messages"])
+            stop_reason = row["stop_reason"]
+            new_messages: list[dict[str, Any]] = []
+            cancelled_dispatches = 0
+            if action == "pause":
+                if row["status"] != "active":
+                    raise BridgeError("only an active discussion can pause")
+                status, stop_reason = "paused", "human_paused"
+            elif action == "stop":
+                status, stop_reason = "stopped", "human_stopped"
+                cancelled_dispatches = self._cancel_discussion_dispatches(
+                    connection,
+                    discussion_id,
+                    error_code="discussion_stopped",
+                    now=now,
+                )
+            elif action == "resume":
+                if row["status"] != "paused":
+                    raise BridgeError("only a paused discussion can resume")
+                status, stop_reason = "active", None
+            else:
+                if row["status"] not in {"waiting_human", "paused"}:
+                    raise BridgeError("continue requires a paused or waiting discussion")
+                current_round = int(row["current_round"])
+                processed_round = int(row["processed_round"])
+                max_rounds = min(
+                    MAX_DISCUSSION_ROUNDS,
+                    max(max_rounds, current_round + extra_rounds),
+                )
+                status, stop_reason = "active", None
+                # A paused, unprocessed round already has prompts and only needs
+                # to be re-enabled. A waiting discussion needs a brand-new round.
+                if processed_round >= current_round:
+                    if current_round >= MAX_DISCUSSION_ROUNDS:
+                        raise BridgeError("discussion reached the absolute round limit")
+                    responses = connection.execute(
+                        """SELECT * FROM messages
+                            WHERE scope=? AND discussion_id=? AND discussion_round=?
+                              AND discussion_role='response'
+                            ORDER BY sender""",
+                        (self.scope, discussion_id, int(row["current_round"])),
+                    ).fetchall()
+                    seats = self._discussion_participants(connection, discussion_id)
+                    next_round = current_round + 1
+                    complete_round_messages = 2 * len(seats)
+                    if (
+                        int(row["message_count"]) + complete_round_messages
+                        > MAX_DISCUSSION_MESSAGES
+                    ):
+                        raise BridgeError("discussion reached the absolute message limit")
+                    context = self._discussion_context(
+                        responses, current_round
+                    )
+                    context += "\n\nA human operator explicitly requested another bounded round."
+                    if len(context) > MAX_DISCUSSION_CONTEXT_CHARS:
+                        raise BridgeError("discussion context reached the absolute size limit")
+                    for agent_id, route_id, request in seats:
+                        new_messages.append(
+                            self._insert_discussion_prompt(
+                                connection,
+                                room_id=str(row["room_id"]),
+                                task_id=str(row["task_id"]),
+                                sender=DISCUSSION_ORCHESTRATOR_ID,
+                                recipient=agent_id,
+                                subject=f"Re: {row['subject']} // round {next_round}",
+                                body=context,
+                                artifacts=[],
+                                priority="normal",
+                                route_profile_id=route_id,
+                                route_request=request,
+                                discussion_id=discussion_id,
+                                discussion_round=next_round,
+                                created=now,
+                            )
+                        )
+                    max_messages = min(
+                        MAX_DISCUSSION_MESSAGES,
+                        max(
+                            max_messages,
+                            int(row["message_count"])
+                            + len(seats) * 2 * extra_rounds,
+                        ),
+                    )
+                    row_changes = {
+                        "current_round": next_round,
+                        "message_count": int(row["message_count"]) + len(new_messages),
+                    }
+                else:
+                    row_changes = {}
+            updated, discussion_sha = self._store_discussion_state(
+                connection,
+                row,
+                now=now,
+                status=status,
+                max_rounds=max_rounds,
+                max_messages=max_messages,
+                stop_reason=stop_reason,
+                **row_changes if action == "continue" else {},
+            )
+            event = self._event(
+                connection,
+                "discussion.controlled",
+                {
+                    "discussion_id": discussion_id,
+                    "action": action,
+                    "status": status,
+                    "max_rounds": max_rounds,
+                    "max_messages": max_messages,
+                    "new_prompt_count": len(new_messages),
+                    "cancelled_dispatch_count": cancelled_dispatches,
+                    "discussion_sha256": discussion_sha,
+                },
+                str(row["task_id"]),
+            )
+        return {
+            **updated,
+            "updated_utc": now,
+            "discussion_sha256": discussion_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def reconcile_message_dispatches(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Terminally classify routed root messages that can no longer dispatch."""
+        if (
+            self.agent_id != DISCUSSION_COORDINATOR_ID
+            or not self._discussion_coordinator
+        ):
+            raise BridgeError("only the discussion coordinator may reconcile dispatches")
+        limit = self._bounded_integer(
+            args.get("limit", 250), "limit", minimum=1, maximum=1000
+        )
+        max_attempts = self._bounded_integer(
+            args.get("max_attempts", MAX_DISPATCH_ATTEMPTS),
+            "max_attempts",
+            minimum=1,
+            maximum=100,
+        )
+        now = utc_now()
+        now_epoch = time.time()
+        reconciled: list[dict[str, Any]] = []
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                """SELECT m.*, rd.status AS discussion_status,
+                          d.status AS dispatch_status,
+                          d.claimed_session_id, d.lease_token_sha256,
+                          d.lease_expires_epoch, d.attempt_count,
+                          d.claimed_utc, d.updated_utc AS dispatch_updated_utc,
+                          d.completed_utc, d.reply_message_id,
+                          d.inference_receipt_sha256, d.error_code,
+                          d.dispatch_sha256
+                     FROM messages m
+                     LEFT JOIN room_discussions rd
+                       ON rd.scope=m.scope AND rd.discussion_id=m.discussion_id
+                     LEFT JOIN message_receipts r
+                       ON r.scope=m.scope AND r.message_id=m.message_id
+                      AND r.agent_id=m.recipient
+                     LEFT JOIN message_dispatches d
+                       ON d.scope=m.scope AND d.message_id=m.message_id
+                      AND d.agent_id=m.recipient
+                    WHERE m.scope=? AND m.recipient!='*'
+                      AND m.sender!=m.recipient AND m.reply_to IS NULL
+                      AND m.route_request_sha256 IS NOT NULL
+                      AND r.message_id IS NULL
+                      AND (m.discussion_id IS NULL OR rd.status='active')
+                      AND (d.status IS NULL OR d.status NOT IN ('completed', 'failed'))
+                    ORDER BY m.sequence LIMIT ?""",
+                (self.scope, limit),
+            ).fetchall()
+            for row in rows:
+                error_code: str | None = None
+                membership = None
+                if str(row["room_id"]) != DEFAULT_ROOM_ID:
+                    membership = self._active_room_member(
+                        connection, str(row["room_id"]), str(row["recipient"])
+                    )
+                    if membership is None:
+                        error_code = "room_seat_unavailable"
+                    elif str(membership["route_profile_id"] or "") != str(
+                        row["route_profile_id"] or ""
+                    ):
+                        error_code = "room_seat_route_changed"
+                if error_code is None:
+                    try:
+                        current_route = self._resolve_route_request(
+                            connection,
+                            str(row["recipient"]),
+                            {
+                                "route_profile_id": row["route_profile_id"],
+                                "requested_provider_id": row[
+                                    "requested_provider_id"
+                                ],
+                                "requested_model_id": row["requested_model_id"],
+                                "requested_reasoning_mode": row[
+                                    "requested_reasoning_mode"
+                                ],
+                                "requested_route_class": row[
+                                    "requested_route_class"
+                                ],
+                            },
+                        )
+                    except BridgeError:
+                        error_code = "route_profile_unavailable"
+                    else:
+                        if current_route != self._route_request_from_row(row):
+                            error_code = "route_profile_changed"
+
+                attempts = int(row["attempt_count"] or 0)
+                lease_active = (
+                    row["dispatch_status"] == "claimed"
+                    and float(row["lease_expires_epoch"] or 0) > now_epoch
+                )
+                if (
+                    error_code is None
+                    and attempts >= max_attempts
+                    and not lease_active
+                ):
+                    error_code = "dispatch_attempts_exhausted"
+                if error_code is None:
+                    continue
+
+                failed = {
+                    "scope": self.scope,
+                    "message_id": row["message_id"],
+                    "agent_id": row["recipient"],
+                    "status": "failed",
+                    "claimed_session_id": None,
+                    "lease_token_sha256": None,
+                    "lease_expires_epoch": None,
+                    "attempt_count": attempts,
+                    "claimed_utc": row["claimed_utc"],
+                    "updated_utc": now,
+                    "completed_utc": now,
+                    "reply_message_id": None,
+                    "inference_receipt_sha256": None,
+                    "error_code": error_code,
+                }
+                dispatch_sha = stable_sha256(failed)
+                connection.execute(
+                    """INSERT INTO message_dispatches(
+                           scope, message_id, agent_id, status, claimed_session_id,
+                           lease_token_sha256, lease_expires_epoch, attempt_count,
+                           claimed_utc, updated_utc, completed_utc, reply_message_id,
+                           inference_receipt_sha256, error_code, dispatch_sha256
+                       ) VALUES (?, ?, ?, 'failed', NULL, NULL, NULL, ?, ?, ?, ?,
+                                 NULL, NULL, ?, ?)
+                       ON CONFLICT(scope, message_id, agent_id) DO UPDATE SET
+                           status='failed', claimed_session_id=NULL,
+                           lease_token_sha256=NULL, lease_expires_epoch=NULL,
+                           attempt_count=excluded.attempt_count,
+                           updated_utc=excluded.updated_utc,
+                           completed_utc=excluded.completed_utc,
+                           reply_message_id=NULL, inference_receipt_sha256=NULL,
+                           error_code=excluded.error_code,
+                           dispatch_sha256=excluded.dispatch_sha256""",
+                    (
+                        self.scope,
+                        row["message_id"],
+                        row["recipient"],
+                        attempts,
+                        row["claimed_utc"],
+                        now,
+                        now,
+                        error_code,
+                        dispatch_sha,
+                    ),
+                )
+                reconciled.append(
+                    {
+                        "message_id": row["message_id"],
+                        "discussion_id": row["discussion_id"],
+                        "agent_id": row["recipient"],
+                        "error_code": error_code,
+                        "dispatch_sha256": dispatch_sha,
+                    }
+                )
+            event = (
+                self._event(
+                    connection,
+                    "message.dispatches_reconciled",
+                    {"count": len(reconciled), "dispatches": reconciled},
+                )
+                if reconciled
+                else None
+            )
+        return {
+            "reconciled": reconciled,
+            "count": len(reconciled),
+            "audit_chain_sha256": event["chain_sha256"] if event else None,
+        }
+
+    def fail_message_dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
+        message_id = _require_identifier(args.get("message_id"), "message_id")
+        error_code = _require_identifier(args.get("error_code"), "error_code")
+        retryable = bool(args.get("retryable", True))
+        retry_after_seconds = (
+            max(
+                1,
+                min(
+                    int(
+                        args.get(
+                            "retry_after_seconds", DEFAULT_DISPATCH_RETRY_SECONDS
+                        )
+                    ),
+                    MAX_DISPATCH_RETRY_SECONDS,
+                ),
+            )
+            if retryable
+            else 0
+        )
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = self._require_dispatch_lease(
+                connection, message_id, args.get("lease_token")
+            )
+            source = connection.execute(
+                "SELECT task_id FROM messages WHERE scope=? AND message_id=?",
+                (self.scope, message_id),
+            ).fetchone()
+            if source is None:
+                raise BridgeError("source message is absent")
+            updated = utc_now()
+            failed = {
+                **self._dispatch_payload(row),
+                "status": "retryable" if retryable else "failed",
+                "claimed_session_id": None,
+                "lease_token_sha256": None,
+                "lease_expires_epoch": None,
+                "updated_utc": updated,
+                "error_code": error_code,
+            }
+            dispatch_sha = stable_sha256(failed)
+            retry_schedule = None
+            if retryable:
+                retry_schedule = {
+                    "scope": self.scope,
+                    "message_id": message_id,
+                    "agent_id": self.agent_id,
+                    "attempt_count": int(row["attempt_count"]),
+                    "not_before_epoch": time.time() + retry_after_seconds,
+                    "error_code": error_code,
+                    "created_utc": updated,
+                }
+                retry_schedule["schedule_sha256"] = stable_sha256(retry_schedule)
+                connection.execute(
+                    """INSERT INTO message_dispatch_retry_schedules(
+                           scope, message_id, agent_id, attempt_count,
+                           not_before_epoch, error_code, created_utc,
+                           schedule_sha256
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        retry_schedule["scope"],
+                        retry_schedule["message_id"],
+                        retry_schedule["agent_id"],
+                        retry_schedule["attempt_count"],
+                        retry_schedule["not_before_epoch"],
+                        retry_schedule["error_code"],
+                        retry_schedule["created_utc"],
+                        retry_schedule["schedule_sha256"],
+                    ),
+                )
+            connection.execute(
+                """UPDATE message_dispatches SET status=?, claimed_session_id=NULL,
+                       lease_token_sha256=NULL, lease_expires_epoch=NULL,
+                       updated_utc=?, error_code=?, dispatch_sha256=?
+                   WHERE scope=? AND message_id=? AND agent_id=?""",
+                (
+                    failed["status"],
+                    updated,
+                    error_code,
+                    dispatch_sha,
+                    self.scope,
+                    message_id,
+                    self.agent_id,
+                ),
+            )
+            event = self._event(
+                connection,
+                "message.dispatch_failed",
+                {
+                    "message_id": message_id,
+                    "status": failed["status"],
+                    "error_code": error_code,
+                    "retry_after_seconds": retry_after_seconds if retryable else None,
+                    "retry_not_before_epoch": (
+                        retry_schedule["not_before_epoch"] if retry_schedule else None
+                    ),
+                    "retry_schedule_sha256": (
+                        retry_schedule["schedule_sha256"] if retry_schedule else None
+                    ),
+                    "dispatch_sha256": dispatch_sha,
+                },
+                str(source["task_id"]),
+            )
+        return {
+            "failed": True,
+            "retryable": retryable,
+            "retry_schedule": retry_schedule,
+            "dispatch": {
+                **self._public_dispatch({**failed, "dispatch_sha256": dispatch_sha}),
+                "audit_chain_sha256": event["chain_sha256"],
+            },
+        }
+
+    def list_message_dispatches(self, args: dict[str, Any]) -> dict[str, Any]:
+        raw_status = str(args.get("status") or "").strip().lower()
+        allowed = {"claimed", "retryable", "failed", "completed"}
+        if raw_status and raw_status not in allowed:
+            raise BridgeError("dispatch status is invalid")
+        limit = max(1, min(int(args.get("limit", 100)), 500))
+        where = ["scope=?"]
+        params: list[Any] = [self.scope]
+        if self.agent_id != "human-operator":
+            where.append("agent_id=?")
+            params.append(self.agent_id)
+        if raw_status:
+            where.append("status=?")
+            params.append(raw_status)
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""SELECT * FROM message_dispatches
+                     WHERE {' AND '.join(where)}
+                     ORDER BY updated_utc DESC, message_id LIMIT ?""",
+                tuple(params),
+            ).fetchall()
+        dispatches = [self._public_dispatch(row) for row in rows]
+        return {"dispatches": dispatches, "count": len(dispatches)}
 
     def claim_task(self, args: dict[str, Any]) -> dict[str, Any]:
         task_id = _require_identifier(args.get("task_id"), "task_id")
@@ -867,6 +4960,7 @@ class Bridge:
         task_content = {
             "scope": self.scope,
             "task_id": task_id,
+            "workspace_root_key": self.workspace_root_key,
             "summary": summary,
             "owner": owner,
             "read_paths": read_paths,
@@ -894,22 +4988,24 @@ class Bridge:
                 ("write", item) for item in write_paths
             ]
             active = connection.execute(
-                """SELECT t.task_id, t.claimed_by, p.access, p.path_prefix
+                """SELECT t.scope, t.task_id, t.claimed_by, p.access, p.path_prefix
                    FROM tasks t JOIN task_paths p
                      ON p.scope=t.scope AND p.task_id=t.task_id
-                   WHERE t.scope=? AND t.status='claimed' AND t.lease_expires_epoch>?""",
-                (self.scope, now_epoch),
+                   WHERE t.workspace_root_key=? AND t.status='claimed'
+                     AND t.lease_expires_epoch>?""",
+                (self.workspace_root_key, now_epoch),
             ).fetchall()
             conflicts = []
             for new_access, new_path in requested:
                 for row in active:
-                    if row["task_id"] == task_id:
+                    if row["scope"] == self.scope and row["task_id"] == task_id:
                         continue
                     if new_access == "read" and row["access"] == "read":
                         continue
                     if self._path_overlaps(new_path, row["path_prefix"]):
                         conflicts.append(
                             {
+                                "scope": row["scope"],
                                 "task_id": row["task_id"],
                                 "claimed_by": row["claimed_by"],
                                 "existing_access": row["access"],
@@ -925,11 +5021,12 @@ class Bridge:
                 )
             if existing:
                 connection.execute(
-                    """UPDATE tasks SET summary=?, owner=?, status='claimed', claimed_by=?,
+                    """UPDATE tasks SET workspace_root_key=?, summary=?, owner=?, status='claimed', claimed_by=?,
                        claimed_session_id=?, lease_token_sha256=?, lease_expires_epoch=?,
                        claimed_utc=?, updated_utc=?, task_sha256=?, approval_mode=?,
                        required_peer=?, review_quorum=? WHERE scope=? AND task_id=?""",
                     (
+                        self.workspace_root_key,
                         summary,
                         owner,
                         self.agent_id,
@@ -953,14 +5050,15 @@ class Bridge:
             else:
                 connection.execute(
                     """INSERT INTO tasks(
-                        scope, task_id, summary, owner, status, claimed_by,
+                        scope, task_id, workspace_root_key, summary, owner, status, claimed_by,
                         claimed_session_id, lease_token_sha256, lease_expires_epoch,
                         claimed_utc, created_utc, updated_utc, task_sha256,
                         approval_mode, required_peer, review_quorum
-                    ) VALUES (?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         self.scope,
                         task_id,
+                        self.workspace_root_key,
                         summary,
                         owner,
                         self.agent_id,
@@ -1046,7 +5144,7 @@ class Bridge:
         if status not in {"open", "blocked"}:
             raise BridgeError("release status must be open or blocked")
         reason = str(args.get("reason") or "").strip()
-        if reason and SECRET_VALUE.search(reason):
+        if reason and contains_secret(reason):
             raise BridgeError("reason appears to contain a credential")
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -1221,7 +5319,7 @@ class Bridge:
         }
 
     def poll_reviews(self, args: dict[str, Any]) -> dict[str, Any]:
-        agent = _require_identifier(args.get("agent_id", self.agent_id), "agent_id")
+        agent = self._bound_consumer(args)
         after = max(0, int(args.get("after_cursor", 0)))
         limit = max(1, min(int(args.get("limit", 50)), 500))
         include_closed = bool(args.get("include_closed", False))
@@ -1260,7 +5358,7 @@ class Bridge:
             raise BridgeError("score must be an integer from 0 to 100")
         findings = _require_text(args.get("findings"), "findings")
         response_text = str(args.get("response") or "").strip()
-        if response_text and SECRET_VALUE.search(response_text):
+        if response_text and contains_secret(response_text):
             raise BridgeError("response appears to contain a credential")
         artifacts = self._clean_artifacts(args.get("artifact_paths", []))
         with self._connect() as connection:
@@ -1432,15 +5530,17 @@ class Bridge:
             raise BridgeError("protected or sensitive files are not exposed")
         resolved = self._resolve_path(normalized, must_exist=True)
         max_bytes = max(1, min(int(args.get("max_bytes", 100_000)), 500_000))
-        data = resolved.read_bytes()
+        hashed = self._hash_file_streaming(resolved, prefix_bytes=max_bytes)
+        if contains_secret_bytes(hashed["prefix"]):
+            raise BridgeError("artifact content appears to contain a credential or private key")
         result: dict[str, Any] = {
             "path": normalized,
-            "bytes": len(data),
-            "sha256": sha256_bytes(data),
-            "truncated": len(data) > max_bytes,
+            "bytes": hashed["bytes"],
+            "sha256": hashed["sha256"],
+            "truncated": hashed["bytes"] > max_bytes,
         }
         try:
-            result["text"] = data[:max_bytes].decode("utf-8")
+            result["text"] = hashed["prefix"].decode("utf-8")
         except UnicodeDecodeError:
             result["binary"] = True
         return result
@@ -1450,8 +5550,12 @@ class Bridge:
         if self._is_protected(normalized):
             raise BridgeError("protected or sensitive files are not exposed")
         resolved = self._resolve_path(normalized, must_exist=True)
-        data = resolved.read_bytes()
-        return {"path": normalized, "bytes": len(data), "sha256": sha256_bytes(data)}
+        hashed = self._hash_file_streaming(resolved)
+        return {
+            "path": normalized,
+            "bytes": hashed["bytes"],
+            "sha256": hashed["sha256"],
+        }
 
     def record_proof(self, args: dict[str, Any]) -> dict[str, Any]:
         task_id = _require_identifier(args.get("task_id"), "task_id")
@@ -1466,13 +5570,42 @@ class Bridge:
         evidence_paths = self._clean_artifacts(args.get("evidence_paths", []))
         if not changed_paths and not evidence_paths:
             raise BridgeError("proof needs at least one changed path or evidence artifact")
-        before_hashes = args.get("before_hashes", {})
-        if not isinstance(before_hashes, dict):
+        raw_before_hashes = args.get("before_hashes", {})
+        if not isinstance(raw_before_hashes, dict):
             raise BridgeError("before_hashes must be an object")
+        before_hashes: dict[str, str | None] = {}
+        for raw_path, raw_hash in raw_before_hashes.items():
+            path = self._normalize_path(raw_path)
+            if path not in changed_paths:
+                raise BridgeError(
+                    "before_hashes keys must identify entries in changed_paths"
+                )
+            if path in before_hashes:
+                raise BridgeError("before_hashes contains duplicate normalized paths")
+            before_hashes[path] = (
+                None
+                if raw_hash is None
+                else _require_sha256(raw_hash, f"before_hashes[{path}]")
+            )
+        if set(before_hashes) != set(changed_paths):
+            raise BridgeError(
+                "before_hashes must contain exactly one entry for every changed path"
+            )
         review_ids = [
             _require_identifier(item, "review_id")
             for item in _json_list(args.get("review_ids", []), "review_ids")
         ]
+        hashed_paths: dict[str, dict[str, Any]] = {}
+        for path in dict.fromkeys([*changed_paths, *evidence_paths]):
+            hashed_paths[path] = self._hash_file_streaming(
+                self._resolve_path(path, must_exist=True)
+            )
+        after_hashes = {
+            path: str(hashed_paths[path]["sha256"]) for path in changed_paths
+        }
+        evidence_hashes = {
+            path: str(hashed_paths[path]["sha256"]) for path in evidence_paths
+        }
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             task = self._require_lease(connection, task_id, args.get("lease_token"))
@@ -1486,14 +5619,12 @@ class Bridge:
             for path in changed_paths:
                 if not any(self._path_within(path, prefix) for prefix in write_scopes):
                     raise BridgeError(f"changed path is outside the task write scope: {path}")
-            after_hashes: dict[str, str] = {}
-            for path in changed_paths:
-                resolved = self._resolve_path(path, must_exist=True)
-                after_hashes[path] = sha256_bytes(resolved.read_bytes())
-            evidence_hashes = {
-                path: sha256_bytes(self._resolve_path(path, must_exist=True).read_bytes())
-                for path in evidence_paths
-            }
+            for path, hashed in hashed_paths.items():
+                current = self._resolve_path(path, must_exist=True).stat()
+                if (current.st_size, current.st_mtime_ns) != tuple(hashed["identity"]):
+                    raise BridgeError(
+                        f"artifact changed before proof recording: {path}"
+                    )
             record_id = uuid.uuid4().hex
             recorded = utc_now()
             content = {

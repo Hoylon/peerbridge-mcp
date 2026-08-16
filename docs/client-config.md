@@ -107,6 +107,26 @@ An equivalent ad-hoc configuration is available in
 [`examples/kimi-mcp.json`](../examples/kimi-mcp.json). Authenticate Kimi through its own
 supported login flow; never place its token in PeerBridge arguments or messages.
 
+## Any other MCP-capable client or terminal
+
+PeerBridge is not limited to the three clients above. Any client that can launch a local
+stdio MCP server can use the same command shape:
+
+```text
+C:\tools\peerbridge-mcp\.venv\Scripts\python.exe -m peerbridge_mcp serve \
+  --project-root C:\work\my-project \
+  --agent-id <one-stable-unique-agent-id> \
+  --scope <one-shared-project-scope> \
+  --client-name <actual-client-name> \
+  --provider-id <non-secret-provider-identity> \
+  --model-id <observed-model-identity>
+```
+
+Register that command through the client's documented MCP configuration surface. A web
+chat tab or a plain REST model endpoint is not an MCP client. API-only models can instead
+use PeerBridge's bounded allowlisted tool-loop and are labelled `MCP TOOL`; a tools-disabled
+one-shot fallback is labelled `INFERENCE`.
+
 Grok and DeepSeek can each coexist as an official route and as a relay-provided route. If
 the relay's coding client can call MCP, launch one separately identified session per route.
 An official web tab alone is not an MCP client. See

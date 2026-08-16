@@ -1,0 +1,772 @@
+{
+  "schema": "peerbridge-continuity-manifest/v1",
+  "generated_at_utc": "2026-08-16T07:34:25Z",
+  "claims": {
+    "automatic_provider_reply_ready": true,
+    "local_alpha_acceptance_ready": true,
+    "local_alpha_release_ready": true,
+    "strict_package_gate_ready": true,
+    "operator_physical_acceptance_ready": true,
+    "remote_mobile_e2e_ready": false,
+    "tests_collected": 517,
+    "tests_failed": 0,
+    "tests_passed": 516,
+    "tests_skipped": 1
+  },
+  "peerbridge": {
+    "target_branch": "main",
+    "source_commit_binding": "Git tag and release provenance receipt",
+    "scope": "peerbridge-main",
+    "release_profile": "local-alpha",
+    "manifest_excludes_self": "docs/continuity-manifest.json",
+    "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
+    "tracked_payload_root_sha256": "e8e900d80792bb3d555bbad915bc7cfaac5b5d49e0389f1c9a476e7ba5d2dd37",
+    "tracked_payload_file_count": 148,
+    "source_files": [
+      {
+        "bytes": 724,
+        "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
+        "sha256": "8b6d80946573e0f150b0a460f3756742465a624877ac6449345755ee86730d21"
+      },
+      {
+        "bytes": 233,
+        "path": ".github/ISSUE_TEMPLATE/config.yml",
+        "sha256": "1bde84863e8b289923534158958fbdfd1214afdb36d9fefbb11591a18c390fd2"
+      },
+      {
+        "bytes": 614,
+        "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
+        "sha256": "f805eeb108214daf5c0adec660682a5801ebf35c18055c4615d114609200ba2d"
+      },
+      {
+        "bytes": 6771,
+        "path": ".github/workflows/ci.yml",
+        "sha256": "7c6ce7ec4ed681fba695b30098fdd5df344f6dcccb2e3b1ac55c0ab61c9fa3d6"
+      },
+      {
+        "bytes": 461,
+        "path": ".gitignore",
+        "sha256": "86aeb436028e554a269d9008ed4ce16c7c9f13314aaec4ac1405f927eec1dab3"
+      },
+      {
+        "bytes": 377,
+        "path": "examples/claude-project.mcp.json",
+        "sha256": "48ac23587f695830cd141daf441105cc95acd34d282de9a7955c7f953036736b"
+      },
+      {
+        "bytes": 355,
+        "path": "examples/codex-config.toml",
+        "sha256": "4bda04dec1a0ce42130ed7026c146c97da808fbd9f7d259ee5cca02cb7fe282b"
+      },
+      {
+        "bytes": 3879,
+        "path": "examples/demo_workflow.py",
+        "sha256": "adb7e9ee1fc9063d305204e3495109ed9454588921adc1dd0e7853405ca6befa"
+      },
+      {
+        "bytes": 348,
+        "path": "examples/kimi-mcp.json",
+        "sha256": "ef57571cf8a146c21ef66be02003116c23ba2d84aa32955670c6323ad36fa588"
+      },
+      {
+        "bytes": 11357,
+        "path": "LICENSE",
+        "sha256": "c6f173cc150ad8655e845b12181c9e72c181e194a612abaeab35b5db3a7c1918"
+      },
+      {
+        "bytes": 93,
+        "path": "MANIFEST.in",
+        "sha256": "e0f32dcc32508684c2563ba994989f73a87f4e9ac01e38a4b15a8e5086b7306f"
+      },
+      {
+        "bytes": 3099,
+        "path": "pyproject.toml",
+        "sha256": "97311231a089907e2d199e2685794394968fb4b969cf3321a4bfd0bdfef4210e"
+      },
+      {
+        "bytes": 4194,
+        "path": "scripts/build_windows_desktop.ps1",
+        "sha256": "1a77d4ca5e15383d0a8ed9da27a5897a4633df44f9cfea3a3f518e1fdfc6eac6"
+      },
+      {
+        "bytes": 7222,
+        "path": "scripts/build_windows_icon.ps1",
+        "sha256": "398a2490f5e14f4ea4d8006940c932c78da333a43ba445cd994046d755aa5db0"
+      },
+      {
+        "bytes": 8168,
+        "path": "scripts/collect_windows_runtime_licenses.py",
+        "sha256": "1655dda183edbce89a1f18d7bcbd06468aaaa9fd1e3d205d9a59431305fb0d01"
+      },
+      {
+        "bytes": 9571,
+        "path": "scripts/decrypt_feedback_bundle.ps1",
+        "sha256": "bfc2630738ee2ea355d3a1bcf7b084f6281a379dc8326d3be1442db01e8dd1f7"
+      },
+      {
+        "bytes": 5445,
+        "path": "scripts/install_desktop_shortcut.ps1",
+        "sha256": "15822644e8660984afce953469c1fecedc78fcff1e11df240ea5e4604846e3d2"
+      },
+      {
+        "bytes": 127,
+        "path": "scripts/launch_control_room.cmd",
+        "sha256": "df00d981351f90995e30f2f7d75ecb3c53e1086ff2017b5a7226340731a6d3f3"
+      },
+      {
+        "bytes": 4418,
+        "path": "scripts/launch_control_room.ps1",
+        "sha256": "afc98217e5d6b98e20df6295aab61b75882ec802455e26e9b805639599e6f781"
+      },
+      {
+        "bytes": 132,
+        "path": "scripts/launch_remote_control.cmd",
+        "sha256": "3c74f3667929b5781a9591b43f93efcfdf32725c5a1bb52446cac38019a53c47"
+      },
+      {
+        "bytes": 38098,
+        "path": "scripts/launch_remote_control.ps1",
+        "sha256": "0ecd746f721eae2e24bf096ac10ea26e62f02b54c6356faa219b36deb5123562"
+      },
+      {
+        "bytes": 10389,
+        "path": "scripts/package_windows_portable.ps1",
+        "sha256": "c66fbb3766fa76a3de24c98fc9bb196eff6066c0e3af83342bdbfb9155ef1048"
+      },
+      {
+        "bytes": 16930,
+        "path": "scripts/peerbridge_control_room_entry.py",
+        "sha256": "11ebb2dcd1ad0b8b508c2f1b6a77cbf28b14b8ac6bff2c05b618587a11b3ff16"
+      },
+      {
+        "bytes": 924,
+        "path": "scripts/peerbridge_control_room_version_info.template",
+        "sha256": "285d4880215bcae154403ad3461c5e8b2387e25367b2af1743c4fd01f8aeb40e"
+      },
+      {
+        "bytes": 83268,
+        "path": "scripts/release_check.py",
+        "sha256": "e8379c584cced66d906e9501907d56c08d5c4025c807865d986e65c81958e3dc"
+      },
+      {
+        "bytes": 4887,
+        "path": "scripts/run_provider_mcp_e2e.py",
+        "sha256": "69dce22cdcaf678897956bd844cf77b8d3cecad447534daa12636f6445df5f90"
+      },
+      {
+        "bytes": 3926,
+        "path": "scripts/run_pyinstaller.py",
+        "sha256": "507cfc2fdb9c59dff30e147df520dc8903bca2d404475a31120a1dcfa28c8d35"
+      },
+      {
+        "bytes": 3676,
+        "path": "scripts/setup_feedback_identity.ps1",
+        "sha256": "30fbf724be4171f1be4494546fcf1fcc037022c8f250f648d8a0658250816c30"
+      },
+      {
+        "bytes": 10221,
+        "path": "scripts/verify_continuity_manifest.py",
+        "sha256": "1468d69303c59b94a1dbfff0c8c8b3c9926ffc1e7cb8a2bf5066ec11da71dc78"
+      },
+      {
+        "bytes": 7376,
+        "path": "scripts/verify_portable_provenance.py",
+        "sha256": "d3a5e4c5be5c79f64b4bc022dcc2b5b046a866df7c891bc6a5d60da38afca2b4"
+      },
+      {
+        "bytes": 29329,
+        "path": "scripts/verify_windows_portable.ps1",
+        "sha256": "04bc8b9186c11cbd0ac557dd0ad95cfd77548853c432f832189e4746fd645d8e"
+      },
+      {
+        "bytes": 139,
+        "path": "src/peerbridge_mcp/__init__.py",
+        "sha256": "5209b341e3114a7a4ffdc1be505bc2f8f213888d653f8b4ca81ec56e5aa1e1a6"
+      },
+      {
+        "bytes": 80,
+        "path": "src/peerbridge_mcp/__main__.py",
+        "sha256": "3d2438ae92f4746e9ffaa1f837b1fe803f6281091d1f31f8c95643716f257d9a"
+      },
+      {
+        "bytes": 35372,
+        "path": "src/peerbridge_mcp/acp_client_receipt.py",
+        "sha256": "31a86a734fbd28e7d4b556a62a88c06bc6cab3b2770b076a957599a29d51f55a"
+      },
+      {
+        "bytes": 14972,
+        "path": "src/peerbridge_mcp/analytics.py",
+        "sha256": "69450173a408481b402139dec8e955da19c124a18829f8d26a094e71d8fe948f"
+      },
+      {
+        "bytes": 20661,
+        "path": "src/peerbridge_mcp/announcements.py",
+        "sha256": "c8bf32d39d44047ae6e517ec4d7ee5e0de3295ed3527dee21198668664e7f623"
+      },
+      {
+        "bytes": 8396,
+        "path": "src/peerbridge_mcp/attachments.py",
+        "sha256": "22d9c845171de29225e67e7932c9b15bad80e20f151dad66f5522aba16c79a1f"
+      },
+      {
+        "bytes": 260035,
+        "path": "src/peerbridge_mcp/bridge.py",
+        "sha256": "79ba505e555378065adf63bfeec5fdce56560321333f5c9bee5f135b68afb39d"
+      },
+      {
+        "bytes": 12325,
+        "path": "src/peerbridge_mcp/ccswitch_runner.py",
+        "sha256": "c71880bc1094cce7b60ffaec01dc516db2ea9db587a2a9c896a476df2b63656c"
+      },
+      {
+        "bytes": 7338,
+        "path": "src/peerbridge_mcp/ccswitch.py",
+        "sha256": "c147838cd62e1d5f35789bc169874d7af758e70ef3748f003eb24f82594db301"
+      },
+      {
+        "bytes": 30159,
+        "path": "src/peerbridge_mcp/claude_client_receipt.py",
+        "sha256": "a11a0b01bac46060fbd92967180e8676d366fb61b0c7a6f6410432fc9809b34d"
+      },
+      {
+        "bytes": 14102,
+        "path": "src/peerbridge_mcp/cli.py",
+        "sha256": "f7ee4645a012ad134b20c96f1fe0e2d7204fce694add85a7a24a62879b0b4467"
+      },
+      {
+        "bytes": 4687,
+        "path": "src/peerbridge_mcp/codex_catalog.py",
+        "sha256": "b84c4fd5422874fb21a44984104ae07a2a5f0ac4bf2c23249f4ea886c5e44466"
+      },
+      {
+        "bytes": 25194,
+        "path": "src/peerbridge_mcp/collaboration_receipt.py",
+        "sha256": "c9be926a1d3bc7d3837c556215689af322f22e758baab5db98852f791a7e54b1"
+      },
+      {
+        "bytes": 12011,
+        "path": "src/peerbridge_mcp/continuity.py",
+        "sha256": "739f657ad9a065b836257f8ec8b7ea6c99ad7f1d5b08478fa80dfd9ee96779ac"
+      },
+      {
+        "bytes": 17713,
+        "path": "src/peerbridge_mcp/credentials.py",
+        "sha256": "47ab27141b8585694e4630ba5ec54925ff172bec5a012942233cccab293195f4"
+      },
+      {
+        "bytes": 13756,
+        "path": "src/peerbridge_mcp/doctor.py",
+        "sha256": "5a6462eca00ba5c4dd9384ab505c2fc2ccb1f6480acb4de63c5bdc116a7b9eda"
+      },
+      {
+        "bytes": 29182,
+        "path": "src/peerbridge_mcp/feedback.py",
+        "sha256": "c01216b583ef3e628c2adee592c70cdaec7af851dd1d09965bc82d44f83ef6a6"
+      },
+      {
+        "bytes": 43876,
+        "path": "src/peerbridge_mcp/lifecycle_receipt.py",
+        "sha256": "9503b844c15805b9fcad2292a71b950c76072d9545db778d30339140fdaf3a6a"
+      },
+      {
+        "bytes": 18434,
+        "path": "src/peerbridge_mcp/local_alpha_soak.py",
+        "sha256": "01b071406f0297035b5fa4cbc48b424439d5dfe35c66bf6fd23e426949f73a4f"
+      },
+      {
+        "bytes": 23668,
+        "path": "src/peerbridge_mcp/localization.py",
+        "sha256": "1b0778e200aa58085123498285fe6403a8e1f046a58c4ed473b473c34f84e19c"
+      },
+      {
+        "bytes": 36729,
+        "path": "src/peerbridge_mcp/mailbox_supervisor.py",
+        "sha256": "7a725951077837b03812e9cd97b95f7908995eb0581100fbd77dc532ed5e7102"
+      },
+      {
+        "bytes": 24326,
+        "path": "src/peerbridge_mcp/mcp_client_receipt.py",
+        "sha256": "d83448830c09a936916437304ef6a4fa0cff17b0f1020405bcdb90bbecf51d95"
+      },
+      {
+        "bytes": 319982,
+        "path": "src/peerbridge_mcp/monitor.py",
+        "sha256": "6d89dd7d6331f6a61198352d1c39daac08b626c8ba1ec24ebadf536c975aae3b"
+      },
+      {
+        "bytes": 61372,
+        "path": "src/peerbridge_mcp/openai_compatible_runner.py",
+        "sha256": "7dde4f80091ea907c6ad2b2d827a88ba72e056cf540880699c7048ed0e478320"
+      },
+      {
+        "bytes": 5213,
+        "path": "src/peerbridge_mcp/product.py",
+        "sha256": "30c5ee415e762580e2a207ec70f039d923e2ef8c6fec27edc17b773fd08ec364"
+      },
+      {
+        "bytes": 1590,
+        "path": "src/peerbridge_mcp/protocol.py",
+        "sha256": "ee95a122a10e6b8f8f54680c7b9c264950a681fbc5093eabcf0cd0adc5ba296c"
+      },
+      {
+        "bytes": 31015,
+        "path": "src/peerbridge_mcp/provider_receipt.py",
+        "sha256": "94c61162018d54d5574b88603e5fdc2a524b5fbc033dfeb33535a99994d5e2a2"
+      },
+      {
+        "bytes": 32070,
+        "path": "src/peerbridge_mcp/release_support/peerbridge-icon.ico",
+        "sha256": "d28bf3c476dcb34f543df358ed7da1ec42ce92c55ad49b900ced4c60d116e97c"
+      },
+      {
+        "bytes": 72751,
+        "path": "src/peerbridge_mcp/release_support/peerbridge-icon.png",
+        "sha256": "f6ff2e9cdc64e317b9e125c5ca919cbbfdaacc4a4b8b3e7fc037c925a758e412"
+      },
+      {
+        "bytes": 243862,
+        "path": "src/peerbridge_mcp/release_support/peerbridge-logo-source-owner-20260816.png",
+        "sha256": "0b431e90e1a92bdf31045ea174270aa09bfef4d5c54a4bdccd0b7e1887b35333"
+      },
+      {
+        "bytes": 625,
+        "path": "src/peerbridge_mcp/release_support/peerbridge-support-public.pub",
+        "sha256": "6c99aa67bf12d01cd8c231b67533f311a98de710ee4263d72358b9b97010ef53"
+      },
+      {
+        "bytes": 405,
+        "path": "src/peerbridge_mcp/release_support/support.json",
+        "sha256": "b8c9a0e2a1532512fc4bf4eb8c36a3b9c95dc6194f98ea2294da1a211af7a89e"
+      },
+      {
+        "bytes": 28445,
+        "path": "src/peerbridge_mcp/remote_evidence.py",
+        "sha256": "61dadc76b34e1af885c068f04da282441cd811cbfd8fed19226567f521ccccbb"
+      },
+      {
+        "bytes": 36102,
+        "path": "src/peerbridge_mcp/remote.py",
+        "sha256": "2ca744e69795b505d89eee0094547b1314ded96b7b8ce5d694c459aa29b6ee85"
+      },
+      {
+        "bytes": 9574,
+        "path": "src/peerbridge_mcp/resource_guard.py",
+        "sha256": "5cf0fb5aa25eeedda46a277a3b0e5f2730cc79aec25e0395b747ac72ec6320df"
+      },
+      {
+        "bytes": 25440,
+        "path": "src/peerbridge_mcp/room_fanout_receipt.py",
+        "sha256": "59e469c591e591df60b4395fe4c9010bc6037a5426582988452d2700dcb02b5e"
+      },
+      {
+        "bytes": 9619,
+        "path": "src/peerbridge_mcp/secret_scan.py",
+        "sha256": "74e1d904451353f47fd8add7d67caa9059e3978e6024b0a9b7cb16091f113a9a"
+      },
+      {
+        "bytes": 39520,
+        "path": "src/peerbridge_mcp/server.py",
+        "sha256": "d2982c452c1d98e0e4e783193cc23e1068ce65b48102235f0279c7e4bef52960"
+      },
+      {
+        "bytes": 5383,
+        "path": "src/peerbridge_mcp/updates.py",
+        "sha256": "0c44314b32a8609edcb88ad551368d6e24d5bf261384446a5719a10c30cb8467"
+      },
+      {
+        "bytes": 141,
+        "path": "support/announcements.example.json",
+        "sha256": "3f03733a93df2db07a637d1d64e3ab2937d05e0447f6a2973093b290510b757f"
+      },
+      {
+        "bytes": 257,
+        "path": "support/cloudflare-edge/migrations/0002_feedback_submission_id.sql",
+        "sha256": "9a52f7f447ad398c4a1238d258e3df1ad7455f1bd9ef5e522c1a08b76760ac87"
+      },
+      {
+        "bytes": 50075,
+        "path": "support/cloudflare-edge/package-lock.json",
+        "sha256": "31fbfa817a59db0591dd0d7cf4836e069af0e713b102d762ef8ff9c058dfee58"
+      },
+      {
+        "bytes": 362,
+        "path": "support/cloudflare-edge/package.json",
+        "sha256": "9d17fc2a23889c4174cebb22f02f812ea682c1342557e16ecab6cd7facd810ac"
+      },
+      {
+        "bytes": 2306,
+        "path": "support/cloudflare-edge/schema.sql",
+        "sha256": "864ed70f09748787280de4311e95fa57d1da02e8651fcc3ac686a4334620245e"
+      },
+      {
+        "bytes": 21134,
+        "path": "support/cloudflare-edge/src/index.js",
+        "sha256": "94372f95710d5006536e72edf8cd786fa9dddd0fd0945e4bd281e6a48c4d65d4"
+      },
+      {
+        "bytes": 13146,
+        "path": "support/cloudflare-edge/tests/index.test.mjs",
+        "sha256": "d13c3db1212ae441886c039d07682f717889c430395fd6cf089864b9eadb25fe"
+      },
+      {
+        "bytes": 574,
+        "path": "support/cloudflare-edge/wrangler.jsonc.example",
+        "sha256": "234c2956c120e1261e17cc3aa30e8d95376194bd2d1dfca24b63bbcf091e46a0"
+      },
+      {
+        "bytes": 625,
+        "path": "support/peerbridge-support-public.pub",
+        "sha256": "6c99aa67bf12d01cd8c231b67533f311a98de710ee4263d72358b9b97010ef53"
+      },
+      {
+        "bytes": 459,
+        "path": "support/support.example.json",
+        "sha256": "1a05b0c06cb43dfbeafd02799fdfb5f98d1af490999f3e755f5e5ec4244d376d"
+      },
+      {
+        "bytes": 20461,
+        "path": "tests/test_acp_client_receipt.py",
+        "sha256": "bc8f4b34de21f0f1060c75113739322f569a1ac30c61cb74898d113c67477c2a"
+      },
+      {
+        "bytes": 5089,
+        "path": "tests/test_analytics.py",
+        "sha256": "cb8eb7d5174d0dec23da18c05331fcd36a8402507c5db659c559dd4bf35c153a"
+      },
+      {
+        "bytes": 13051,
+        "path": "tests/test_announcements.py",
+        "sha256": "cfea810fd3cd21c32121015bfa2285380e650433e21067f763517e7a845c8ac5"
+      },
+      {
+        "bytes": 4034,
+        "path": "tests/test_attachments.py",
+        "sha256": "014397416f03d9c0ba1e152b6e883a18a186f3e3d5405d77bd02a2b25736ec69"
+      },
+      {
+        "bytes": 148718,
+        "path": "tests/test_bridge.py",
+        "sha256": "8a792e71e6023c254f8bb5ed71afcecfc9dc1be8ab6c133f623df97dee94c812"
+      },
+      {
+        "bytes": 8909,
+        "path": "tests/test_ccswitch_runner.py",
+        "sha256": "22c72941dcf4548dd2c67c47e842f0d7f571b50b8b080eddca4fabbd0408fcea"
+      },
+      {
+        "bytes": 5760,
+        "path": "tests/test_ccswitch.py",
+        "sha256": "7e4250e33e632c98213a855681b1a5e8d74b289d832199213aeba739a6a30cc5"
+      },
+      {
+        "bytes": 10242,
+        "path": "tests/test_claude_client_receipt.py",
+        "sha256": "16c8711f48c25d4c8bb75afeb58d1fd4bd82aa44111351e0940d31b7981272dc"
+      },
+      {
+        "bytes": 3896,
+        "path": "tests/test_codex_catalog.py",
+        "sha256": "0663841710dae3a88368023e8fb0fb453b2d2bc1e8903a086faa92af158fdc18"
+      },
+      {
+        "bytes": 14925,
+        "path": "tests/test_collaboration_receipt.py",
+        "sha256": "f759a027b09715cb5fe26ce2eeaa2a452cf8cbfcc62b90b411e915e9411e534d"
+      },
+      {
+        "bytes": 7934,
+        "path": "tests/test_continuity_manifest.py",
+        "sha256": "6f41a064c657bbc483f94bb78fd353af2eac74c776af790987b38ac29730ccff"
+      },
+      {
+        "bytes": 2512,
+        "path": "tests/test_continuity_snapshot.py",
+        "sha256": "55a5e5208b4734f8fe2fe90c7cc08b4f288bc99bb2792c25cb014f2567aa5cc7"
+      },
+      {
+        "bytes": 10896,
+        "path": "tests/test_credentials.py",
+        "sha256": "8af3a7b2bd65c97c1ad3899e672e533ce5a2be4692aa0ff38b03038dc0b5145d"
+      },
+      {
+        "bytes": 6967,
+        "path": "tests/test_doctor.py",
+        "sha256": "bfae31c0036e594f42cc6e47ebbbdbf09ac01750faec2ad9fbb359ca54555c5d"
+      },
+      {
+        "bytes": 3623,
+        "path": "tests/test_feedback_decryptor.py",
+        "sha256": "7392cee7a99a29bb61e6c9a99a3f32666bbe653253a76863788792bdaf6f0520"
+      },
+      {
+        "bytes": 24042,
+        "path": "tests/test_feedback.py",
+        "sha256": "169414304145381f9bdaa9de65708ce784e285403489fcd9177e9c4875d895e5"
+      },
+      {
+        "bytes": 22097,
+        "path": "tests/test_lifecycle_receipt.py",
+        "sha256": "d51405cebf743c20c9a77a025f9bc81dd79ebfb6a7bd35b05b46c8d47c959843"
+      },
+      {
+        "bytes": 1668,
+        "path": "tests/test_local_alpha_soak.py",
+        "sha256": "6d7e9f2484363e33b05107ccf0d6e7a56c05fd1e93a6b33ee59368a8e88fde98"
+      },
+      {
+        "bytes": 3269,
+        "path": "tests/test_localization.py",
+        "sha256": "2b5acaf51f9cae1edb1c4aa1203631443f3ae2758766b74b20d2eda12e668f9e"
+      },
+      {
+        "bytes": 37222,
+        "path": "tests/test_mailbox_supervisor.py",
+        "sha256": "138c37c5b88199e83a86a825678bbcf9efa2b13d84fa2e19a2de8b5ea5b6e987"
+      },
+      {
+        "bytes": 9865,
+        "path": "tests/test_mcp_client_receipt.py",
+        "sha256": "8a69c65761bfecaad235730aa9155d7bfbe61cca69c2bdbdbc1bb5f5a84965bf"
+      },
+      {
+        "bytes": 33104,
+        "path": "tests/test_monitor_drag.py",
+        "sha256": "a9a95e3c119d8214fef6253e5d3dfcd9a383a0339782144aa28e76fa079c7b50"
+      },
+      {
+        "bytes": 71172,
+        "path": "tests/test_openai_compatible_runner.py",
+        "sha256": "7a44d82da4b6d0d46a9427e51b6ab44718bb7c7b2ce4e099b43017de20a1b782"
+      },
+      {
+        "bytes": 2827,
+        "path": "tests/test_portable_provenance.py",
+        "sha256": "0388f012b1fe55d8fb9cf78128e486adc09c8599649f1a6dded2884215e762bb"
+      },
+      {
+        "bytes": 1768,
+        "path": "tests/test_product.py",
+        "sha256": "5e49a0d77baa3422c38ba87cf159de21a9611baf00a4298aa3f002d2ad7efa4b"
+      },
+      {
+        "bytes": 14316,
+        "path": "tests/test_provider_receipt.py",
+        "sha256": "a892f91252c246a723f947e866afed6601073b6c119be04cf1801f8cc6abcc34"
+      },
+      {
+        "bytes": 51303,
+        "path": "tests/test_release_check.py",
+        "sha256": "1f7f220acbc52f6a1e805f3d779106d43bdc13d05c07d6a648f6dddfe1f404a6"
+      },
+      {
+        "bytes": 30938,
+        "path": "tests/test_remote_launcher.py",
+        "sha256": "c61c4c6c5f0fd2c550ce79cd40df5bc42b4b6049f1d9bd9c7884afb63d413fd3"
+      },
+      {
+        "bytes": 21714,
+        "path": "tests/test_remote.py",
+        "sha256": "3952efc30536ef914e7f7098eaa01bb741969af021f5bc2b7d875a3f8b21a14f"
+      },
+      {
+        "bytes": 2370,
+        "path": "tests/test_resource_guard.py",
+        "sha256": "1bc9d9f5f9255912a0be96969519ddaa79552de702b6b249e55f93f404620eec"
+      },
+      {
+        "bytes": 12261,
+        "path": "tests/test_room_fanout_receipt.py",
+        "sha256": "e6a30897956430318fc9b45d0c3477ec3f780f3d4c33e20f64ae2cc275c95aa5"
+      },
+      {
+        "bytes": 2921,
+        "path": "tests/test_secret_scan.py",
+        "sha256": "5a34fb57d328f55308b39ead19fadc8dfdf15e51ead12a236a4dac2d6ba729e3"
+      },
+      {
+        "bytes": 10509,
+        "path": "tests/test_stdio.py",
+        "sha256": "916bef648dbae9d4dbc664ce2493fc04afed73c6ec9ab933567cf8dbe104120f"
+      },
+      {
+        "bytes": 3740,
+        "path": "tests/test_updates.py",
+        "sha256": "5d1c4af1fb93c86ebb7eabea6f2c74d50792d95688e827cacbcf1cefebbcebd3"
+      },
+      {
+        "bytes": 11758,
+        "path": "tests/test_windows_branding.py",
+        "sha256": "8fef132acd87738bc209e94dd10d4c64f98ff0e39d6d961f088512b53e4eb840"
+      }
+    ],
+    "documentation": [
+      {
+        "bytes": 521,
+        "path": ".github/pull_request_template.md",
+        "sha256": "75d4a9d06aaad69b67714f5cd79d846a4fc3612bc2b242da137a671c9cfcd8ea"
+      },
+      {
+        "bytes": 735,
+        "path": "BRAND_ASSETS.md",
+        "sha256": "aec09fe7af6ea4c3d0f700cbd1b325dfc3ef6e7aac86be321ebb39fbeb003733"
+      },
+      {
+        "bytes": 5382,
+        "path": "CHANGELOG.md",
+        "sha256": "b53ed3849d0fa8fe99ff89f0d4d387c6b7dcd3ff660b916e7df86c57709c8c81"
+      },
+      {
+        "bytes": 959,
+        "path": "CODE_OF_CONDUCT.md",
+        "sha256": "52278e9444c7790cc219e389852109cc2ae866afc85ce7e29e916a899e891fdf"
+      },
+      {
+        "bytes": 1589,
+        "path": "CONTRIBUTING.md",
+        "sha256": "0e97d8cf417f4757052e831e42c8d599653d11157773264aa201a641e8afc2a0"
+      },
+      {
+        "bytes": 3682,
+        "path": "docs/agent-adapters.md",
+        "sha256": "222684f990d80a3f25715fc9711f94041fef872cf504bcc1b3e4289b9d317ed9"
+      },
+      {
+        "bytes": 4460,
+        "path": "docs/alpha-quickstart.zh-Hans.md",
+        "sha256": "8814164e6c1107b493125c3ff4f6a25ec3f5051327bedaf40e79a775f6282be5"
+      },
+      {
+        "bytes": 4466,
+        "path": "docs/alpha-quickstart.zh-Hant.md",
+        "sha256": "01603b03380d872baf4c8b5e8b8e8b311e456b024b74b6b9cd18c8b439ab992c"
+      },
+      {
+        "bytes": 5598,
+        "path": "docs/alpha-support-matrix.md",
+        "sha256": "130efca70452d917cdc0ef99204fff51db409d39fbea34b1eba665f4c69857d6"
+      },
+      {
+        "bytes": 5286,
+        "path": "docs/alpha-troubleshooting.md",
+        "sha256": "3d930b1f46ca38a38321c4d255ca2074dbd91e8573183ab44309c79194b285e0"
+      },
+      {
+        "bytes": 11031,
+        "path": "docs/architecture.md",
+        "sha256": "69c4e54ec2cd0f3caf4cfc5a83383f9aa3409e905947d59d5b6cca663da4c7a4"
+      },
+      {
+        "bytes": 5066,
+        "path": "docs/client-config.md",
+        "sha256": "e486b0e4d153c88ee8e872269d7174b89a79cc880a8e976fba14ce914c4093e8"
+      },
+      {
+        "bytes": 982,
+        "path": "docs/demo.md",
+        "sha256": "89820896b7cf528a0524ae34d6f2fa0a8951259af1e33d8c53ba6f623bf6b760"
+      },
+      {
+        "bytes": 18245,
+        "path": "docs/DESKTOP_FEATURE_GAP_REGISTER_20260815.md",
+        "sha256": "98ca2ab8519a444b7ea31e27548be9aa28b457fb110a983389766e0e937adf3f"
+      },
+      {
+        "bytes": 6422,
+        "path": "docs/experimental-remote-commercial-hooks.md",
+        "sha256": "f13bfb705cadeb12501046f224c2c767c7e21bfbd4be48b5f534c6d7206da2c1"
+      },
+      {
+        "bytes": 2680,
+        "path": "docs/feedback-privacy.md",
+        "sha256": "4f723219a881cac76985282923f2e7677114b75da432395cc38bf149d43ac8ce"
+      },
+      {
+        "bytes": 4852,
+        "path": "docs/GITHUB_ALPHA_RELEASE_DRAFT_20260815.md",
+        "sha256": "f3834da7575d38623936c5923cf6324c894df7ae106c527aa08e2fa09da52a03"
+      },
+      {
+        "bytes": 1775,
+        "path": "docs/LOCAL_ALPHA_CODEX_CATALOG_ACCEPTANCE_20260815.md",
+        "sha256": "1ae1de4f3518c39b25f3850dae8ac7e3e72bb4f514df688c5d15e4d1c6b1c396"
+      },
+      {
+        "bytes": 5550,
+        "path": "docs/LOCAL_ALPHA_PHYSICAL_UI_ACCEPTANCE_20260815.md",
+        "sha256": "e3aa9f76b9bd75fe4e86e7697a209cc279f7ed66f732588177d26a9ed5647f3a"
+      },
+      {
+        "bytes": 13097,
+        "path": "docs/LOCAL_ALPHA_RELEASE_EVIDENCE_20260815.md",
+        "sha256": "f8153f61deea3cf434454ab63f9c17099c7cfe30ec898fa202ef8feabc15692d"
+      },
+      {
+        "bytes": 6307,
+        "path": "docs/open-core-boundary.md",
+        "sha256": "fd94efe24131d10228934212c41d2f23849919e1afaa60fc72419ae48a48ffb9"
+      },
+      {
+        "bytes": 6539,
+        "path": "docs/operations-memory.md",
+        "sha256": "e1b2be18a18f1eae3172ba9a5cf026ba2b152c1460963a06d9bc4e2da92ea8e3"
+      },
+      {
+        "bytes": 7809,
+        "path": "docs/provider-routing.md",
+        "sha256": "d9d573529fa7ebed7f92d66387e3a88e7610b23a2b8ee88ef32fa6504854eb3b"
+      },
+      {
+        "bytes": 8920,
+        "path": "docs/remote-mobile.md",
+        "sha256": "c36dc04b062ef9feb96776b25746faa9a479d2fc7ee2d8a89bb85a4b00967071"
+      },
+      {
+        "bytes": 7833,
+        "path": "docs/telemetry.md",
+        "sha256": "0abc8353f53f66cdcdbad309f1ff86bdc221a93cef80a178b70d0ea63d426dbd"
+      },
+      {
+        "bytes": 6275,
+        "path": "docs/threat-model.md",
+        "sha256": "dbb06959db2b8c87272896cadc902bf0e34ffdec6ba4e1b38cb9afa9512475f2"
+      },
+      {
+        "bytes": 21377,
+        "path": "README.md",
+        "sha256": "651ba8d86e2a2ac30b0eba5b4a5a188913f2e36b1fc8997001cf7b607f9f90e4"
+      },
+      {
+        "bytes": 3906,
+        "path": "ROADMAP.md",
+        "sha256": "b25ff86aac7c1c53f2f64e884f7f87739232f9490cf92354f45c197d1969a83b"
+      },
+      {
+        "bytes": 8462,
+        "path": "SECURITY.md",
+        "sha256": "f5616729a6bc4e2be4f8a0b5efbc33b069eec8d138ddad712ca54ee1a9626c7e"
+      },
+      {
+        "bytes": 2231,
+        "path": "support/cloudflare-edge/README.md",
+        "sha256": "cf9d65dc9e71aadfdd536b6ab1d3e2448542c376b32732cbcb11886c813e0394"
+      },
+      {
+        "bytes": 4249,
+        "path": "support/README.md",
+        "sha256": "fedcedf153a713ccad12fd79456d589d20162b1074cc150dc9aa33881bf0a0f3"
+      },
+      {
+        "bytes": 1846,
+        "path": "THIRD_PARTY_NOTICES.md",
+        "sha256": "a9315452421bd5613861d242e124e4aa2eb39b5407bab71e00981c52f85dbf2e"
+      },
+      {
+        "bytes": 840,
+        "path": "TRADEMARKS.md",
+        "sha256": "a856773002cde37d39987b26398fff8abd4b433f64b1f358f49807df8c29b517"
+      }
+    ]
+  },
+  "external_authorities": [],
+  "resume_rule": "Recompute live state and hashes before writing; this manifest is a snapshot, not authority to replay stale work."
+}

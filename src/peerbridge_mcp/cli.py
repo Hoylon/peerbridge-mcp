@@ -9,7 +9,16 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .analytics import AnalyticsError, AnalyticsStore, record_launch
 from .bridge import Bridge, BridgeError
+from .doctor import inspect_database
+from .mailbox_supervisor import MailboxSupervisor, SupervisorError
+from .product import (
+    ProductConfigError,
+    capability_manifest,
+    capability_status,
+    set_update_channel,
+)
 from .server import serve
 
 
@@ -29,20 +38,26 @@ def _bridge_from_args(args: argparse.Namespace) -> Bridge:
         client_name=getattr(args, "client_name", None),
         provider_id=getattr(args, "provider_id", None),
         model_id=getattr(args, "model_id", None),
+        reasoning_mode=getattr(args, "reasoning_mode", None),
+        route_class=getattr(args, "route_class", None),
         protected_paths=getattr(args, "protected_path", []) or [],
     )
 
 
-def _write_config(root: Path, scope: str) -> dict[str, Any]:
+def _write_config(root: Path, scope: str, db_path: Path) -> dict[str, Any]:
     state = root / ".peerbridge"
     state.mkdir(parents=True, exist_ok=True)
     config = state / "config.json"
     if config.exists():
         data = json.loads(config.read_text(encoding="utf-8"))
         return {"created": False, "path": str(config), "config": data}
+    try:
+        database = db_path.relative_to(root).as_posix()
+    except ValueError:
+        database = str(db_path)
     data = {
         "scope": scope,
-        "database": ".peerbridge/peerbridge.sqlite3",
+        "database": database,
         "protected_paths": [".git", ".peerbridge"],
     }
     config.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -59,7 +74,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = sub.add_parser("init", help="Create .peerbridge configuration and database.")
     init.add_argument("--project-root", default=".")
+    init.add_argument("--db")
     init.add_argument("--scope", default="default")
+
+    migrate = sub.add_parser(
+        "migrate", help="Explicitly upgrade an existing PeerBridge database."
+    )
+    migrate.add_argument("--project-root", default=".")
+    migrate.add_argument("--db")
+    migrate.add_argument("--scope", default="default")
 
     for name, help_text in (
         ("serve", "Run the MCP server over stdio."),
@@ -83,36 +106,200 @@ def build_parser() -> argparse.ArgumentParser:
             "--model-id",
             help="Non-secret selected model label such as grok or deepseek.",
         )
+        command.add_argument(
+            "--reasoning-mode",
+            help="Observed reasoning setting such as low, high, max, SOL or LUNA.",
+        )
+        command.add_argument(
+            "--route-class",
+            choices=("official", "relay", "local"),
+            help="Observed provider class; required to satisfy a class-bound route.",
+        )
         command.add_argument("--protected-path", action="append", default=[])
+        if name == "serve":
+            command.add_argument(
+                "--allow-tool",
+                action="append",
+                default=[],
+                help="Expose only this MCP tool; repeat for multiple tools.",
+            )
+            command.add_argument(
+                "--allow-artifact-read",
+                action="store_true",
+                help=(
+                    "Explicitly expose read_artifact. It is disabled by default because "
+                    "returned project text is sent to the connected model provider."
+                ),
+            )
 
     monitor = sub.add_parser("monitor", help="Open the local pixel control room.")
     monitor.add_argument("--project-root", default=".")
     monitor.add_argument("--db")
     monitor.add_argument("--scope", default="default")
     monitor.add_argument("--refresh-ms", type=int, default=1500)
+
+    remote = sub.add_parser(
+        "remote",
+        help="Run a loopback-only human control plane for Tailscale Serve.",
+    )
+    remote.add_argument("--project-root", default=".")
+    remote.add_argument("--db")
+    remote.add_argument("--scope", default="default")
+    remote.add_argument("--host", default="127.0.0.1")
+    remote.add_argument("--port", type=int, default=8765)
+    remote.add_argument("--public-origin", required=True)
+    remote.add_argument("--instance-id")
+    remote.add_argument("--evidence-run-id")
+    remote.add_argument("--evidence-minimum-gap-seconds", type=int, default=10)
+    remote.add_argument(
+        "--allow-login",
+        action="append",
+        default=[],
+        help="Authorized Tailscale login; default is the signed-in tailnet owner.",
+    )
+
+    supervise = sub.add_parser(
+        "supervise",
+        help="Run the low-memory routed-message supervisor.",
+    )
+    supervise.add_argument("--project-root", default=".")
+    supervise.add_argument("--db")
+    supervise.add_argument("--scope", default="default")
+    supervise.add_argument("--poll-seconds", type=float, default=5.0)
+    supervise.add_argument("--lease-seconds", type=int, default=300)
+    supervise.add_argument("--max-attempts", type=int, default=5)
+    supervise.add_argument("--max-parallel-dispatches", type=int, default=16)
+    supervise.add_argument(
+        "--once",
+        action="store_true",
+        help="Run one discovery/dispatch cycle and exit.",
+    )
+
+    analytics = sub.add_parser(
+        "analytics",
+        help="Manage local-only, explicit opt-in aggregate analytics.",
+    )
+    analytics.add_argument("--project-root", default=".")
+    analytics_actions = analytics.add_subparsers(dest="analytics_action", required=True)
+    for action in ("status", "enable", "disable", "reset", "export"):
+        analytics_actions.add_parser(action)
+    analytics_record = analytics_actions.add_parser("record")
+    analytics_record.add_argument("--event", required=True)
+    analytics_record.add_argument(
+        "--dimension",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+    )
+
+    product = sub.add_parser(
+        "product",
+        help="Inspect public capabilities and dormant commercial boundaries.",
+    )
+    product.add_argument("--project-root", default=".")
+    product_actions = product.add_subparsers(dest="product_action", required=True)
+    product_status = product_actions.add_parser("status")
+    product_status.add_argument("--capability")
+    product_channel = product_actions.add_parser("set-channel")
+    product_channel.add_argument(
+        "--channel", choices=("stable", "beta", "experimental"), required=True
+    )
     return parser
+
+
+def _dimensions(values: list[str]) -> dict[str, str]:
+    result: dict[str, str] = {}
+    for value in values:
+        key, separator, item = value.partition("=")
+        if not separator or not key.strip() or not item.strip():
+            raise AnalyticsError("analytics dimensions must use KEY=VALUE")
+        normalized = key.strip()
+        if normalized in result:
+            raise AnalyticsError("analytics dimensions cannot repeat a key")
+        result[normalized] = item.strip()
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.command == "analytics":
+            store = AnalyticsStore(Path(args.project_root))
+            if args.analytics_action == "status":
+                result = store.status()
+            elif args.analytics_action == "enable":
+                result = store.enable()
+            elif args.analytics_action == "disable":
+                result = store.disable()
+            elif args.analytics_action == "reset":
+                result = store.reset()
+            elif args.analytics_action == "export":
+                result = store.export()
+            else:
+                result = store.record(args.event, _dimensions(args.dimension))
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "product":
+            root = Path(args.project_root).resolve()
+            if args.product_action == "set-channel":
+                result = set_update_channel(root, args.channel)
+            elif args.capability:
+                result = capability_status(root, args.capability)
+            else:
+                result = capability_manifest(root)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        launch_features = {
+            "serve": "local_core",
+            "monitor": "control_room",
+            "remote": "experimental_remote",
+            "supervise": "local_core",
+        }
+        if args.command in launch_features:
+            record_launch(Path(args.project_root), launch_features[args.command])
         if args.command == "init":
             root = Path(args.project_root).resolve()
             root.mkdir(parents=True, exist_ok=True)
-            receipt = _write_config(root, args.scope)
-            bridge = Bridge(root, _default_db(root), "initializer", args.scope)
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            receipt = _write_config(root, args.scope, db)
+            bridge = Bridge(root, db, "initializer", args.scope)
             receipt["database"] = bridge.status()["database"]
             print(json.dumps(receipt, indent=2, sort_keys=True))
             return 0
-        if args.command == "serve":
-            return serve(_bridge_from_args(args))
-        if args.command == "doctor":
-            bridge = _bridge_from_args(args)
+        if args.command == "migrate":
+            root = Path(args.project_root).resolve()
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            if not root.is_dir():
+                raise BridgeError(f"project root does not exist: {root}")
+            if not db.is_file():
+                raise BridgeError(
+                    f"database does not exist: {db}; run peerbridge init first"
+                )
+            bridge = Bridge(root, db, "migrator", args.scope)
+            status = bridge.status()
             result = {
-                "status": bridge.status(),
-                "audit": bridge.verify_audit_chain(),
+                "database": status["database"],
+                "schema_version": status["schema_version"],
+                "writes_performed": True,
             }
-            result["ok"] = bool(result["audit"]["valid"])
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "serve":
+            allowed_tools = frozenset(args.allow_tool) if args.allow_tool else None
+            denied_tools = (
+                frozenset()
+                if args.allow_artifact_read
+                else frozenset({"read_artifact"})
+            )
+            return serve(
+                _bridge_from_args(args),
+                allowed_tools=allowed_tools,
+                denied_tools=denied_tools,
+            )
+        if args.command == "doctor":
+            root = Path(args.project_root).resolve()
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            result = inspect_database(root, db, args.scope)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0 if result["ok"] else 1
         if args.command == "monitor":
@@ -121,7 +308,54 @@ def main(argv: list[str] | None = None) -> int:
             root = Path(args.project_root).resolve()
             db = Path(args.db).resolve() if args.db else _default_db(root)
             return run_monitor(root, db, args.scope, args.refresh_ms)
-    except (BridgeError, OSError, ValueError, json.JSONDecodeError) as exc:
+        if args.command == "remote":
+            from .remote import run_remote
+
+            root = Path(args.project_root).resolve()
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            return run_remote(
+                root,
+                db,
+                args.scope,
+                args.host,
+                args.port,
+                set(args.allow_login),
+                args.public_origin,
+                args.instance_id,
+                args.evidence_run_id,
+                args.evidence_minimum_gap_seconds,
+            )
+        if args.command == "supervise":
+            root = Path(args.project_root).resolve()
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            supervisor = MailboxSupervisor(
+                root,
+                db,
+                args.scope,
+                lease_seconds=args.lease_seconds,
+                max_attempts=args.max_attempts,
+                max_parallel_dispatches=args.max_parallel_dispatches,
+            )
+            if args.once:
+                result = supervisor.run_once()
+                print(json.dumps(result.__dict__, indent=2, sort_keys=True))
+                return 0
+            supervisor.run_forever(args.poll_seconds)
+            return 0
+    except (
+        BridgeError,
+        AnalyticsError,
+        ProductConfigError,
+        SupervisorError,
+        OSError,
+        ValueError,
+        json.JSONDecodeError,
+    ) as exc:
         print(f"peerbridge: {exc}", file=sys.stderr)
         return 2
     return 2
+
+
+def supervisor_main() -> int:
+    """Console-script wrapper that selects the supervise subcommand."""
+    return main(["supervise", *sys.argv[1:]])

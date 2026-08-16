@@ -12,6 +12,10 @@ session and calls PeerBridge tools directly.
 Examples include Codex, Claude Code, and Kimi Code CLI. Each should receive a distinct
 agent ID and share the same project root, scope, and database.
 
+PeerBridge prefers this path whenever a real client or terminal can consume MCP. The
+control room labels these sessions `MCP NATIVE`. The client still has to be running,
+authorized, and configured; a saved route cannot wake a closed third-party client.
+
 ## Official website, official service, and relay route are different
 
 The same model family can be available through more than one route:
@@ -44,13 +48,19 @@ labels.
 ## API-backed runner
 
 Use this route when a provider exposes model and tool-calling APIs but no suitable coding
-client. A separate runner owns the model loop, translates provider tool calls to MCP calls,
-enforces workspace and token limits, and records its provider/model identity. This runner
-is future work; it is not part of v0.1.
+client. A separate runner owns the model loop, translates provider tool calls to an
+allowlisted read-only subset of PeerBridge MCP, enforces cumulative operation budgets,
+and records its provider/model identity. The control room labels this `MCP TOOL`; it is
+not represented as a native model-side MCP session.
 
 DeepSeek and Grok may be connected this way if the chosen official or relay route cannot
 consume MCP directly. API access, a web subscription, a relay channel, and an installed
 desktop app are different capabilities and must not be treated as interchangeable.
+
+The CC Switch Claude fallback is deliberately narrower: it runs one bounded inference
+with tools disabled and is labelled `INFERENCE`. It can answer a dispatched prompt, but
+it cannot claim that Claude called PeerBridge tools. Use Claude Code's direct MCP
+configuration when tool access is required.
 
 ## Test ladder
 

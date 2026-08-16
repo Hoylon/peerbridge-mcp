@@ -1,0 +1,10 @@
+{
+  "schema": "peerbridge.feedback-config.v1",
+  "endpoint": "https://support.example.invalid/peerbridge/feedback",
+  "endpoint_transport": "json-base64-v1",
+  "support_email": "support@example.invalid",
+  "public_key_path": "support/peerbridge-support-public.pub",
+  "public_key_sha256": "REPLACE_WITH_LOWERCASE_SHA256_OF_PUBLIC_PEM",
+  "recipient_label": "PeerBridge private support",
+  "privacy_url": "https://support.example.invalid/peerbridge/privacy"
+}

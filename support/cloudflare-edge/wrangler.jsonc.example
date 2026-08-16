@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "peerbridge-edge",
+  "main": "src/index.js",
+  "compatibility_date": "2026-08-15",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 0.05
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "peerbridge-feedback",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUNDLES",
+      "bucket_name": "peerbridge-feedback-bundles"
+    }
+  ],
+  "triggers": {
+    "crons": ["17 * * * *"]
+  }
+}

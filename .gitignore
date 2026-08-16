@@ -3,6 +3,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .pytest-tmp/
+.pytest-tmp*/
+.pytest-*/
+.pytest_runs/
+.test-tmp/
+.test-tmp-*/
+.test-runtime/
 .coverage
 htmlcov/
 dist/
@@ -24,9 +30,13 @@ venv/
 *.db-wal
 *.db-shm
 .peerbridge/
+.peerbridge-artifacts/
 drafts/
 logs/
 *.log
 demo-workspace/
 .ruff_cache/
 .mypy_cache/
+node_modules/
+.dev.vars
+support/cloudflare-edge/wrangler.jsonc

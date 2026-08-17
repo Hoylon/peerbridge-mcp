@@ -719,10 +719,14 @@ class MailboxSupervisor:
                     name=f"peerbridge-cancel-{message_id[:12]}",
                     daemon=True,
                 ).start()
-            cancel_returned = cancel_completed.wait(
-                self.runner_cancel_grace_seconds
+            grace_deadline = time.monotonic() + self.runner_cancel_grace_seconds
+            cancel_returned = (
+                cancel_completed.wait(self.runner_cancel_grace_seconds)
+                if callable(cancel)
+                else False
             )
-            runner_returned = completed.wait(self.runner_cancel_grace_seconds)
+            remaining_grace = max(0.0, grace_deadline - time.monotonic())
+            runner_returned = completed.wait(remaining_grace)
             if not (cancel_returned and runner_returned):
                 raise _RunnerCancellationIncomplete
             runner_thread.join()

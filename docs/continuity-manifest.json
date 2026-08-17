@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-17T21:31:48Z",
+  "generated_at_utc": "2026-08-17T21:50:32Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -12,13 +12,13 @@
     "tests_failed": 0,
     "tests_passed": 629,
     "tests_skipped": 1,
-    "release_certified_payload_root_sha256": "6a8b649439d4066bfac3e942f7c0dfdca26b1a35815c64736fe04a46a1366356",
+    "release_certified_payload_root_sha256": "d0af711d3154c0b8ff00c361f480963a5cd3e8e01d78831e081b5a4453c1a273",
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <unique-release-temp>",
-      "created_at_utc": "2026-08-17T21:31:48Z",
-      "tracked_payload_root_sha256": "6a8b649439d4066bfac3e942f7c0dfdca26b1a35815c64736fe04a46a1366356",
+      "created_at_utc": "2026-08-17T21:50:31Z",
+      "tracked_payload_root_sha256": "d0af711d3154c0b8ff00c361f480963a5cd3e8e01d78831e081b5a4453c1a273",
       "tests_collected": 630,
       "tests_failed": 0,
       "tests_passed": 629,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "6a8b649439d4066bfac3e942f7c0dfdca26b1a35815c64736fe04a46a1366356",
+    "tracked_payload_root_sha256": "d0af711d3154c0b8ff00c361f480963a5cd3e8e01d78831e081b5a4453c1a273",
     "tracked_payload_file_count": 181,
     "source_files": [
       {
@@ -326,9 +326,9 @@
         "sha256": "c8ea87e1c77665cb8b78994a0946d7f1410cdf8702839797c36463842b8f4782"
       },
       {
-        "bytes": 44831,
+        "bytes": 45034,
         "path": "src/peerbridge_mcp/mailbox_supervisor.py",
-        "sha256": "65dcb73a340c03fe74260688c87777a193241d9e6f6bd6ee672083accfb13f14"
+        "sha256": "e72b1bd850f76b0ada75e22145fbc60ba56c133aaef090325f28f2bbdee45c37"
       },
       {
         "bytes": 24326,
@@ -661,9 +661,9 @@
         "sha256": "03edb2be526a79b096e79ff679474b03d9746f439921cfefcf3976efe776942e"
       },
       {
-        "bytes": 60974,
+        "bytes": 61124,
         "path": "tests/test_mailbox_supervisor.py",
-        "sha256": "4a6f2ba41d10f46029fc8ee88f24ea62109c96d9805950966dbc93df51453e9c"
+        "sha256": "3962e3d311dcce52a015642d8ba26fa8d123db241365a11af72d0a93d388e606"
       },
       {
         "bytes": 9865,

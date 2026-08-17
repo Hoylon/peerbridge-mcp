@@ -1,0 +1,97 @@
+name: Published release VM acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact published release tag to verify
+        required: true
+        type: string
+      asset:
+        description: Exact Windows portable ZIP asset name
+        required: true
+        type: string
+      sha256:
+        description: Independently copied lowercase SHA-256 for the ZIP
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  clean-windows-vm:
+    timeout-minutes: 20
+    runs-on: windows-2025
+    steps:
+      - name: Check out the exact published tag
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 0
+      - name: Download the exact public release asset
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_ASSET: ${{ inputs.asset }}
+        run: |
+          $download = Join-Path $env:RUNNER_TEMP 'published-release'
+          New-Item -ItemType Directory -Path $download -ErrorAction Stop | Out-Null
+          gh release download $env:RELEASE_TAG `
+            --repo $env:GITHUB_REPOSITORY `
+            --pattern $env:RELEASE_ASSET `
+            --dir $download
+          $assetPath = Join-Path $download $env:RELEASE_ASSET
+          if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
+            throw 'The exact published release asset was not downloaded.'
+          }
+      - name: Verify the downloaded app and live HTTPS announcement feed
+        id: acceptance
+        shell: pwsh
+        env:
+          RELEASE_ASSET: ${{ inputs.asset }}
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+        run: |
+          if ($env:EXPECTED_SHA256 -cnotmatch '^[0-9a-f]{64}$') {
+            throw 'The independently supplied SHA-256 is invalid.'
+          }
+          $assetPath = Join-Path `
+            (Join-Path $env:RUNNER_TEMP 'published-release') `
+            $env:RELEASE_ASSET
+          $receiptRoot = Join-Path $env:RUNNER_TEMP 'published-release-acceptance'
+          $verificationJson = & ./scripts/verify_windows_portable.ps1 `
+            -Archive $assetPath `
+            -ExpectedSha256 $env:EXPECTED_SHA256 `
+            -OutputRoot $receiptRoot `
+            -Headless
+          $verification = $verificationJson | ConvertFrom-Json
+          if ($verification.Status -ne 'PASS') {
+            throw 'The published Windows release failed clean-VM acceptance.'
+          }
+          $receiptPath = Join-Path $receiptRoot 'published-release-vm-acceptance.json'
+          [ordered]@{
+            schema = 'peerbridge.published-release-vm-acceptance.v1'
+            status = 'PASS'
+            repository = $env:GITHUB_REPOSITORY
+            tag = '${{ inputs.tag }}'
+            asset = $env:RELEASE_ASSET
+            archive_sha256 = $verification.ArchiveSha256
+            runner_os = $env:RUNNER_OS
+            runner_arch = $env:RUNNER_ARCH
+            verification = $verification
+          } | ConvertTo-Json -Depth 8 | Set-Content `
+            -LiteralPath $receiptPath `
+            -Encoding utf8NoBOM `
+            -NoNewline
+          "receipt=$receiptPath" | Out-File `
+            -FilePath $env:GITHUB_OUTPUT `
+            -Append `
+            -Encoding utf8
+      - name: Retain the clean-VM acceptance receipt
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: published-release-vm-acceptance-${{ inputs.tag }}
+          path: ${{ steps.acceptance.outputs.receipt }}
+          if-no-files-found: error
+          retention-days: 90

@@ -1,9 +1,31 @@
 # Changelog
 
 All notable changes are documented here. The format follows Keep a Changelog and the
-project uses Semantic Versioning after the initial alpha series.
+project uses Semantic Versioning after the initial alpha series. During the Alpha series,
+major milestones use names such as Alpha 5, while compatible maintenance releases use
+Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
+
+## [0.1.0-alpha.5] - 2026-08-18
+
+### Added
+
+- A package-pinned public HTTPS announcement feed with Traditional Chinese, Simplified
+  Chinese, and English delivery in the control room.
+- Published-release acceptance on a fresh GitHub-hosted Windows VM, including exact asset
+  SHA-256 verification, frozen lifecycle checks, and a live announcement-feed receipt.
+
+### Changed
+
+- Reframed the public introduction around official clients, relay services, compatible
+  APIs, local models, equal-peer collaboration, mutual scoring, cross-agent audit,
+  approved shared memory, live Token visibility, and one-click CC Switch model sync.
+
+### Fixed
+
+- Included the maintainer-pinned announcement configuration in the Windows/Python package
+  so clean installations can receive the public feed without local setup.
 
 ## [0.1.0-alpha.4] - 2026-08-18
 
@@ -117,7 +139,8 @@ project uses Semantic Versioning after the initial alpha series.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.4...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5...HEAD
+[0.1.0-alpha.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.2

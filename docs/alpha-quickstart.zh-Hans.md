@@ -1,8 +1,11 @@
 # PeerBridge 本地 Alpha 快速开始（简体中文）
 
-PeerBridge 是本地优先、可审计的多 Agent 协作层。这个 Alpha 使用共享 SQLite
-邮箱、任务租约、房间、互评、证据和 SHA 串联事件，让 Codex、Claude Code 或其他
-已配置的 Agent 在不互相覆盖工作的情况下协作。
+PeerBridge 把 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本地模型及其他
+兼容 Agent 组成一个平等、可审计的 AI 团队。它首先支持官方客户端、中转站、
+兼容 API 与本地模型，再提供多房间协作、共享核准记忆、Agent 互相评分与交叉审计、
+实时 Token 用量仪表板，以及通过 CC Switch 官方 CLI 一键同步 Provider 与模型。
+所有消息、决策、证据、评分和交接都保留 SHA 串联记录，人类可以随时介入、暂停或
+调整方向。
 
 > 本版本是 Alpha，不是 Stable。实验性自架远程代码会随源码提供，但默认关闭，
 > 不受本地 Alpha 支持或证据门保障。云端同步、付费远程服务、原生 iPhone、已签名
@@ -12,8 +15,8 @@ PeerBridge 是本地优先、可审计的多 Agent 协作层。这个 Alpha 使�
 
 ### Windows 便携版（推荐）
 
-从 GitHub Alpha pre-release 下载
-`PeerBridgeControlRoom-0.1.0a4-windows-x64-portable.zip`，完整解压到可写入的文件夹，
+从 GitHub Alpha 正式发布页下载
+`PeerBridgeControlRoom-0.1.0a5-windows-x64-portable.zip`，完整解压到可写入的文件夹，
 再双击 `Launch PeerBridge.cmd`。程序会把本地工作区放在
 `%LOCALAPPDATA%\PeerBridge\workspace`；压缩包不包含 provider 凭据或私人运行数据。
 

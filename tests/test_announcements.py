@@ -88,6 +88,15 @@ def test_config_is_https_and_uses_dedicated_endpoint() -> None:
         AnnouncementConfig("http://edge.example/v1/announcements", 300)
 
 
+def test_packaged_config_binds_the_public_announcement_feed() -> None:
+    config = AnnouncementConfig.load()
+    assert config is not None
+    assert config.endpoint == (
+        "https://peerbridge-edge.peerbridge-edge.workers.dev/v1/announcements"
+    )
+    assert config.poll_seconds == 900
+
+
 def test_explicit_config_load_and_project_checkout_cannot_redirect_feed(
     tmp_path, monkeypatch
 ) -> None:
@@ -120,7 +129,12 @@ def test_explicit_config_load_and_project_checkout_cannot_redirect_feed(
         encoding="utf-8",
     )
     monkeypatch.chdir(tmp_path)
-    assert AnnouncementConfig.load() is None
+    packaged = AnnouncementConfig.load()
+    assert packaged is not None
+    assert packaged.endpoint == (
+        "https://peerbridge-edge.peerbridge-edge.workers.dev/v1/announcements"
+    )
+    assert "attacker.example" not in packaged.endpoint
 
 
 def test_fetch_is_read_only_bounded_and_locale_bound() -> None:

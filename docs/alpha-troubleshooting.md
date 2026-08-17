@@ -98,7 +98,7 @@ round reaches a terminal state. Do not include prompts or credentials.
 ## Updates
 
 **Check for updates** only reads GitHub release metadata. The Alpha does not install,
-replace, or roll back files automatically. Download a newer pre-release deliberately,
+replace, or roll back files automatically. Download a newer release deliberately,
 verify its published SHA-256, and install it into a separate virtual environment until a
 signed updater exists.
 

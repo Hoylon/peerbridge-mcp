@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from peerbridge_mcp import __version__
+from peerbridge_mcp.announcements import AnnouncementConfig, fetch_announcements
 from peerbridge_mcp.cli import main as cli_main
 from peerbridge_mcp.feedback import run_feedback_encryption_self_test
 from peerbridge_mcp.mailbox_supervisor import MailboxSupervisor
@@ -143,6 +144,53 @@ def _run_feedback_encryption_self_test() -> int:
         print(json.dumps(receipt, sort_keys=True), file=sys.stderr)
         return 1
     receipt.update({"status": "PASS", "result": result})
+    if receipt_path is not None:
+        _write_json_create_only(receipt_path, receipt)
+    print(json.dumps(receipt, sort_keys=True))
+    return 0
+
+
+def _run_announcement_self_test() -> int:
+    receipt_value = os.environ.get("PEERBRIDGE_SELF_TEST_RECEIPT_PATH", "").strip()
+    receipt_path = Path(receipt_value).resolve() if receipt_value else None
+    receipt: dict[str, Any] = {
+        "schema": SELF_TEST_RECEIPT_SCHEMA,
+        "test": "announcement-feed",
+        "runtime_kind": _runtime_kind(),
+        "runtime_sha256": _runtime_sha256(),
+        "version": __version__,
+    }
+    try:
+        config = AnnouncementConfig.load()
+        if config is None:
+            raise RuntimeError("packaged announcement configuration is missing")
+        locale_counts = {
+            locale: len(
+                fetch_announcements(
+                    config,
+                    locale=locale,
+                    after_utc="1970-01-01T00:00:00Z",
+                    timeout=20.0,
+                )
+            )
+            for locale in ("en", "zh-Hans", "zh-Hant")
+        }
+    except Exception as exc:
+        receipt.update({"status": "FAIL", "error_chain": _safe_exception_chain(exc)})
+        if receipt_path is not None:
+            _write_json_create_only(receipt_path, receipt)
+        print(json.dumps(receipt, sort_keys=True), file=sys.stderr)
+        return 1
+    receipt.update(
+        {
+            "status": "PASS",
+            "result": {
+                "endpoint": config.endpoint,
+                "poll_seconds": config.poll_seconds,
+                "locale_counts": locale_counts,
+            },
+        }
+    )
     if receipt_path is not None:
         _write_json_create_only(receipt_path, receipt)
     print(json.dumps(receipt, sort_keys=True))
@@ -457,6 +505,9 @@ def dispatch(argv: list[str] | None = None) -> int:
 
     if args == ["--feedback-encryption-self-test"]:
         return _run_feedback_encryption_self_test()
+
+    if args == ["--announcement-self-test"]:
+        return _run_announcement_self_test()
 
     if args[:1] == ["--managed-supervisor"]:
         try:

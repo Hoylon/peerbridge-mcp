@@ -1,0 +1,5 @@
+{
+  "schema": "peerbridge.announcement-config.v1",
+  "endpoint": "https://peerbridge-edge.peerbridge-edge.workers.dev/v1/announcements",
+  "poll_seconds": 900
+}

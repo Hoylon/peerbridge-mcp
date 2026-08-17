@@ -1,6 +1,6 @@
 # PeerBridge Local Alpha Support Matrix
 
-This matrix describes the `0.1.0-alpha.4` local candidate. A test or implementation entry
+This matrix describes the `0.1.0-alpha.5` local candidate. A test or implementation entry
 does not upgrade a provider route to verified official identity.
 
 ## Platforms and distribution
@@ -43,7 +43,7 @@ observed model identities separately and fails closed on an unconfigured mismatc
 | Drag add/remove | Verified local Alpha | Physical add/remove and deterministic drag tests pass; removal preserves history and requires confirmation. |
 | Traditional Chinese / Simplified Chinese / English | Supported | Low-level engineering diagnostics may remain English in Alpha. |
 | First-run tutorial | Supported | Screenshots/video are not bundled yet. |
-| Read-only update check | Supported | Alpha checks include GitHub pre-releases; no automatic installation. |
+| Read-only update check | Supported | Alpha checks include published GitHub releases; no automatic installation. |
 | Image/text attachment transport | Supported with limits | Agents do not yet receive provider-specific multimodal image payloads. |
 | Skills | Not implemented | No picker, version/hash binding, permission preview, or invocation provenance yet. |
 | Private feedback | Verified local Alpha | The packaged HTTPS intake validates a sealed bundle, stores it temporarily in private R2 with bounded D1 metadata, and sends a maintainer notification. Normal diagnostics redact secrets; complete-key escalation is explicit and locally encrypted before upload. Local retry fallback is preserved. |

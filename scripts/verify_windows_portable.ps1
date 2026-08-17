@@ -607,7 +607,8 @@ function Invoke-PortableCheck {
     param(
         [string]$Name,
         [string[]]$Arguments,
-        [switch]$RequireReceipt
+        [switch]$RequireReceipt,
+        [string]$ExpectedReceiptTest = 'feedback-encryption'
     )
     $receiptPath = Join-Path $OutputRoot "self-tests\$Name.json"
     $previousReceiptPath = [Environment]::GetEnvironmentVariable(
@@ -649,7 +650,7 @@ function Invoke-PortableCheck {
         ).Hash.ToLowerInvariant()
         if (
             $receipt.schema -ne 'peerbridge-packaged-self-test-v1' -or
-            $receipt.test -ne 'feedback-encryption' -or
+            $receipt.test -ne $ExpectedReceiptTest -or
             $receipt.runtime_kind -ne 'frozen' -or
             [string]$receipt.version -cne $productVersion -or
             [string]$receipt.runtime_sha256 -cne $expectedExecutableSha256
@@ -682,6 +683,11 @@ $checks += Invoke-PortableCheck `
     -Name 'feedback-encryption-self-test' `
     -Arguments @('--feedback-encryption-self-test') `
     -RequireReceipt
+$checks += Invoke-PortableCheck `
+    -Name 'announcement-self-test' `
+    -Arguments @('--announcement-self-test') `
+    -RequireReceipt `
+    -ExpectedReceiptTest 'announcement-feed'
 if (-not $Headless) {
     $checks += Invoke-PortableCheck -Name 'ui-self-test' -Arguments @('--ui-self-test')
 }

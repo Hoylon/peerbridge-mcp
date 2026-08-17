@@ -114,6 +114,8 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert "_ensure_frozen_standard_streams()" in entry
     assert "PEERBRIDGE_SELF_TEST_RECEIPT_PATH" in entry
     assert "peerbridge-packaged-self-test-v1" in entry
+    assert 'args == ["--announcement-self-test"]' in entry
+    assert '"test": "announcement-feed"' in entry
     assert "_write_json_create_only(receipt_path, receipt)" in entry
     assert '"runtime_sha256": _runtime_sha256()' in entry
     assert "import traceback" not in entry
@@ -234,6 +236,7 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "$maxCompressionRatio" in script
     assert "--ui-self-test" in script
     assert "--send-self-test" in script
+    assert "--announcement-self-test" in script
     assert "'peerbridge_mcp', 'doctor'" in script
     assert "Portable create-only init did not create" in script
     assert "Portable localized quickstart differs from source" in script
@@ -271,6 +274,20 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "taskkill" not in script.lower()
 
 
+def test_published_release_vm_workflow_verifies_the_downloaded_asset() -> None:
+    workflow = (
+        PROJECT_ROOT / ".github" / "workflows" / "release-vm-acceptance.yml"
+    ).read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in workflow
+    assert "runs-on: windows-2025" in workflow
+    assert "gh release download" in workflow
+    assert "verify_windows_portable.ps1" in workflow
+    assert "-ExpectedSha256 $env:EXPECTED_SHA256" in workflow
+    assert "published-release-vm-acceptance.v1" in workflow
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
+
+
 def test_windows_ci_runs_the_headless_portable_lifecycle_contract() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
@@ -288,6 +305,16 @@ def test_windows_ci_runs_the_headless_portable_lifecycle_contract() -> None:
     assert "gh release create" in workflow
     assert "-Headless" in workflow
     assert "needs: [test, edge-contract, windows-portable-contract]" in workflow
+
+
+def test_alpha_five_is_published_as_the_latest_normal_release() -> None:
+    workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Publish GitHub Alpha release" in workflow
+    assert "--latest" in workflow
+    assert "--prerelease" not in workflow
 
 
 def test_brand_assets_are_explicitly_separate_from_apache_code_license() -> None:

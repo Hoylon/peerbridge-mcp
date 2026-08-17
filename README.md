@@ -4,15 +4,19 @@
   <img src="src/peerbridge_mcp/release_support/peerbridge-icon.png" width="128" alt="PeerBridge bridge logo">
 </p>
 
-Local-first, auditable coordination for equal AI coding peers and their human operator.
+Bring Codex, Claude Code, Grok, Kimi, DeepSeek, Gemini, local models, and other MCP or
+OpenAI-compatible Agents into one auditable AI team.
 
-PeerBridge gives two or more MCP-capable coding agents a shared mailbox, task leases,
-path conflict detection, review requests, proof records, and a tamper-evident event log.
-Its coordination core runs as a local stdio MCP server backed by SQLite. An optional
-loopback-only human page can sit behind Tailscale Serve for private mobile access. The
-core never applies patches or edits project files on an agent's behalf. Manual governance
-reviews remain poll-based. An optional local supervisor may invoke only the explicit
-provider/model Route bound to each room Seat; direct replies do not trigger another fan-out.
+PeerBridge connects official clients, relay services, compatible APIs, and local models
+without locking the team to one provider. It gives every Agent an equal seat, shared
+approved memory, bounded parallel discussion, task ownership, mutual scoring,
+cross-agent audits, and a human-controlled room where work remains visible. A live Token
+dashboard shows usage by provider and model. PeerBridge runs locally on SQLite, keeps
+provider credentials out of chat and project history, and preserves a SHA-linked record
+of messages, decisions, evidence, scores, reviews, and handoffs.
+
+Human or Agent messages can wake the room, collaboration stops on consensus, blockers,
+stagnation, or explicit limits, and the operator can intervene at any time.
 
 > Status: alpha. The coordination and audit core is tested, but the public API and
 > database schema may change before 1.0.
@@ -40,8 +44,8 @@ One task has one writer lease, peers can review each other, and a human can inte
 ```mermaid
 flowchart LR
     H["Human operator"] --> M["Pixel control room"]
-    C["Codex MCP client"] --> S1["PeerBridge stdio process"]
-    A["Claude Code MCP client"] --> S2["PeerBridge stdio process"]
+    C["Codex / Claude Code"] --> S1["PeerBridge stdio process"]
+    A["Grok / Kimi / DeepSeek / Gemini / local Agents"] --> S2["PeerBridge stdio process"]
     M --> S3["PeerBridge stdio process"]
     R["Private mobile UI"] -->|"Tailnet HTTPS"| T["Tailscale Serve"]
     T -->|"loopback only"| S4["Human MCP message gateway"]
@@ -73,6 +77,11 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 - Deterministic read/write path overlap checks.
 - `solo_allowed`, `two_party_required`, `presence_aware`, and N-peer quorum policies.
 - Source-bound peer review requests and equal-peer verdicts.
+- Mutual Agent scoring and cross-agent audit trails linked to the exact reviewed source.
+- Live Token usage dashboard with provider/model breakdown and input, output, cache-write,
+  and cache-read trends.
+- One-click CC Switch provider/model synchronization through its official CLI, while
+  credentials stay in the user's existing CC Switch installation.
 - Live file rehash before task completion.
 - Isolated plan and patch drafts that are never applied automatically.
 - Append-only per-scope SHA-256 event chain with a verifier.
@@ -88,8 +97,8 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 
 ### Windows portable app
 
-Download `PeerBridgeControlRoom-0.1.0a4-windows-x64-portable.zip` from the GitHub
-Alpha pre-release, extract the complete ZIP to a writable folder, and double-click
+Download `PeerBridgeControlRoom-0.1.0a5-windows-x64-portable.zip` from the GitHub
+Alpha release, extract the complete ZIP to a writable folder, and double-click
 `Launch PeerBridge.cmd`. The portable app creates its local workspace under
 `%LOCALAPPDATA%\PeerBridge\workspace`; it does not include provider credentials or
 private runtime data.
@@ -292,7 +301,8 @@ arbitrary metadata are outside the public event schema. See
 
 The control room provides a persisted `zh-Hant` / `zh-Hans` / English locale foundation,
 a replayable first-run tutorial, and an explicit read-only update check. An Alpha install
-may report newer GitHub pre-releases, while a future Stable channel will ignore pre-releases.
+reports newer GitHub releases. A future Stable channel will only follow the Stable release
+track.
 The checker never downloads or installs code; signed one-click update and rollback remain
 future work.
 

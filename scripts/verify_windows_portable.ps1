@@ -340,7 +340,7 @@ if (
 }
 $inventoryDigest = Get-StringDigest -Value ($inventoryLines -join "`n") -Algorithm 'SHA256'
 $expectedNamespace = (
-    'https://github.com/oscarho200407-hue/peerbridge-mcp/spdx/' +
+    'https://github.com/hoylon/peerbridge-mcp/spdx/' +
     $package.versionInfo + '/windows-x64/' + $inventoryDigest
 )
 if ($sbom.documentNamespace -ne $expectedNamespace) {
@@ -416,7 +416,7 @@ $expectedFileVersion = @(
 $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
 $expectedVersionFields = [ordered]@{
     ProductName = 'PeerBridge MCP Control Room'
-    CompanyName = 'oscarho200407-hue'
+    CompanyName = 'Hoylon'
     FileVersion = $expectedFileVersion
     ProductVersion = $productVersion
     OriginalFilename = 'PeerBridgeControlRoom.exe'

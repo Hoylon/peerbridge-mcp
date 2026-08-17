@@ -88,7 +88,7 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 
 ### Windows portable app
 
-Download `PeerBridgeControlRoom-0.1.0a3-windows-x64-portable.zip` from the GitHub
+Download `PeerBridgeControlRoom-0.1.0a4-windows-x64-portable.zip` from the GitHub
 Alpha pre-release, extract the complete ZIP to a writable folder, and double-click
 `Launch PeerBridge.cmd`. The portable app creates its local workspace under
 `%LOCALAPPDATA%\PeerBridge\workspace`; it does not include provider credentials or
@@ -103,7 +103,7 @@ an auto-installer or modify an existing Python environment.
 Requirements: Python 3.11 or newer.
 
 ```powershell
-git clone https://github.com/oscarho200407-hue/peerbridge-mcp.git
+git clone https://github.com/hoylon/peerbridge-mcp.git
 cd peerbridge-mcp
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1

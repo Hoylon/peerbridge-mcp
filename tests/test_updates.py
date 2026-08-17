@@ -41,7 +41,7 @@ def _release(**overrides):
         "draft": False,
         "prerelease": True,
         "published_at": "2026-08-16T00:00:00Z",
-        "html_url": "https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.2.0",
+        "html_url": "https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.2.0",
     }
     payload.update(overrides)
     return payload
@@ -70,7 +70,7 @@ def test_alpha_channel_reads_newer_prerelease_from_release_list() -> None:
         tag_name="v0.1.0-alpha.2",
         name="PeerBridge Alpha 0.1.0-alpha.2",
         html_url=(
-            "https://github.com/oscarho200407-hue/peerbridge-mcp/"
+            "https://github.com/hoylon/peerbridge-mcp/"
             "releases/tag/v0.1.0-alpha.2"
         ),
     )
@@ -86,12 +86,12 @@ def test_stable_channel_does_not_offer_prerelease() -> None:
         tag_name="v0.1.0",
         name="PeerBridge 0.1.0",
         prerelease=False,
-        html_url="https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0",
+        html_url="https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0",
     )
     alpha = _release(
         tag_name="v0.2.0-alpha.1",
         html_url=(
-            "https://github.com/oscarho200407-hue/peerbridge-mcp/"
+            "https://github.com/hoylon/peerbridge-mcp/"
             "releases/tag/v0.2.0-alpha.1"
         ),
     )
@@ -108,10 +108,10 @@ def test_stable_channel_does_not_offer_prerelease() -> None:
         _release(draft=True),
         _release(tag_name="latest"),
         _release(html_url="https://evil.example/releases/v0.2.0"),
-        _release(html_url="http://github.com/oscarho200407-hue/peerbridge-mcp/releases/v0.2.0"),
-        _release(html_url="https://github.com:444/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.2.0"),
-        _release(html_url="https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.2.0?token=x"),
-        _release(html_url="https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.2.0#download"),
+        _release(html_url="http://github.com/hoylon/peerbridge-mcp/releases/v0.2.0"),
+        _release(html_url="https://github.com:444/hoylon/peerbridge-mcp/releases/tag/v0.2.0"),
+        _release(html_url="https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.2.0?token=x"),
+        _release(html_url="https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.2.0#download"),
     ],
 )
 def test_untrusted_release_metadata_fails_closed(payload) -> None:

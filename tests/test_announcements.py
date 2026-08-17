@@ -56,7 +56,7 @@ def _announcement(**overrides):
         "title": "Alpha 公告",
         "body": "這是一則純文字公告。",
         "severity": "important",
-        "link_url": "https://github.com/oscarho200407-hue/peerbridge-mcp/releases",
+        "link_url": "https://github.com/hoylon/peerbridge-mcp/releases",
         "published_utc": "2026-08-15T00:00:00Z",
         "expires_utc": None,
     }

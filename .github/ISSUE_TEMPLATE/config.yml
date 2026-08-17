@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security policy
-    url: https://github.com/oscarho200407-hue/peerbridge-mcp/security/policy
+    url: https://github.com/hoylon/peerbridge-mcp/security/policy
     about: Report vulnerabilities according to SECURITY.md rather than a public issue.

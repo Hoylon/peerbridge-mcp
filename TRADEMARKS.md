@@ -4,7 +4,7 @@ The Apache License 2.0 in this repository applies to the PeerBridge source code 
 a file says otherwise. It does **not** grant a trademark licence to the PeerBridge name,
 logo, or other project branding.
 
-Copyright (c) 2026 oscarho200407-hue. All rights reserved in the PeerBridge logo and
+Copyright (c) 2026 Hoylon. All rights reserved in the PeerBridge logo and
 brand assets.
 
 You may make truthful, descriptive references to PeerBridge and retain the unmodified

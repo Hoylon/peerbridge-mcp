@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peerbridge-mcp"
-version = "0.1.0a3"
+version = "0.1.0a4"
 description = "Local-first, auditable MCP coordination for equal AI coding peers and their human operator."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 license-files = ["LICENSE", "TRADEMARKS.md", "BRAND_ASSETS.md", "THIRD_PARTY_NOTICES.md"]
-authors = [{ name = "oscarho200407-hue" }]
+authors = [{ name = "Hoylon" }]
 keywords = ["mcp", "multi-agent", "codex", "claude-code", "sqlite", "human-in-the-loop"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -56,9 +56,9 @@ peerbridge-verify-room-fanout-receipt = "peerbridge_mcp.room_fanout_receipt:veri
 peerbridge-local-alpha-soak = "peerbridge_mcp.local_alpha_soak:main"
 
 [project.urls]
-Homepage = "https://github.com/oscarho200407-hue/peerbridge-mcp"
-Repository = "https://github.com/oscarho200407-hue/peerbridge-mcp"
-Issues = "https://github.com/oscarho200407-hue/peerbridge-mcp/issues"
+Homepage = "https://github.com/hoylon/peerbridge-mcp"
+Repository = "https://github.com/hoylon/peerbridge-mcp"
+Issues = "https://github.com/hoylon/peerbridge-mcp/issues"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

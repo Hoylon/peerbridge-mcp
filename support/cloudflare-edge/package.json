@@ -1,6 +1,6 @@
 {
   "name": "peerbridge-edge",
-  "version": "0.1.0-alpha.3",
+  "version": "0.1.0-alpha.4",
   "private": true,
   "type": "module",
   "engines": {

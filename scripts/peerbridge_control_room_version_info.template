@@ -14,11 +14,11 @@ VSVersionInfo(
       StringTable(
         '040904B0',
         [
-          StringStruct('CompanyName', 'oscarho200407-hue'),
+          StringStruct('CompanyName', 'Hoylon'),
           StringStruct('FileDescription', 'PeerBridge MCP Control Room'),
           StringStruct('FileVersion', '@FILE_VERSION@'),
           StringStruct('InternalName', 'PeerBridgeControlRoom'),
-          StringStruct('LegalCopyright', 'Copyright (c) 2026 oscarho200407-hue'),
+          StringStruct('LegalCopyright', 'Copyright (c) 2026 Hoylon'),
           StringStruct('OriginalFilename', 'PeerBridgeControlRoom.exe'),
           StringStruct('ProductName', 'PeerBridge MCP Control Room'),
           StringStruct('ProductVersion', '@PRODUCT_VERSION@')

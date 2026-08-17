@@ -1153,7 +1153,7 @@ test("announcement validator is plain-text and HTTPS-only", () => {
     title: "Alpha 公告",
     body: "這是一則不執行命令的測試公告。",
     severity: "important",
-    link_url: "https://github.com/oscarho200407-hue/peerbridge-mcp/releases",
+    link_url: "https://github.com/hoylon/peerbridge-mcp/releases",
     published_utc: "2026-08-15T00:00:00Z",
   });
   assert.equal(announcement.locale, "zh-Hant");

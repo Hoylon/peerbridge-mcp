@@ -13,7 +13,7 @@ from typing import Any
 from . import __version__
 
 
-RELEASE_API = "https://api.github.com/repos/oscarho200407-hue/peerbridge-mcp/releases?per_page=20"
+RELEASE_API = "https://api.github.com/repos/hoylon/peerbridge-mcp/releases?per_page=20"
 MAX_RELEASE_RESPONSE_BYTES = 256 * 1024
 _VERSION = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
@@ -73,7 +73,7 @@ def _validated_release_url(value: Any) -> str:
         raise UpdateCheckError("release URL is not an official HTTPS GitHub URL")
     if parsed.port is not None or parsed.query or parsed.fragment:
         raise UpdateCheckError("release URL must not contain a port, query, or fragment")
-    expected_prefix = "/oscarho200407-hue/peerbridge-mcp/releases/"
+    expected_prefix = "/hoylon/peerbridge-mcp/releases/"
     if not parsed.path.startswith(expected_prefix) or parsed.username or parsed.password:
         raise UpdateCheckError("release URL does not belong to the PeerBridge repository")
     return url

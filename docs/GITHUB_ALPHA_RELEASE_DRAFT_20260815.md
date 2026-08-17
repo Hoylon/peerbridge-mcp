@@ -1,10 +1,10 @@
-# GitHub Pre-release Draft: PeerBridge MCP v0.1.0-alpha.3
+# GitHub Pre-release Draft: PeerBridge MCP v0.1.0-alpha.4
 
 Use this text only after the frozen artifacts pass every gate and the operator authorizes
 publication. Mark the GitHub release as
 **Pre-release**. Do not mark it Latest or Stable.
 
-## PeerBridge MCP v0.1.0-alpha.3
+## PeerBridge MCP v0.1.0-alpha.4
 
 ## 繁體中文
 
@@ -28,7 +28,7 @@ PeerBridge 是一個本機優先、可稽核的協作層，讓多個平等的 AI
 
 ### 安裝發布資產
 
-**Windows 可攜版：**下載 `PeerBridgeControlRoom-0.1.0a3-windows-x64-portable.zip`，
+**Windows 可攜版：**下載 `PeerBridgeControlRoom-0.1.0a4-windows-x64-portable.zip`，
 核對發布頁的 SHA-256，完整解壓後執行 `Launch PeerBridge.cmd`。這是未簽署 Alpha，
 Windows SmartScreen 可能會提示警告。本機資料存放在
 `%LOCALAPPDATA%\PeerBridge\workspace`，發布包不包含任何供應商憑證。
@@ -38,7 +38,7 @@ Windows SmartScreen 可能會提示警告。本機資料存放在
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install .\peerbridge_mcp-0.1.0a3-py3-none-any.whl
+python -m pip install .\peerbridge_mcp-0.1.0a4-py3-none-any.whl
 peerbridge init --project-root . --scope demo
 peerbridge doctor --project-root . --scope demo
 peerbridge-monitor --project-root . --scope demo
@@ -69,10 +69,10 @@ peerbridge-monitor --project-root . --scope demo
 
 安裝或回報問題前，請先閱讀：
 
-- [Alpha 支援矩陣](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-support-matrix.md)
-- [Alpha 疑難排解](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-troubleshooting.md)
-- [繁體中文快速開始](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-quickstart.zh-Hant.md)
-- [簡體中文快速開始](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-quickstart.zh-Hans.md)
+- [Alpha 支援矩陣](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-support-matrix.md)
+- [Alpha 疑難排解](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-troubleshooting.md)
+- [繁體中文快速開始](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-quickstart.zh-Hant.md)
+- [簡體中文快速開始](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-quickstart.zh-Hans.md)
 
 ---
 
@@ -101,7 +101,7 @@ provenance, and a pixel-style local control room.
 ### Install from the release asset
 
 **Windows portable app:** download
-`PeerBridgeControlRoom-0.1.0a3-windows-x64-portable.zip`, verify its published SHA-256,
+`PeerBridgeControlRoom-0.1.0a4-windows-x64-portable.zip`, verify its published SHA-256,
 extract the complete archive, and run `Launch PeerBridge.cmd`. The unsigned Alpha may
 trigger Windows SmartScreen. It stores local state under
 `%LOCALAPPDATA%\PeerBridge\workspace` and includes no provider credentials.
@@ -111,7 +111,7 @@ trigger Windows SmartScreen. It stores local state under
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install .\peerbridge_mcp-0.1.0a3-py3-none-any.whl
+python -m pip install .\peerbridge_mcp-0.1.0a4-py3-none-any.whl
 peerbridge init --project-root . --scope demo
 peerbridge doctor --project-root . --scope demo
 peerbridge-monitor --project-root . --scope demo
@@ -151,10 +151,10 @@ or provider configuration to public GitHub issues. Follow `SECURITY.md` for priv
 
 Before installing or reporting a problem, review:
 
-- [Alpha support matrix](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-support-matrix.md)
-- [Alpha troubleshooting](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-troubleshooting.md)
-- [繁體中文快速開始](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-quickstart.zh-Hant.md)
-- [简体中文快速開始](https://github.com/oscarho200407-hue/peerbridge-mcp/blob/v0.1.0-alpha.3/docs/alpha-quickstart.zh-Hans.md)
+- [Alpha support matrix](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-support-matrix.md)
+- [Alpha troubleshooting](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-troubleshooting.md)
+- [繁體中文快速開始](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-quickstart.zh-Hant.md)
+- [简体中文快速開始](https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.4/docs/alpha-quickstart.zh-Hans.md)
 
 Source-code license: Apache-2.0. The PeerBridge name and logo are governed separately
 by `TRADEMARKS.md` and `BRAND_ASSETS.md`; those notices are included in every artifact.

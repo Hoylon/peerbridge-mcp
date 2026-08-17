@@ -5,6 +5,13 @@ project uses Semantic Versioning after the initial alpha series.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.4] - 2026-08-18
+
+### Changed
+
+- Published under the Hoylon maintainer identity and moved all trusted repository,
+  update, security, packaging, and release links to `github.com/hoylon/peerbridge-mcp`.
+
 ## [0.1.0-alpha.3] - 2026-08-18
 
 ### Added
@@ -110,7 +117,8 @@ project uses Semantic Versioning after the initial alpha series.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/oscarho200407-hue/peerbridge-mcp/compare/v0.1.0-alpha.3...HEAD
-[0.1.0-alpha.3]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.3
-[0.1.0-alpha.2]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.2
-[0.1.0-alpha.0]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.0
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.4...HEAD
+[0.1.0-alpha.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.4
+[0.1.0-alpha.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.3
+[0.1.0-alpha.2]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.2
+[0.1.0-alpha.0]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.0

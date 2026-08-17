@@ -84,8 +84,8 @@ This is an unsigned Alpha build. Windows SmartScreen may ask for confirmation.
 Provider credentials are not included. Add your own provider in the Safe Connections page;
 raw credentials remain in Windows Credential Manager and are not written to chat history.
 
-Project: https://github.com/oscarho200407-hue/peerbridge-mcp
-Security: https://github.com/oscarho200407-hue/peerbridge-mcp/blob/main/SECURITY.md
+Project: https://github.com/hoylon/peerbridge-mcp
+Security: https://github.com/hoylon/peerbridge-mcp/blob/main/SECURITY.md
 "@
 [System.IO.File]::WriteAllText(
     (Join-Path $stageRoot 'Launch PeerBridge.cmd'),
@@ -187,7 +187,7 @@ $sbom = [ordered]@{
     dataLicense = 'CC0-1.0'
     SPDXID = 'SPDXRef-DOCUMENT'
     name = "$packageName file inventory"
-    documentNamespace = "https://github.com/oscarho200407-hue/peerbridge-mcp/spdx/$version/windows-x64/$inventoryDigest"
+    documentNamespace = "https://github.com/hoylon/peerbridge-mcp/spdx/$version/windows-x64/$inventoryDigest"
     creationInfo = [ordered]@{
         created = $createdUtc
         creators = @('Tool: scripts/package_windows_portable.ps1')

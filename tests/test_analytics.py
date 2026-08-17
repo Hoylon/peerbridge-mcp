@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -46,6 +47,25 @@ def test_opt_in_records_only_allowlisted_daily_aggregates(tmp_path) -> None:
     serialized = json.dumps(exported)
     for forbidden in ("prompt", "api_key", "file_path", "model_output"):
         assert forbidden not in serialized
+
+
+def test_opt_in_applies_private_directory_and_file_modes(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[object, int]] = []
+    real_chmod = os.chmod
+
+    def recording_chmod(path, mode: int) -> None:
+        calls.append((path, mode))
+        real_chmod(path, mode)
+
+    monkeypatch.setattr(analytics_module.os, "chmod", recording_chmod)
+    store = _store(tmp_path)
+    store.enable()
+
+    assert (store.state_root, 0o700) in calls
+    assert (store.consent_path, 0o600) in calls
+    assert (store.db_path, 0o600) in calls
 
 
 def test_unknown_event_dimensions_and_values_are_rejected(tmp_path) -> None:

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools==83.0.0"]
+requires = ["setuptools==84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "peerbridge-mcp"
-version = "0.1.0a2"
+version = "0.1.0a3"
 description = "Local-first, auditable MCP coordination for equal AI coding peers and their human operator."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,16 +23,16 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-feedback = ["cryptography>=43,<51"]
+feedback = ["cryptography>=50,<51"]
 dev = [
   "build==1.5.0",
-  "cryptography==46.0.7",
-  "pytest==8.4.2",
+  "cryptography==50.0.0",
+  "pytest==9.1.1",
   "pytest-cov==7.1.0",
-  "setuptools==83.0.0",
+  "setuptools==84.0.0",
   "wheel==0.48.0",
 ]
-windows = ["cryptography==46.0.7", "pyinstaller==6.22.1"]
+windows = ["cryptography==50.0.0", "pyinstaller==6.22.1"]
 
 [project.scripts]
 peerbridge = "peerbridge_mcp.cli:main"

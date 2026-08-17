@@ -11,14 +11,15 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
-import os
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
 from .bridge import MAX_TEXT_CHARS, stable_sha256
+from .child_environment import build_agent_child_environment
 from .ccswitch import (
     CcSwitchError,
     CcSwitchRouteIdentity,
@@ -32,9 +33,17 @@ from .openai_compatible_runner import (
     ProviderHTTPError,
     ResourceUnavailableError,
     RouteMismatchError,
+    RunCancelledError,
     RunnerConfig,
     provider_runtime_admission,
 )
+from .process_control import (
+    attach_process_tree,
+    process_group_popen_kwargs,
+    release_process_tree,
+    terminate_process_tree,
+)
+from .usage import normalize_provider_usage
 
 
 REFERENCE_PREFIX = "CCSwitch:"
@@ -92,9 +101,10 @@ def _bounded_process(
     stdin_text: str,
     timeout_seconds: float,
     max_capture_bytes: int = MAX_CAPTURE_BYTES,
+    runtime_label: str = "CC Switch native client",
+    cancel_event: threading.Event | None = None,
 ) -> tuple[int, bytes, bytes]:
     """Capture a child without allowing stdout/stderr to grow without bound."""
-    flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     process = subprocess.Popen(
         list(command),
         cwd=cwd,
@@ -102,10 +112,14 @@ def _bounded_process(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        creationflags=flags,
+        **process_group_popen_kwargs(),
     )
+    attach_process_tree(process)
     outputs: dict[str, bytearray] = {"stdout": bytearray(), "stderr": bytearray()}
     overflow = threading.Event()
+    stdin_failed = threading.Event()
+    stdin_errors: list[Exception] = []
+    deadline = time.monotonic() + float(timeout_seconds)
 
     def drain(name: str, stream: Any) -> None:
         try:
@@ -118,8 +132,6 @@ def _bounded_process(
                 if remaining <= 0 or len(chunk) > remaining:
                     target.extend(chunk[: max(0, remaining)])
                     overflow.set()
-                    with contextlib.suppress(OSError):
-                        process.kill()
                     return
                 target.extend(chunk)
         finally:
@@ -132,24 +144,60 @@ def _bounded_process(
     ]
     for thread in threads:
         thread.start()
-    try:
+
+    def write_stdin() -> None:
         assert process.stdin is not None
-        process.stdin.write(stdin_text.encode("utf-8"))
-        process.stdin.close()
         try:
-            return_code = process.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
-            raise ResourceUnavailableError("CC Switch native client timed out") from None
+            process.stdin.write(stdin_text.encode("utf-8"))
+            process.stdin.flush()
+        except (OSError, ValueError) as exc:
+            stdin_errors.append(exc)
+            stdin_failed.set()
+        finally:
+            with contextlib.suppress(OSError):
+                process.stdin.close()
+
+    writer = threading.Thread(
+        target=write_stdin,
+        name=f"peerbridge-stdin-{process.pid}",
+        daemon=True,
+    )
+    writer.start()
+    try:
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                terminate_process_tree(process)
+                raise RunCancelledError(f"{runtime_label} was cancelled")
+            if overflow.is_set():
+                terminate_process_tree(process)
+                raise ResourceUnavailableError(
+                    f"{runtime_label} exceeded output budget"
+                )
+            if stdin_failed.is_set() and process.poll() is None:
+                terminate_process_tree(process)
+                raise ResourceUnavailableError(
+                    f"{runtime_label} could not receive the bounded request"
+                ) from stdin_errors[0]
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                terminate_process_tree(process)
+                raise ResourceUnavailableError(f"{runtime_label} timed out")
+            try:
+                return_code = process.wait(timeout=min(0.1, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
     finally:
+        if process.poll() is None:
+            terminate_process_tree(process)
+        else:
+            release_process_tree(process)
+        with contextlib.suppress(OSError):
+            if process.stdin is not None:
+                process.stdin.close()
+        writer.join(timeout=0.5)
         for thread in threads:
             thread.join(timeout=5)
-        if process.poll() is None:
-            process.kill()
-            process.wait(timeout=5)
-    if overflow.is_set():
-        raise ResourceUnavailableError("CC Switch native client exceeded output budget")
     return return_code, bytes(outputs["stdout"]), bytes(outputs["stderr"])
 
 
@@ -180,6 +228,10 @@ class CcSwitchRunner:
         self.identity_resolver = identity_resolver
         self.process_runner = process_runner
         self._runtime_admitted = bool(runtime_admitted)
+        self._cancel_event = threading.Event()
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
 
     def _identity(self) -> CcSwitchRouteIdentity:
         try:
@@ -251,9 +303,10 @@ class CcSwitchRunner:
         return_code, stdout, _stderr = self.process_runner(
             command,
             cwd=runtime,
-            environment=os.environ,
+            environment=build_agent_child_environment(self.app),
             stdin_text=prompt,
             timeout_seconds=self.config.timeout_seconds,
+            cancel_event=self._cancel_event,
         )
         events: list[dict[str, Any]] = []
         try:
@@ -276,7 +329,7 @@ class CcSwitchRunner:
         )
         if return_code != 0 or terminal is None or terminal.get("is_error"):
             status = terminal.get("api_error_status") if terminal else None
-            if status in {401, 403}:
+            if status == 401:
                 raise CredentialUnavailableError("CC Switch provider authentication failed")
             code = int(status) if isinstance(status, int) and not isinstance(status, bool) else 502
             raise ProviderHTTPError(
@@ -296,6 +349,16 @@ class CcSwitchRunner:
             )
         if len(content) > MAX_TEXT_CHARS:
             raise ResourceUnavailableError("CC Switch provider response exceeded bridge limit")
+        raw_usage = terminal.get("usage")
+        if not isinstance(raw_usage, Mapping):
+            model_usage = terminal.get("modelUsage")
+            if isinstance(model_usage, Mapping):
+                per_model = model_usage.get(observed_model)
+                raw_usage = per_model if isinstance(per_model, Mapping) else model_usage
+        usage = normalize_provider_usage(
+            raw_usage if isinstance(raw_usage, Mapping) else None,
+            source="cc-switch/native-client",
+        )
         receipt: dict[str, Any] = {
             "schema": "peerbridge.ccswitch-inference-receipt.v1",
             "secret_backend": "cc-switch",
@@ -319,6 +382,7 @@ class CcSwitchRunner:
             "upstream_provider_identity_attested": False,
             "tool_calls": 0,
             "status": "completed",
+            "usage": usage,
         }
         receipt["receipt_sha256"] = stable_sha256(receipt)
         return InferenceResult(

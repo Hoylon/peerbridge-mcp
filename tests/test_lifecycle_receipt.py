@@ -317,8 +317,9 @@ def _run_lifecycle(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], list[_St
                         "recipient": agent_id,
                         "task_id": "lifecycle-task",
                         "subject": "Durable restart proof",
-                        "body": "This message survives a terminated stdio child.",
-                        "priority": "normal",
+                            "body": "This message survives a terminated stdio child.",
+                            "priority": "normal",
+                            "idempotency_key": "lifecycle-before-send-1",
                     },
                 )
             )

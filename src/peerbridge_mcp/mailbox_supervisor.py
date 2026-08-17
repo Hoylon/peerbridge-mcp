@@ -35,10 +35,15 @@ from .openai_compatible_runner import (
     ToolCallError,
     provider_runtime_admission,
 )
+from .usage import usage_from_receipt
 
 
 SUPERVISOR_CLIENT_NAME = "peerbridge-mailbox-supervisor"
-SUPPORTED_SECRET_BACKENDS = {"windows-credential-manager", "cc-switch"}
+SUPPORTED_SECRET_BACKENDS = {
+    "windows-credential-manager",
+    "cc-switch",
+    "native-acp",
+}
 DEFAULT_POLL_SECONDS = 5.0
 DEFAULT_LEASE_SECONDS = 300
 DEFAULT_MAX_PARALLEL_DISPATCHES = 16
@@ -46,6 +51,8 @@ DEFAULT_RETRY_BACKOFF_BASE_SECONDS = 15
 DEFAULT_RETRY_BACKOFF_CAP_SECONDS = 300
 DEFAULT_CYCLE_ERROR_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_CYCLE_ERROR_BACKOFF_CAP_SECONDS = 30.0
+DEFAULT_RUNNER_HARD_DEADLINE_SECONDS = 900.0
+DEFAULT_RUNNER_CANCEL_GRACE_SECONDS = 5.0
 
 
 class SupervisorError(RuntimeError):
@@ -56,6 +63,18 @@ class SupervisorAlreadyRunningError(SupervisorError):
     """Another process owns this scope's mailbox supervisor lock."""
 
 
+class _RunnerHardDeadlineExceeded(SupervisorError):
+    """The provider runner did not return before the supervisor deadline."""
+
+
+class _RunnerCancellationIncomplete(SupervisorError):
+    """The provider runner ignored cancellation past the bounded grace period."""
+
+
+class _DispatchLeaseRenewalFailed(SupervisorError):
+    """The active dispatch lease could not be confirmed before its safety margin."""
+
+
 class Runner(Protocol):
     def run(
         self,
@@ -63,6 +82,8 @@ class Runner(Protocol):
         *,
         message_id: str | None = None,
     ) -> InferenceResult: ...
+
+    def cancel(self) -> None: ...
 
 
 RunnerFactory = Callable[[RunnerConfig], Runner]
@@ -304,6 +325,14 @@ def _failure_policy(exc: Exception) -> tuple[str, bool]:
     if isinstance(exc, ResourceUnavailableError):
         return "resource_unavailable", True
     if isinstance(exc, ProviderHTTPError):
+        if exc.status_code == 401:
+            return "provider_authentication_required", False
+        if exc.status_code == 402:
+            return "provider_billing_required", False
+        if exc.status_code == 403:
+            return "provider_access_denied", False
+        if exc.status_code == 429:
+            return "provider_rate_limited", True
         return "provider_http_retryable" if exc.retryable else "provider_http_failed", bool(
             exc.retryable
         )
@@ -344,6 +373,8 @@ class MailboxSupervisor:
         reconciliation_hook: ReconciliationHook | None = None,
         cycle_error_backoff_base_seconds: float = DEFAULT_CYCLE_ERROR_BACKOFF_BASE_SECONDS,
         cycle_error_backoff_cap_seconds: float = DEFAULT_CYCLE_ERROR_BACKOFF_CAP_SECONDS,
+        runner_hard_deadline_seconds: float = DEFAULT_RUNNER_HARD_DEADLINE_SECONDS,
+        runner_cancel_grace_seconds: float = DEFAULT_RUNNER_CANCEL_GRACE_SECONDS,
     ) -> None:
         self.project_root = Path(project_root).resolve()
         self.db_path = Path(db_path).resolve()
@@ -368,6 +399,12 @@ class MailboxSupervisor:
         self.cycle_error_backoff_cap_seconds = max(
             self.cycle_error_backoff_base_seconds,
             min(float(cycle_error_backoff_cap_seconds), 300.0),
+        )
+        self.runner_hard_deadline_seconds = max(
+            0.05, min(float(runner_hard_deadline_seconds), 86_400.0)
+        )
+        self.runner_cancel_grace_seconds = max(
+            0.01, min(float(runner_cancel_grace_seconds), 60.0)
         )
         default_renew_interval = max(1.0, min(30.0, self.lease_seconds / 3.0))
         requested_renew_interval = (
@@ -415,6 +452,15 @@ class MailboxSupervisor:
             except Exception:
                 return False
             return True
+        if route.secret_backend == "native-acp":
+            from .acpx_runner import REFERENCE_PREFIX, SUPPORTED_AGENTS, find_acpx
+
+            client = str(route.client_name or "").strip().lower()
+            return (
+                client in SUPPORTED_AGENTS
+                and route.credential_target == f"{REFERENCE_PREFIX}{client}"
+                and find_acpx() is not None
+            )
 
         from . import credentials
 
@@ -436,6 +482,15 @@ class MailboxSupervisor:
             from .ccswitch_runner import CcSwitchRunner
 
             return CcSwitchRunner(
+                config,
+                credential_target=route.credential_target,
+                client_name=route.client_name,
+                runtime_admitted=True,
+            )
+        if route.secret_backend == "native-acp":
+            from .acpx_runner import AcpxRunner
+
+            return AcpxRunner(
                 config,
                 credential_target=route.credential_target,
                 client_name=route.client_name,
@@ -494,20 +549,41 @@ class MailboxSupervisor:
         message = claim["message"]
         token = claim["lease_token"]
         renewal_stop = threading.Event()
+        renewal_abort = threading.Event()
         renewal_failures: list[Exception] = []
+        lease_expires_monotonic = [time.monotonic() + self.lease_seconds]
+        lease_safety_margin = max(
+            0.1,
+            min(
+                self.lease_seconds / 4.0,
+                self.lease_renew_interval_seconds * 2.0,
+            ),
+        )
+
+        def renew_once() -> bool:
+            try:
+                bridge.renew_message_dispatch(
+                    {
+                        "message_id": message["message_id"],
+                        "lease_token": token,
+                        "lease_seconds": self.lease_seconds,
+                    }
+                )
+            except Exception as exc:
+                renewal_failures[:] = [exc]
+                return False
+            renewal_failures.clear()
+            lease_expires_monotonic[0] = time.monotonic() + self.lease_seconds
+            return True
 
         def renew_lease() -> None:
             while not renewal_stop.wait(self.lease_renew_interval_seconds):
-                try:
-                    bridge.renew_message_dispatch(
-                        {
-                            "message_id": message["message_id"],
-                            "lease_token": token,
-                            "lease_seconds": self.lease_seconds,
-                        }
-                    )
-                except Exception as exc:
-                    renewal_failures.append(exc)
+                if renew_once():
+                    continue
+                if time.monotonic() >= (
+                    lease_expires_monotonic[0] - lease_safety_margin
+                ):
+                    renewal_abort.set()
                     return
 
         renewal_thread = threading.Thread(
@@ -521,12 +597,22 @@ class MailboxSupervisor:
                 route,
                 self._runner_config(route, bridge, str(message["room_id"])),
             )
-            result = runner.run(
-                _prompt_for(message, route), message_id=str(message["message_id"])
+            result = self._run_with_hard_deadline(
+                runner,
+                _prompt_for(message, route),
+                message_id=str(message["message_id"]),
+                abort_event=renewal_abort,
             )
             renewal_stop.set()
             renewal_thread.join(timeout=2.0)
-            if renewal_failures:
+            final_renewed = False
+            for attempt in range(3):
+                if renew_once():
+                    final_renewed = True
+                    break
+                if attempt < 2:
+                    time.sleep(min(0.05, self.lease_renew_interval_seconds / 2.0))
+            if not final_renewed:
                 return self._fail_claimed(
                     job,
                     error_code="dispatch_lease_renewal_failed",
@@ -539,9 +625,34 @@ class MailboxSupervisor:
                     "lease_token": token,
                     "body": _reply_text(result),
                     "inference_receipt_sha256": receipt_sha,
+                    "inference_usage": usage_from_receipt(result.receipt),
                 }
             )
             return _DispatchOutcome(completed=True)
+        except _RunnerHardDeadlineExceeded:
+            renewal_stop.set()
+            renewal_thread.join(timeout=0.25)
+            return self._fail_claimed(
+                job,
+                error_code="runner_hard_deadline_exceeded",
+                can_retry=True,
+            )
+        except _RunnerCancellationIncomplete:
+            renewal_stop.set()
+            renewal_thread.join(timeout=0.25)
+            return self._fail_claimed(
+                job,
+                error_code="runner_cancellation_incomplete",
+                can_retry=False,
+            )
+        except _DispatchLeaseRenewalFailed:
+            renewal_stop.set()
+            renewal_thread.join(timeout=0.25)
+            return self._fail_claimed(
+                job,
+                error_code="dispatch_lease_renewal_failed",
+                can_retry=True,
+            )
         except Exception as exc:
             error_code, can_retry = _failure_policy(exc)
             return self._fail_claimed(
@@ -552,6 +663,78 @@ class MailboxSupervisor:
         finally:
             renewal_stop.set()
             renewal_thread.join(timeout=2.0)
+
+    def _run_with_hard_deadline(
+        self,
+        runner: Runner,
+        messages: list[dict[str, str]],
+        *,
+        message_id: str,
+        abort_event: threading.Event | None = None,
+    ) -> InferenceResult:
+        cancel = getattr(runner, "cancel", None)
+        completed = threading.Event()
+        completed_at: list[float] = []
+        results: list[InferenceResult] = []
+        failures: list[BaseException] = []
+
+        def invoke_runner() -> None:
+            try:
+                results.append(runner.run(messages, message_id=message_id))
+            except BaseException as exc:
+                failures.append(exc)
+            finally:
+                completed_at.append(time.monotonic())
+                completed.set()
+
+        deadline = time.monotonic() + self.runner_hard_deadline_seconds
+        runner_thread = threading.Thread(
+            target=invoke_runner,
+            name=f"peerbridge-runner-{message_id[:12]}",
+            daemon=True,
+        )
+        runner_thread.start()
+        stopped_for_lease = False
+        while not completed.is_set():
+            if abort_event is not None and abort_event.is_set():
+                stopped_for_lease = True
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            completed.wait(min(0.05, remaining))
+        if not completed.is_set():
+            cancel_completed = threading.Event()
+
+            def request_cancel() -> None:
+                try:
+                    if callable(cancel):
+                        cancel()
+                finally:
+                    cancel_completed.set()
+
+            if callable(cancel):
+                threading.Thread(
+                    target=request_cancel,
+                    name=f"peerbridge-cancel-{message_id[:12]}",
+                    daemon=True,
+                ).start()
+            cancel_returned = cancel_completed.wait(
+                self.runner_cancel_grace_seconds
+            )
+            runner_returned = completed.wait(self.runner_cancel_grace_seconds)
+            if not (cancel_returned and runner_returned):
+                raise _RunnerCancellationIncomplete
+            runner_thread.join()
+            if stopped_for_lease:
+                raise _DispatchLeaseRenewalFailed
+            raise _RunnerHardDeadlineExceeded
+        runner_thread.join()
+        if completed_at and completed_at[0] > deadline:
+            raise _RunnerHardDeadlineExceeded
+        if failures:
+            raise failures[0]
+        return results[0]
 
     def _fail_claimed(
         self,
@@ -588,18 +771,24 @@ class MailboxSupervisor:
             terminal_failure=not can_retry,
         )
 
-    def _reconcile_dispatches(self) -> None:
+    def _reconcile_dispatches(
+        self,
+        route_runtime_observations: tuple[dict[str, Any], ...] = (),
+    ) -> Mapping[str, Any] | None:
         """Invoke one Bridge-owned atomic reconciliation operation when available."""
         args = {"max_attempts": self.max_attempts, "limit": 500}
+        if route_runtime_observations:
+            args["route_runtime_observations"] = list(route_runtime_observations)
         if self._reconciliation_hook is not None:
             result = self._reconciliation_hook(self._control, args)
         else:
             reconcile = getattr(self._control, "reconcile_message_dispatches", None)
             if not callable(reconcile):
-                return
+                return None
             result = reconcile(args)
         if result is not None and not isinstance(result, Mapping):
             raise SupervisorError("dispatch reconciliation returned an invalid result")
+        return result
 
     def _pending_route_requests(self) -> tuple[dict[str, Any], ...]:
         """Return bounded unresolved root messages before probing providers.
@@ -685,6 +874,28 @@ class MailboxSupervisor:
             assigned_routes.add(key)
             planned.append((route, request))
         return tuple(planned)
+
+    @classmethod
+    def _terminal_route_runtime_observations(
+        cls,
+        routes: tuple[RouteRuntime, ...],
+        pending_requests: tuple[dict[str, Any], ...],
+    ) -> tuple[dict[str, Any], ...]:
+        observations: list[dict[str, Any]] = []
+        for request in pending_requests:
+            match_count = sum(
+                1 for route in routes if cls._route_matches_request(route, request)
+            )
+            if match_count == 1:
+                continue
+            observations.append(
+                {
+                    "message_id": str(request["message_id"]),
+                    "route_request_sha256": str(request["route_request_sha256"]),
+                    "match_count": match_count,
+                }
+            )
+        return tuple(observations)
 
     @classmethod
     def _claim_handoff_is_exact(
@@ -785,11 +996,18 @@ class MailboxSupervisor:
     def run_cycle(self) -> CycleResult:
         if self._closed:
             raise SupervisorError("mailbox supervisor is closed")
-        self._reconcile_dispatches()
         pending_requests = self._pending_route_requests()
         discovered_routes = (
             discover_runnable_routes(self._control) if pending_requests else ()
         )
+        route_runtime_observations = self._terminal_route_runtime_observations(
+            discovered_routes, pending_requests
+        )
+        reconciliation = self._reconcile_dispatches(route_runtime_observations)
+        reconciliation_terminal = int(
+            (reconciliation or {}).get("count") or 0
+        )
+        pending_requests = self._pending_route_requests()
         planned = self._plan_route_requests(discovered_routes, pending_requests)
         routes: list[tuple[RouteRuntime, dict[str, Any]]] = []
         unavailable_routes: list[tuple[RouteRuntime, dict[str, Any]]] = []
@@ -806,7 +1024,7 @@ class MailboxSupervisor:
                 del self._route_bridges[key]
 
         claimed_count = 0
-        terminal = 0
+        terminal = reconciliation_terminal
         for route, request in unavailable_routes:
             bridge, claim, handoff_failed = self._claim_for_route(
                 route, request, advertise_presence=False

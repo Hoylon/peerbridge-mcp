@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -19,12 +20,34 @@ from peerbridge_mcp.mailbox_supervisor import (
 )
 from peerbridge_mcp.openai_compatible_runner import (
     InferenceResult,
+    ProviderHTTPError,
     ResourceUnavailableError,
 )
 
 
 HEX_A = "a" * 64
 HEX_B = "b" * 64
+
+
+@pytest.mark.parametrize(
+    ("status", "expected", "retryable"),
+    (
+        (401, "provider_authentication_required", False),
+        (402, "provider_billing_required", False),
+        (403, "provider_access_denied", False),
+        (429, "provider_rate_limited", True),
+        (503, "provider_http_retryable", True),
+    ),
+)
+def test_provider_http_failure_codes_remain_actionable(
+    status: int, expected: str, retryable: bool
+) -> None:
+    failure = ProviderHTTPError(
+        "sanitized provider failure",
+        status_code=status,
+        retryable=retryable,
+    )
+    assert supervisor_module._failure_policy(failure) == (expected, retryable)
 
 
 @pytest.fixture(autouse=True)
@@ -55,17 +78,29 @@ def register_route(
     model_id: str = "model-a",
     backend: str = "windows-credential-manager",
 ) -> None:
-    target = (
-        credential_target("test", connection_id)
-        if backend == "windows-credential-manager"
-        else "ccswitch-reference"
-    )
+    if backend == "windows-credential-manager":
+        target = credential_target("test", connection_id)
+        provider_id = connection_id
+        route_class = "relay"
+        client_name = "test-client"
+    elif backend == "cc-switch":
+        target = "ccswitch-reference"
+        provider_id = connection_id
+        route_class = "relay"
+        client_name = "test-client"
+    elif backend == "native-acp":
+        target = "ACPX:codex"
+        provider_id = "openai-official"
+        route_class = "official"
+        client_name = "codex"
+    else:
+        raise AssertionError(f"unsupported test backend: {backend}")
     bridge.upsert_provider_connection(
         {
             "connection_id": connection_id,
             "display_name": connection_id,
-            "route_class": "relay",
-            "provider_id": connection_id,
+            "route_class": route_class,
+            "provider_id": provider_id,
             "secret_backend": backend,
             "credential_target": target,
             "endpoint_sha256": HEX_A,
@@ -79,11 +114,11 @@ def register_route(
         {
             "route_id": route_id,
             "agent_id": agent_id,
-            "client_name": "test-client",
-            "provider_id": connection_id,
+            "client_name": client_name,
+            "provider_id": provider_id,
             "model_id": model_id,
             "reasoning_mode": "high",
-            "route_class": "relay",
+            "route_class": route_class,
             "enabled": True,
         }
     )
@@ -102,7 +137,22 @@ class SuccessfulRunner:
         assert message_id
         return InferenceResult(
             assistant_message={"role": "assistant", "content": "audited reply"},
-            receipt={"receipt_sha256": HEX_B},
+            receipt={
+                "receipt_sha256": HEX_B,
+                "usage": {
+                    "schema": "peerbridge.inference-usage.v1",
+                    "status": "reported",
+                    "source": "test-runner",
+                    "input_tokens": 21,
+                    "output_tokens": 8,
+                    "total_tokens": 29,
+                    "cached_input_tokens": 5,
+                    "reasoning_tokens": 3,
+                    "reported_calls": 1,
+                    "total_calls": 1,
+                    "total_tokens_derived": False,
+                },
+            },
         )
 
 
@@ -146,8 +196,15 @@ def test_supervisor_completes_one_routed_message_exactly_once(tmp_path: Path) ->
             "FROM message_dispatches WHERE message_id=?",
             (sent["message_id"],),
         ).fetchone()
+        usage = connection.execute(
+            "SELECT usage_status, input_tokens, output_tokens, total_tokens, "
+            "cached_input_tokens, reasoning_tokens, inference_receipt_sha256 "
+            "FROM inference_usage WHERE message_id=?",
+            (sent["message_id"],),
+        ).fetchone()
     assert replies == [("audited reply", sent["message_id"])]
     assert dispatch == ("completed", 1, HEX_B)
+    assert usage == ("reported", 21, 8, 29, 5, 3, HEX_B)
     assert human.status()["message_dispatch_counts"] == {"completed": 1}
     supervisor.close()
     assert "model-peer" not in human.presence_snapshot()["online_agents"]
@@ -260,6 +317,43 @@ def test_ccswitch_route_is_discovered_but_requires_a_runtime_probe(tmp_path: Pat
             "SELECT status, attempt_count, error_code FROM message_dispatches"
         ).fetchone()
     assert dispatch == ("failed", 1, "credential_unavailable")
+    supervisor.close()
+
+
+def test_native_acp_route_is_exactly_bound_and_uses_acpx_runner(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from peerbridge_mcp.acpx_runner import AcpxRunner
+
+    executable = tmp_path / "acpx.cmd"
+    executable.write_bytes(b"acpx launcher")
+    monkeypatch.setattr("peerbridge_mcp.acpx_runner.find_acpx", lambda: executable)
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(
+        human,
+        agent_id="codex-native",
+        connection_id="acpx-codex",
+        route_id="acpx-codex-luna",
+        model_id="gpt-5.6-luna",
+        backend="native-acp",
+    )
+
+    routes = discover_runnable_routes(human, credential_probe=lambda _route: True)
+
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.secret_backend == "native-acp"
+    assert route.credential_target == "ACPX:codex"
+    assert route.client_name == "codex"
+    assert route.provider_id == "openai-official"
+    assert route.route_class == "official"
+    supervisor = MailboxSupervisor(tmp_path, human.db_path, "test")
+    assert supervisor._credential_available(route) is True
+    bridge = supervisor._bridge_for(route)
+    runner = supervisor._runner_for(
+        route, supervisor._runner_config(route, bridge, "lobby")
+    )
+    assert isinstance(runner, AcpxRunner)
     supervisor.close()
 
 
@@ -409,7 +503,12 @@ def test_supervisor_keeps_same_agent_routes_exact_and_non_overlapping(
 
     result = supervisor.run_cycle()
 
-    assert (result.runnable_routes, result.claimed, result.completed) == (2, 2, 2)
+    assert (
+        result.runnable_routes,
+        result.claimed,
+        result.completed,
+        result.terminal_failures,
+    ) == (2, 2, 2, 0)
     assert sorted(
         (connection, model) for connection, model, _ in RouteEchoRunner.seen
     ) == [
@@ -491,7 +590,12 @@ def test_supervisor_claims_exact_message_and_profile_for_identical_routes(
 
     result = supervisor.run_cycle()
 
-    assert (result.runnable_routes, result.claimed, result.completed) == (2, 2, 2)
+    assert (
+        result.runnable_routes,
+        result.claimed,
+        result.completed,
+        result.terminal_failures,
+    ) == (2, 2, 2, 1)
     assert sorted(ProfileEchoRunner.seen) == [
         ("profile-a", profile_a["message_id"]),
         ("profile-b", profile_b["message_id"]),
@@ -500,15 +604,47 @@ def test_supervisor_claims_exact_message_and_profile_for_identical_routes(
         replies = connection.execute(
             "SELECT reply_to, body FROM messages WHERE reply_to IS NOT NULL"
         ).fetchall()
-        ambiguous_dispatches = connection.execute(
-            "SELECT COUNT(*) FROM message_dispatches WHERE message_id=?",
+        ambiguous_dispatch = connection.execute(
+            "SELECT status, error_code FROM message_dispatches WHERE message_id=?",
             (ambiguous["message_id"],),
-        ).fetchone()[0]
+        ).fetchone()
     assert dict(replies) == {
         profile_a["message_id"]: "profile-a",
         profile_b["message_id"]: "profile-b",
     }
-    assert ambiguous_dispatches == 0
+    assert ambiguous_dispatch == ("failed", "route_runtime_ambiguous")
+    supervisor.close()
+
+
+def test_supervisor_terminally_records_missing_runtime_instead_of_hanging(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "missing-runtime",
+            "subject": "Do not hang",
+            "body": "A disabled provider connection must become visible terminal evidence.",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+    with sqlite3.connect(human.db_path) as connection:
+        connection.execute(
+            "UPDATE provider_connections SET enabled=0 WHERE connection_id='relay-one'"
+        )
+    supervisor = MailboxSupervisor(tmp_path, human.db_path, "test")
+
+    result = supervisor.run_cycle()
+
+    assert (result.claimed, result.completed, result.terminal_failures) == (0, 0, 1)
+    with sqlite3.connect(human.db_path) as connection:
+        dispatch = connection.execute(
+            "SELECT status, error_code FROM message_dispatches WHERE message_id=?",
+            (sent["message_id"],),
+        ).fetchone()
+    assert dispatch == ("failed", "route_runtime_unavailable")
     supervisor.close()
 
 
@@ -896,6 +1032,108 @@ class SlowSuccessfulRunner(SuccessfulRunner):
         return super().run(messages, message_id=message_id)
 
 
+class NeverReturningRunner(SuccessfulRunner):
+    attempts: dict[str, int] = {}
+    hang_agents: set[str] = set()
+    recover_on_retry = False
+    started = threading.Event()
+    release = threading.Event()
+    returned = threading.Event()
+
+    @classmethod
+    def reset(cls, *hang_agents: str, recover_on_retry: bool = False) -> None:
+        cls.attempts = {}
+        cls.hang_agents = set(hang_agents)
+        cls.recover_on_retry = recover_on_retry
+        cls.started = threading.Event()
+        cls.release = threading.Event()
+        cls.returned = threading.Event()
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        agent_id = self.config.agent_id
+        attempt = self.__class__.attempts.get(agent_id, 0) + 1
+        self.__class__.attempts[agent_id] = attempt
+        should_hang = agent_id in self.__class__.hang_agents and (
+            not self.__class__.recover_on_retry or attempt == 1
+        )
+        if should_hang:
+            self.__class__.started.set()
+            self.__class__.release.wait()
+            self.__class__.returned.set()
+            return InferenceResult(
+                assistant_message={
+                    "role": "assistant",
+                    "content": "SENSITIVE_LATE_PROVIDER_RESPONSE",
+                },
+                receipt={"receipt_sha256": HEX_A},
+            )
+        return super().run(messages, message_id=message_id)
+
+    def cancel(self) -> None:
+        self.__class__.release.set()
+
+
+class CancellationIgnoringRunner(SuccessfulRunner):
+    started = threading.Event()
+    release = threading.Event()
+    cancel_calls = 0
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.started = threading.Event()
+        cls.release = threading.Event()
+        cls.cancel_calls = 0
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        self.__class__.started.set()
+        self.__class__.release.wait()
+        return InferenceResult(
+            assistant_message={"role": "assistant", "content": "late reply"},
+            receipt={"receipt_sha256": HEX_A},
+        )
+
+    def cancel(self) -> None:
+        self.__class__.cancel_calls += 1
+
+
+class NoCancelNeverReturningRunner(SuccessfulRunner):
+    started = threading.Event()
+    release = threading.Event()
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.started = threading.Event()
+        cls.release = threading.Event()
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        self.__class__.started.set()
+        self.__class__.release.wait()
+        return super().run(messages, message_id=message_id)
+
+
+class BlockingCancelRunner(SuccessfulRunner):
+    started = threading.Event()
+    run_release = threading.Event()
+    cancel_started = threading.Event()
+    cancel_release = threading.Event()
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.started = threading.Event()
+        cls.run_release = threading.Event()
+        cls.cancel_started = threading.Event()
+        cls.cancel_release = threading.Event()
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        self.__class__.started.set()
+        self.__class__.run_release.wait()
+        return super().run(messages, message_id=message_id)
+
+    def cancel(self) -> None:
+        self.__class__.cancel_started.set()
+        self.__class__.cancel_release.wait()
+
+
 def test_supervisor_renews_long_inference_lease(tmp_path: Path) -> None:
     human = make_bridge(tmp_path, "human-operator")
     register_route(human)
@@ -932,6 +1170,442 @@ def test_supervisor_renews_long_inference_lease(tmp_path: Path) -> None:
     assert renewals >= 2
     assert state == "completed"
     supervisor.close()
+
+
+def test_completed_inference_survives_transient_lease_renewal_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "renewal-error",
+            "subject": "Commit completed work",
+            "body": "hello supervisor",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+    original_renew = Bridge.renew_message_dispatch
+    failures = {"count": 0}
+
+    def fail_one_renewal(self, args):
+        if self.agent_id == "model-peer" and failures["count"] == 0:
+            failures["count"] += 1
+            raise RuntimeError("synthetic transient renewal failure")
+        return original_renew(self, args)
+
+    monkeypatch.setattr(Bridge, "renew_message_dispatch", fail_one_renewal)
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=SlowSuccessfulRunner,
+        credential_probe=lambda _route: True,
+        lease_seconds=30,
+        lease_renew_interval_seconds=0.05,
+    )
+
+    result = supervisor.run_cycle()
+
+    assert failures["count"] == 1
+    assert (result.claimed, result.completed, result.retryable_failures) == (1, 1, 0)
+    with sqlite3.connect(human.db_path) as connection:
+        dispatch = connection.execute(
+            "SELECT status, attempt_count FROM message_dispatches WHERE message_id=?",
+            (sent["message_id"],),
+        ).fetchone()
+        replies = connection.execute(
+            "SELECT body FROM messages WHERE reply_to=?", (sent["message_id"],)
+        ).fetchall()
+    assert dispatch == ("completed", 1)
+    assert replies == [("audited reply",)]
+    supervisor.close()
+
+
+def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clock = [1_000.0]
+    monkeypatch.setattr("peerbridge_mcp.bridge.time.time", lambda: clock[0])
+    NeverReturningRunner.reset("model-peer", recover_on_retry=True)
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "runner-deadline",
+            "subject": "Bound provider runtime",
+            "body": "hello supervisor PRIVATE_REQUEST_BODY",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=NeverReturningRunner,
+        credential_probe=lambda _route: True,
+        lease_seconds=30,
+        lease_renew_interval_seconds=0.03,
+        runner_hard_deadline_seconds=0.18,
+        retry_backoff_base_seconds=1,
+        retry_backoff_cap_seconds=1,
+    )
+
+    try:
+        started = time.monotonic()
+        first = supervisor.run_cycle()
+        elapsed = time.monotonic() - started
+
+        assert NeverReturningRunner.started.is_set()
+        assert NeverReturningRunner.returned.is_set()
+        assert elapsed < 1.0
+        assert (first.claimed, first.completed, first.retryable_failures) == (1, 0, 1)
+        with sqlite3.connect(human.db_path) as connection:
+            dispatch = connection.execute(
+                "SELECT status, claimed_session_id, lease_token_sha256, "
+                "lease_expires_epoch, attempt_count, error_code "
+                "FROM message_dispatches WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+            schedule = connection.execute(
+                "SELECT not_before_epoch, error_code "
+                "FROM message_dispatch_retry_schedules WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+            renewal_count = connection.execute(
+                "SELECT COUNT(*) FROM events "
+                "WHERE event_type='message.dispatch_renewed'"
+            ).fetchone()[0]
+            failure_payload = json.loads(
+                connection.execute(
+                    "SELECT payload_json FROM events "
+                    "WHERE event_type='message.dispatch_failed' ORDER BY rowid DESC LIMIT 1"
+                ).fetchone()[0]
+            )
+        assert dispatch == (
+            "retryable",
+            None,
+            None,
+            None,
+            1,
+            "runner_hard_deadline_exceeded",
+        )
+        assert schedule == (1_001.0, "runner_hard_deadline_exceeded")
+        assert renewal_count >= 2
+        assert failure_payload["error_code"] == "runner_hard_deadline_exceeded"
+        serialized_evidence = json.dumps(failure_payload, sort_keys=True)
+        assert "PRIVATE_REQUEST_BODY" not in serialized_evidence
+        assert "SENSITIVE_LATE_PROVIDER_RESPONSE" not in serialized_evidence
+
+        time.sleep(0.12)
+        with sqlite3.connect(human.db_path) as connection:
+            stopped_renewal_count = connection.execute(
+                "SELECT COUNT(*) FROM events "
+                "WHERE event_type='message.dispatch_renewed'"
+            ).fetchone()[0]
+        assert stopped_renewal_count == renewal_count
+
+        clock[0] = 1_002.0
+        recovered = supervisor.run_cycle()
+        assert (recovered.claimed, recovered.completed) == (1, 1)
+
+        assert NeverReturningRunner.returned.wait(timeout=1.0)
+        with sqlite3.connect(human.db_path) as connection:
+            replies = connection.execute(
+                "SELECT body FROM messages WHERE reply_to=?",
+                (sent["message_id"],),
+            ).fetchall()
+            final_dispatch = connection.execute(
+                "SELECT status, attempt_count, inference_receipt_sha256 "
+                "FROM message_dispatches WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+        assert replies == [("audited reply",)]
+        assert final_dispatch == ("completed", 2, HEX_B)
+        assert not any(
+            thread.name.startswith("peerbridge-runner-") and thread.is_alive()
+            for thread in threading.enumerate()
+        )
+    finally:
+        NeverReturningRunner.release.set()
+        supervisor.close()
+
+
+def test_runner_that_ignores_cancel_fails_terminally_without_freezing_supervisor(
+    tmp_path: Path,
+) -> None:
+    CancellationIgnoringRunner.reset()
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "cancel-incomplete",
+            "subject": "Bound cancellation",
+            "body": "do not freeze",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=CancellationIgnoringRunner,
+        credential_probe=lambda _route: True,
+        runner_hard_deadline_seconds=0.05,
+        runner_cancel_grace_seconds=0.05,
+    )
+
+    try:
+        started = time.monotonic()
+        result = supervisor.run_cycle()
+        elapsed = time.monotonic() - started
+
+        assert CancellationIgnoringRunner.started.is_set()
+        assert CancellationIgnoringRunner.cancel_calls == 1
+        assert elapsed < 0.5
+        assert (result.claimed, result.completed, result.terminal_failures) == (1, 0, 1)
+        with sqlite3.connect(human.db_path) as connection:
+            dispatch = connection.execute(
+                "SELECT status, attempt_count, error_code FROM message_dispatches "
+                "WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+            replies = connection.execute(
+                "SELECT COUNT(*) FROM messages WHERE reply_to=?",
+                (sent["message_id"],),
+            ).fetchone()[0]
+        assert dispatch == ("failed", 1, "runner_cancellation_incomplete")
+        assert replies == 0
+        assert supervisor.run_cycle().claimed == 0
+    finally:
+        CancellationIgnoringRunner.release.set()
+        supervisor.close()
+
+
+def test_runner_without_cancel_hits_terminal_deadline_without_freezing(
+    tmp_path: Path,
+) -> None:
+    NoCancelNeverReturningRunner.reset()
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "missing-cancel",
+            "subject": "Bound a runner without cancellation",
+            "body": "hello supervisor",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=NoCancelNeverReturningRunner,
+        credential_probe=lambda _route: True,
+        runner_hard_deadline_seconds=0.05,
+        runner_cancel_grace_seconds=0.05,
+    )
+
+    try:
+        started = time.monotonic()
+        result = supervisor.run_cycle()
+        elapsed = time.monotonic() - started
+
+        assert NoCancelNeverReturningRunner.started.is_set()
+        assert elapsed < 0.5
+        assert (result.claimed, result.terminal_failures) == (1, 1)
+        with sqlite3.connect(human.db_path) as connection:
+            dispatch = connection.execute(
+                "SELECT status, error_code FROM message_dispatches "
+                "WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+        assert dispatch == ("failed", "runner_cancellation_incomplete")
+    finally:
+        NoCancelNeverReturningRunner.release.set()
+        supervisor.close()
+
+
+def test_blocking_cancel_cannot_freeze_supervisor(tmp_path: Path) -> None:
+    BlockingCancelRunner.reset()
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "blocking-cancel",
+            "subject": "Bound a blocking cancel method",
+            "body": "hello supervisor",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=BlockingCancelRunner,
+        credential_probe=lambda _route: True,
+        runner_hard_deadline_seconds=0.05,
+        runner_cancel_grace_seconds=0.05,
+    )
+
+    try:
+        started = time.monotonic()
+        result = supervisor.run_cycle()
+        elapsed = time.monotonic() - started
+
+        assert BlockingCancelRunner.started.is_set()
+        assert BlockingCancelRunner.cancel_started.is_set()
+        assert elapsed < 0.5
+        assert (result.claimed, result.terminal_failures) == (1, 1)
+        with sqlite3.connect(human.db_path) as connection:
+            dispatch = connection.execute(
+                "SELECT status, error_code FROM message_dispatches "
+                "WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+        assert dispatch == ("failed", "runner_cancellation_incomplete")
+    finally:
+        BlockingCancelRunner.cancel_release.set()
+        BlockingCancelRunner.run_release.set()
+        supervisor.close()
+
+
+def test_persistent_lease_renewal_failure_aborts_before_local_safety_window(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    NeverReturningRunner.reset("model-peer")
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "lease-renewal-abort",
+            "subject": "Stop before lease ownership becomes uncertain",
+            "body": "hello supervisor",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+
+    def reject_renewal(self, args):
+        raise RuntimeError("synthetic persistent renewal failure")
+
+    monkeypatch.setattr(Bridge, "renew_message_dispatch", reject_renewal)
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=NeverReturningRunner,
+        credential_probe=lambda _route: True,
+        lease_renew_interval_seconds=0.02,
+        runner_hard_deadline_seconds=5.0,
+        runner_cancel_grace_seconds=0.1,
+    )
+    supervisor.lease_seconds = 0.2
+
+    try:
+        started = time.monotonic()
+        result = supervisor.run_cycle()
+        elapsed = time.monotonic() - started
+
+        assert NeverReturningRunner.started.is_set()
+        assert NeverReturningRunner.returned.is_set()
+        assert elapsed < 1.0
+        assert (result.claimed, result.retryable_failures) == (1, 1)
+        with sqlite3.connect(human.db_path) as connection:
+            dispatch = connection.execute(
+                "SELECT status, error_code FROM message_dispatches "
+                "WHERE message_id=?",
+                (sent["message_id"],),
+            ).fetchone()
+            replies = connection.execute(
+                "SELECT COUNT(*) FROM messages WHERE reply_to=?",
+                (sent["message_id"],),
+            ).fetchone()[0]
+        assert dispatch == ("retryable", "dispatch_lease_renewal_failed")
+        assert replies == 0
+    finally:
+        NeverReturningRunner.release.set()
+        supervisor.close()
+
+
+def test_runner_hard_deadline_does_not_block_other_routes(tmp_path: Path) -> None:
+    NeverReturningRunner.reset("hung-peer")
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(
+        human,
+        agent_id="hung-peer",
+        connection_id="hung-connection",
+        route_id="hung-route",
+    )
+    register_route(
+        human,
+        agent_id="healthy-peer",
+        connection_id="healthy-connection",
+        route_id="healthy-route",
+    )
+    hung = human.send_message(
+        {
+            "recipient": "hung-peer",
+            "task_id": "hung-route",
+            "subject": "Never return",
+            "body": "hello supervisor",
+            "route_profile_id": "hung-route",
+        }
+    )
+    healthy = human.send_message(
+        {
+            "recipient": "healthy-peer",
+            "task_id": "healthy-route",
+            "subject": "Continue independently",
+            "body": "hello supervisor",
+            "route_profile_id": "healthy-route",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=NeverReturningRunner,
+        credential_probe=lambda _route: True,
+        lease_renew_interval_seconds=0.03,
+        runner_hard_deadline_seconds=0.15,
+    )
+
+    try:
+        started = time.monotonic()
+        result = supervisor.run_cycle()
+        elapsed = time.monotonic() - started
+
+        assert NeverReturningRunner.started.is_set()
+        assert elapsed < 1.0
+        assert (
+            result.claimed,
+            result.completed,
+            result.retryable_failures,
+            result.terminal_failures,
+        ) == (2, 1, 1, 0)
+        with sqlite3.connect(human.db_path) as connection:
+            dispatches = dict(
+                connection.execute(
+                    "SELECT message_id, status FROM message_dispatches"
+                ).fetchall()
+            )
+            replies = connection.execute(
+                "SELECT reply_to, body FROM messages WHERE reply_to IS NOT NULL"
+            ).fetchall()
+        assert dispatches == {
+            hung["message_id"]: "retryable",
+            healthy["message_id"]: "completed",
+        }
+        assert replies == [(healthy["message_id"], "audited reply")]
+    finally:
+        NeverReturningRunner.release.set()
+        supervisor.close()
 
 
 def test_supervisor_contains_unexpected_worker_future_failure(

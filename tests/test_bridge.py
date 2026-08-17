@@ -16,6 +16,8 @@ from peerbridge_mcp.monitor import (
     BridgeReader,
     INFERENCE_ONLY,
     MCP_TOOL_LOOP,
+    PixelMonitor,
+    USAGE_TABLE_COLUMNS,
     active_room_recipient_ids,
     agent_route_options,
     ccswitch_route_specs,
@@ -31,7 +33,24 @@ from peerbridge_mcp.monitor import (
 )
 from peerbridge_mcp.ccswitch import CcSwitchProvider
 from peerbridge_mcp.credentials import credential_target
+from tests._image_fixtures import PNG
 from peerbridge_mcp.server import handle_request
+
+
+def test_usage_table_columns_are_one_shared_closed_definition() -> None:
+    assert USAGE_TABLE_COLUMNS == (
+        "provider",
+        "model",
+        "calls",
+        "reported",
+        "input",
+        "output",
+        "total",
+    )
+
+
+def _test_credential(*parts: str) -> str:
+    return "-".join(parts)
 
 
 def make_bridge(
@@ -169,6 +188,11 @@ def test_message_dispatch_is_atomic_idempotent_and_secret_free(tmp_path: Path) -
             "SELECT * FROM message_dispatches WHERE message_id=?",
             (message["message_id"],),
         ).fetchone()
+        usage = connection.execute(
+            "SELECT usage_status, input_tokens, total_tokens, "
+            "inference_receipt_sha256 FROM inference_usage WHERE message_id=?",
+            (message["message_id"],),
+        ).fetchone()
         event_payloads = [
             str(row[0])
             for row in connection.execute("SELECT payload_json FROM events").fetchall()
@@ -177,6 +201,7 @@ def test_message_dispatch_is_atomic_idempotent_and_secret_free(tmp_path: Path) -
     assert replies[0]["body"] == "One durable answer."
     assert stored["status"] == "completed"
     assert stored["inference_receipt_sha256"] == receipt_sha
+    assert tuple(usage) == ("unavailable", None, None, receipt_sha)
     assert claim["lease_token"] not in "".join(event_payloads)
     assert worker.verify_audit_chain()["valid"] is True
 
@@ -240,7 +265,7 @@ def test_message_dispatch_renewal_extends_only_the_active_session_lease(
         worker.renew_message_dispatch(
             {
                 "message_id": message["message_id"],
-                "lease_token": "test-wrong-token",
+                "lease_token": _test_credential("test", "wrong", "token"),
                 "lease_seconds": 60,
             }
         )
@@ -1362,7 +1387,7 @@ def test_room_posts_bind_safe_attachments_in_every_initial_delivery(
         }
     )
     source = tmp_path / "screen.png"
-    source.write_bytes(b"\x89PNG\r\n\x1a\nroom-evidence")
+    source.write_bytes(PNG)
     staged = stage_chat_attachments(tmp_path, [source])
     artifact = staged[0].relative_path
 
@@ -1398,7 +1423,7 @@ def test_discussion_continuation_does_not_repeat_initial_attachments(
         }
     )
     source = tmp_path / "chart.png"
-    source.write_bytes(b"\x89PNG\r\n\x1a\nchart-evidence")
+    source.write_bytes(PNG)
     artifact = stage_chat_attachments(tmp_path, [source])[0].relative_path
     human.post_room_message(
         {
@@ -1467,9 +1492,9 @@ def test_staged_chat_attachment_must_remain_content_addressed(
 ) -> None:
     human = make_bridge(tmp_path, "human-operator")
     source = tmp_path / "chart.png"
-    source.write_bytes(b"\x89PNG\r\n\x1a\noriginal")
+    source.write_bytes(PNG)
     artifact = stage_chat_attachments(tmp_path, [source])[0].relative_path
-    (tmp_path / artifact).write_bytes(b"\x89PNG\r\n\x1a\nchanged")
+    (tmp_path / artifact).write_bytes(PNG[:-1] + bytes([PNG[-1] ^ 1]))
 
     with pytest.raises(BridgeError, match="content-addressed"):
         human.send_message(
@@ -1956,6 +1981,11 @@ def test_discussion_participant_route_change_waits_for_human(tmp_path: Path) -> 
     )
     _complete_discussion_prompt(alpha, "route-change-room", "CONTINUE")
     _complete_discussion_prompt(beta, "route-change-room", "CONTINUE")
+    with sqlite3.connect(human.db_path) as connection:
+        message_count_before = connection.execute(
+            "SELECT message_count FROM room_discussions WHERE discussion_id=?",
+            (posted["discussion_id"],),
+        ).fetchone()[0]
     human.upsert_route_profile(
         {
             "route_id": "beta-route-v2",
@@ -1986,6 +2016,18 @@ def test_discussion_participant_route_change_waits_for_human(tmp_path: Path) -> 
             "SELECT COUNT(*) FROM messages WHERE discussion_id=? AND discussion_round=2",
             (posted["discussion_id"],),
         ).fetchone()[0] == 0
+        message_count_after = connection.execute(
+            "SELECT message_count FROM room_discussions WHERE discussion_id=?",
+            (posted["discussion_id"],),
+        ).fetchone()[0]
+        event_payload = json.loads(
+            connection.execute(
+                "SELECT payload_json FROM events WHERE event_type='discussion.round_blocked' "
+                "ORDER BY rowid DESC LIMIT 1"
+            ).fetchone()[0]
+        )
+    assert message_count_after == message_count_before + 2
+    assert event_payload["response_count"] == 2
 
 
 def test_coordinator_reconciles_unavailable_prompt_without_audit_churn(
@@ -2075,6 +2117,59 @@ def test_coordinator_reconciles_exhausted_direct_route_with_configured_limit(
             "SELECT status, error_code FROM message_dispatches WHERE message_id=?",
             (message["message_id"],),
         ).fetchone() == ("failed", "dispatch_attempts_exhausted")
+
+
+def test_coordinator_binds_runtime_observation_to_pending_route_sha(
+    tmp_path: Path,
+) -> None:
+    sender = make_bridge(tmp_path, "sender")
+    message = sender.send_message(
+        {
+            "recipient": "worker",
+            "task_id": "runtime-observation",
+            "subject": "No matching runtime",
+            "body": "Record a bounded terminal reason.",
+            "requested_provider_id": "relay-main",
+            "requested_model_id": "model-a",
+            "requested_reasoning_mode": "high",
+            "requested_route_class": "relay",
+        }
+    )
+    coordinator = make_bridge(
+        tmp_path, "mailbox-supervisor", discussion_coordinator=True
+    )
+    with sqlite3.connect(sender.db_path) as connection:
+        route_request_sha256 = connection.execute(
+            "SELECT route_request_sha256 FROM messages WHERE message_id=?",
+            (message["message_id"],),
+        ).fetchone()[0]
+    with pytest.raises(BridgeError, match="does not match the message route SHA"):
+        coordinator.reconcile_message_dispatches(
+            {
+                "route_runtime_observations": [
+                    {
+                        "message_id": message["message_id"],
+                        "route_request_sha256": "0" * 64,
+                        "match_count": 0,
+                    }
+                ]
+            }
+        )
+
+    receipt = coordinator.reconcile_message_dispatches(
+        {
+            "route_runtime_observations": [
+                {
+                    "message_id": message["message_id"],
+                    "route_request_sha256": route_request_sha256,
+                    "match_count": 0,
+                }
+            ]
+        }
+    )
+
+    assert receipt["count"] == 1
+    assert receipt["reconciled"][0]["error_code"] == "route_runtime_unavailable"
 
 
 def test_only_coordinator_can_advance_discussions(tmp_path: Path) -> None:
@@ -2335,6 +2430,343 @@ def test_read_only_monitor_snapshot_includes_memory_ledger(tmp_path: Path) -> No
     assert snapshot.table_counts["memories"] == 1
     assert snapshot.memories[0]["memory_id"] == memory["memory_id"]
     assert snapshot.memories[0]["memory_sha256"] == memory["memory_sha256"]
+
+
+def test_read_only_monitor_snapshot_aggregates_real_usage_without_estimates(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    worker = make_bridge(
+        tmp_path,
+        "usage-worker",
+        provider_id="provider-one",
+        model_id="model-one",
+        reasoning_mode="high",
+        route_class="relay",
+    )
+    sent = human.send_message(
+        {
+            "recipient": "usage-worker",
+            "task_id": "usage-monitor",
+            "subject": "Measure real usage",
+            "body": "Record only reported tokens.",
+        }
+    )
+    claim = worker.claim_message_dispatch({})
+    worker.complete_message_dispatch(
+        {
+            "message_id": sent["message_id"],
+            "lease_token": claim["lease_token"],
+            "body": "Measured reply.",
+            "inference_receipt_sha256": "b" * 64,
+            "inference_usage": {
+                "schema": "peerbridge.inference-usage.v1",
+                "status": "reported",
+                "source": "test/provider",
+                "input_tokens": 40,
+                "output_tokens": 10,
+                "total_tokens": 50,
+                "cached_input_tokens": 8,
+                "reasoning_tokens": 4,
+                "reported_calls": 1,
+                "total_calls": 1,
+                "total_tokens_derived": False,
+            },
+        }
+    )
+
+    snapshot = BridgeReader(human.db_path).snapshot(scope="test-scope")
+
+    assert snapshot.table_counts["inference_usage"] == 1
+    assert snapshot.usage_totals["total_tokens"] == 50
+    assert snapshot.usage_totals["reported_calls"] == 1
+    assert snapshot.usage_totals["provider_calls"] == 1
+    assert snapshot.usage_by_provider[0]["provider_id"] == "provider-one"
+    assert snapshot.usage_by_provider[0]["total_tokens"] == 50
+    assert snapshot.usage_by_provider[0]["today_tokens"] == 50
+    assert snapshot.usage_by_model[0]["provider_id"] == "provider-one"
+    assert snapshot.usage_by_model[0]["model_id"] == "model-one"
+    assert len(snapshot.usage_daily) == 30
+    assert snapshot.usage_daily[-1]["cached_input_tokens"] == 8
+    assert snapshot.usage_daily[-1]["reasoning_tokens"] == 4
+    assert snapshot.usage_model_totals[0]["model_id"] == "model-one"
+    assert snapshot.usage_model_totals[0]["total_tokens"] == 50
+    assert snapshot.usage_recent[0]["usage_status"] == "reported"
+
+
+def test_monitor_usage_chart_merges_duplicate_models_and_zero_fills_calendar_days(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    workers = (
+        make_bridge(
+            tmp_path,
+            "usage-worker-one",
+            provider_id="provider-one",
+            model_id="shared-model",
+            route_class="relay",
+        ),
+        make_bridge(
+            tmp_path,
+            "usage-worker-two",
+            provider_id="provider-two",
+            model_id="shared-model",
+            route_class="official",
+        ),
+    )
+    for index, worker in enumerate(workers, start=1):
+        sent = human.send_message(
+            {
+                "recipient": worker.agent_id,
+                "task_id": f"usage-model-{index}",
+                "subject": "Aggregate model usage",
+                "body": "Keep route detail separate from the model chart.",
+            }
+        )
+        claim = worker.claim_message_dispatch({})
+        worker.complete_message_dispatch(
+            {
+                "message_id": sent["message_id"],
+                "lease_token": claim["lease_token"],
+                "body": "Measured reply.",
+                "inference_receipt_sha256": str(index) * 64,
+                "inference_usage": {
+                    "schema": "peerbridge.inference-usage.v1",
+                    "status": "reported",
+                    "source": "test/provider",
+                    "input_tokens": 10 * index,
+                    "output_tokens": 5 * index,
+                    "total_tokens": 15 * index,
+                    "cached_input_tokens": 2 * index,
+                    "reasoning_tokens": index,
+                    "reported_calls": 1,
+                    "total_calls": 1,
+                    "total_tokens_derived": False,
+                },
+            }
+        )
+
+    snapshot = BridgeReader(human.db_path).snapshot(scope="test-scope")
+
+    assert len(snapshot.usage_by_model) == 2
+    assert snapshot.usage_model_totals == (
+        {
+            "model_id": "shared-model",
+            "completed_dispatches": 2,
+            "provider_calls": 2,
+            "reported_calls": 2,
+            "input_tokens": 30,
+            "output_tokens": 15,
+            "total_tokens": 45,
+            "cached_input_tokens": 6,
+            "reasoning_tokens": 3,
+            "input_tokens_reported_calls": 2,
+            "output_tokens_reported_calls": 2,
+            "total_tokens_reported_calls": 2,
+            "cached_input_tokens_reported_calls": 2,
+            "reasoning_tokens_reported_calls": 2,
+        },
+    )
+    assert len(snapshot.usage_daily) == 30
+    assert sum(int(row["total_tokens"]) for row in snapshot.usage_daily) == 45
+
+    with sqlite3.connect(human.db_path) as connection:
+        connection.execute(
+            "UPDATE inference_usage SET recorded_utc='2020-01-01T00:00:00Z'"
+        )
+        connection.commit()
+    old_snapshot = BridgeReader(human.db_path).snapshot(scope="test-scope")
+    assert len(old_snapshot.usage_daily) == 30
+    assert sum(int(row["total_tokens"]) for row in old_snapshot.usage_daily) == 0
+
+
+def test_monitor_usage_aggregates_preserve_unknown_component_values(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    workers = tuple(
+        make_bridge(
+            tmp_path,
+            f"usage-worker-{index}",
+            provider_id="provider-one",
+            model_id="shared-model",
+            route_class="relay",
+        )
+        for index in range(2)
+    )
+    message_ids: list[str] = []
+    for index, worker in enumerate(workers):
+        sent = human.send_message(
+            {
+                "recipient": worker.agent_id,
+                "task_id": f"usage-unknown-{index}",
+                "subject": "Preserve unknown usage components",
+                "body": "Do not invent missing provider fields.",
+            }
+        )
+        message_ids.append(sent["message_id"])
+        claim = worker.claim_message_dispatch({})
+        worker.complete_message_dispatch(
+            {
+                "message_id": sent["message_id"],
+                "lease_token": claim["lease_token"],
+                "body": "Measured reply.",
+                "inference_receipt_sha256": str(index + 1) * 64,
+                "inference_usage": {
+                    "schema": "peerbridge.inference-usage.v1",
+                    "status": "reported",
+                    "source": "test/provider",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "cached_input_tokens": 2,
+                    "reasoning_tokens": 1,
+                    "reported_calls": 1,
+                    "total_calls": 1,
+                    "total_tokens_derived": False,
+                },
+            }
+        )
+
+    with sqlite3.connect(human.db_path) as connection:
+        connection.execute(
+            "UPDATE inference_usage "
+            "SET cached_input_tokens=NULL, reasoning_tokens=NULL, "
+            "cached_input_tokens_reported_calls=0, "
+            "reasoning_tokens_reported_calls=0 "
+            "WHERE message_id=?",
+            (message_ids[-1],),
+        )
+        connection.commit()
+
+    snapshot = BridgeReader(human.db_path).snapshot(scope="test-scope")
+
+    assert snapshot.usage_totals["input_tokens"] == 20
+    assert snapshot.usage_totals["cached_input_tokens"] == 2
+    assert snapshot.usage_totals["cached_input_tokens_reported_calls"] == 1
+    assert snapshot.usage_totals["reasoning_tokens"] == 1
+    assert snapshot.usage_totals["reasoning_tokens_reported_calls"] == 1
+    assert snapshot.usage_by_model[0]["cached_input_tokens"] == 2
+    assert snapshot.usage_by_model[0]["cached_input_tokens_reported_calls"] == 1
+    assert snapshot.usage_model_totals[0]["reasoning_tokens"] == 1
+    assert snapshot.usage_daily[-1]["cached_input_tokens"] == 2
+    assert snapshot.usage_daily[-1]["reasoning_tokens"] == 1
+
+
+def test_usage_trend_draws_four_chinese_series_including_zero_value_lines() -> None:
+    class Locale:
+        @staticmethod
+        def get() -> str:
+            return "zh-Hant"
+
+    class RecordingCanvas:
+        def __init__(self) -> None:
+            self.lines: list[dict[str, object]] = []
+            self.texts: list[str] = []
+
+        @staticmethod
+        def winfo_width() -> int:
+            return 900
+
+        @staticmethod
+        def winfo_height() -> int:
+            return 320
+
+        @staticmethod
+        def delete(_target: str) -> None:
+            return None
+
+        def create_line(self, *_args: object, **kwargs: object) -> None:
+            self.lines.append(kwargs)
+
+        def create_text(self, *_args: object, **kwargs: object) -> None:
+            self.texts.append(str(kwargs.get("text") or ""))
+
+        @staticmethod
+        def create_oval(*_args: object, **_kwargs: object) -> None:
+            return None
+
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.locale = Locale()
+    canvas = RecordingCanvas()
+    rows = (
+        {
+            "utc_date": "2026-08-16",
+            "input_tokens": 10,
+            "output_tokens": 6,
+            "cached_input_tokens": 0,
+            "reasoning_tokens": 0,
+        },
+        {
+            "utc_date": "2026-08-17",
+            "input_tokens": 20,
+            "output_tokens": 12,
+            "cached_input_tokens": 0,
+            "reasoning_tokens": 0,
+        },
+    )
+
+    monitor._draw_usage_trend_chart(canvas, rows)
+
+    plotted_series = [line for line in canvas.lines if line.get("smooth") is True]
+    assert len(plotted_series) == 4
+    assert {"輸入", "輸出", "快取輸入", "推理"}.issubset(set(canvas.texts))
+    rendered = " ".join(canvas.texts).lower()
+    assert "cache" not in rendered
+    assert "reason" not in rendered
+
+
+def test_usage_provider_chart_keeps_all_twelve_provider_rows_visible() -> None:
+    class Locale:
+        @staticmethod
+        def get() -> str:
+            return "zh-Hant"
+
+    class RecordingCanvas:
+        def __init__(self) -> None:
+            self.texts: list[str] = []
+
+        @staticmethod
+        def winfo_width() -> int:
+            return 900
+
+        @staticmethod
+        def winfo_height() -> int:
+            return 220
+
+        @staticmethod
+        def delete(_target: str) -> None:
+            return None
+
+        @staticmethod
+        def create_rectangle(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        def create_text(self, *_args: object, **kwargs: object) -> None:
+            self.texts.append(str(kwargs.get("text") or ""))
+
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.locale = Locale()
+    canvas = RecordingCanvas()
+    rows = tuple(
+        {
+            "provider_id": f"provider-{index:02d}",
+            "provider_calls": index + 1,
+            "total_tokens": (index + 1) * 100,
+        }
+        for index in range(12)
+    )
+
+    monitor._draw_usage_bar_chart(
+        canvas,
+        rows,
+        label_key="provider_id",
+        limit=12,
+        orientation="horizontal",
+    )
+
+    for index in range(12):
+        assert f"provider-{index:02d}" in canvas.texts
 
 
 def test_monitor_room_view_repeated_refresh_is_bounded_and_write_free(
@@ -2972,6 +3404,106 @@ def test_provider_and_route_registry_enforce_actor_ownership_and_immutability(
     assert human.upsert_provider_connection(provider_args)["connection_id"] == "relay-one"
 
 
+def test_legacy_route_profile_hash_remains_valid_when_response_model_is_null(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    profile = human.upsert_route_profile(
+        {
+            "route_id": "legacy-route-v1",
+            "agent_id": "reviewer",
+            "client_name": "claude",
+            "provider_id": "relay-claude",
+            "model_id": "model-a",
+            "route_class": "relay",
+        }
+    )
+    legacy_identity = {
+        "scope": "test-scope",
+        "route_id": "legacy-route-v1",
+        "agent_id": "reviewer",
+        "client_name": "claude",
+        "provider_id": "relay-claude",
+        "model_id": "model-a",
+        "reasoning_mode": None,
+        "route_class": "relay",
+        "enabled": True,
+    }
+    legacy_sha = stable_sha256(legacy_identity)
+    assert legacy_sha != profile["profile_sha256"]
+    with sqlite3.connect(human.db_path) as connection:
+        connection.execute(
+            "UPDATE route_profiles SET profile_sha256=? WHERE scope=? AND route_id=?",
+            (legacy_sha, "test-scope", "legacy-route-v1"),
+        )
+
+    identical = human.upsert_route_profile(
+        {
+            "route_id": "legacy-route-v1",
+            "agent_id": "reviewer",
+            "client_name": "claude",
+            "provider_id": "relay-claude",
+            "model_id": "model-a",
+            "route_class": "relay",
+        }
+    )
+    assert identical["profile_sha256"] == legacy_sha
+    sent = human.send_message(
+        {
+            "recipient": "reviewer",
+            "subject": "legacy route",
+            "body": "review",
+            "task_id": "legacy-route-test",
+            "route_profile_id": "legacy-route-v1",
+        }
+    )
+    assert sent["route_request"]["route_profile_sha256"] == legacy_sha
+
+
+def test_legacy_route_profile_hash_is_rejected_for_non_null_response_model(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    human.upsert_route_profile(
+        {
+            "route_id": "response-route-v1",
+            "agent_id": "reviewer",
+            "client_name": "openai-compatible",
+            "provider_id": "relay-reviewer",
+            "model_id": "request-model",
+            "response_model_id": "observed-model",
+            "route_class": "relay",
+        }
+    )
+    legacy_identity = {
+        "scope": "test-scope",
+        "route_id": "response-route-v1",
+        "agent_id": "reviewer",
+        "client_name": "openai-compatible",
+        "provider_id": "relay-reviewer",
+        "model_id": "request-model",
+        "reasoning_mode": None,
+        "route_class": "relay",
+        "enabled": True,
+    }
+    with sqlite3.connect(human.db_path) as connection:
+        connection.execute(
+            "UPDATE route_profiles SET profile_sha256=? WHERE scope=? AND route_id=?",
+            (stable_sha256(legacy_identity), "test-scope", "response-route-v1"),
+        )
+
+    with pytest.raises(BridgeError, match="route profile identity SHA mismatch"):
+        human.send_message(
+            {
+                "recipient": "reviewer",
+                "subject": "tampered response route",
+                "body": "review",
+                "task_id": "response-route-test",
+                "route_profile_id": "response-route-v1",
+            }
+        )
+
+
 def test_provider_connection_tool_schema_rejects_raw_secrets(tmp_path: Path) -> None:
     bridge = make_bridge(tmp_path, "human-operator")
     response = handle_request(
@@ -2990,7 +3522,7 @@ def test_provider_connection_tool_schema_rejects_raw_secrets(tmp_path: Path) -> 
                     "credential_target": "PeerBridgeMCP:test-scope:relay-one",
                     "endpoint_sha256": "a" * 64,
                     "credential_fingerprint_sha256": "b" * 64,
-                    "api_key": "not-allowed",
+                    "api_key": _test_credential("not", "allowed"),
                 },
             },
         },
@@ -3096,11 +3628,11 @@ def test_concurrent_bridge_initialization_serializes_schema_migration(
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         versions = list(pool.map(initialize, range(24)))
-    assert versions == ["15"] * 24
+    assert versions == ["17"] * 24
     with sqlite3.connect(db_path) as connection:
         assert connection.execute(
             "SELECT value FROM metadata WHERE key='schema_version'"
-        ).fetchone()[0] == "15"
+        ).fetchone()[0] == "17"
         columns = {
             row[1] for row in connection.execute("PRAGMA table_info(tasks)")
         }
@@ -3616,7 +4148,7 @@ def test_runtime_identity_distinguishes_official_and_relay_routes(tmp_path: Path
     }
 
 
-def test_schema_v1_database_migrates_additively_to_v15(tmp_path: Path) -> None:
+def test_schema_v1_database_migrates_additively_to_v17(tmp_path: Path) -> None:
     state = tmp_path / ".peerbridge"
     state.mkdir()
     db = state / "bridge.sqlite3"
@@ -3670,11 +4202,12 @@ def test_schema_v1_database_migrates_additively_to_v15(tmp_path: Path) -> None:
             row[0]
             for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")
         }
-    assert version == "15"
+    assert version == "17"
     assert "workspace_root_key" in task_columns
     assert "response_model_id" in route_profile_columns
     assert "message_dispatches" in tables
     assert "message_dispatch_retry_schedules" in tables
+    assert "inference_usage" in tables
     assert "review_quorum" in task_columns
     assert {
         "client_name",
@@ -3706,7 +4239,72 @@ def test_schema_v1_database_migrates_additively_to_v15(tmp_path: Path) -> None:
     assert "observed_route_class" in route_receipt_columns
 
 
-def test_schema_v11_discussions_migrate_without_duplicate_rounds_to_v15(
+def test_schema_v16_usage_coverage_migrates_from_existing_reported_values(
+    tmp_path: Path,
+) -> None:
+    state = tmp_path / ".peerbridge"
+    state.mkdir()
+    db = state / "bridge.sqlite3"
+    with sqlite3.connect(db) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            INSERT INTO metadata VALUES ('schema_version', '16');
+            CREATE TABLE inference_usage (
+                scope TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                reply_message_id TEXT NOT NULL,
+                route_profile_id TEXT,
+                provider_id TEXT,
+                model_id TEXT,
+                reasoning_mode TEXT,
+                route_class TEXT,
+                usage_status TEXT NOT NULL,
+                usage_source TEXT NOT NULL,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                total_tokens INTEGER,
+                cached_input_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                reported_calls INTEGER NOT NULL,
+                total_calls INTEGER NOT NULL,
+                total_tokens_derived INTEGER NOT NULL,
+                recorded_utc TEXT NOT NULL,
+                inference_receipt_sha256 TEXT NOT NULL,
+                usage_sha256 TEXT NOT NULL,
+                PRIMARY KEY(scope, message_id, agent_id)
+            );
+            INSERT INTO inference_usage VALUES (
+                'test', 'message-1', 'agent-1', 'reply-1', NULL,
+                'provider-1', 'model-1', NULL, 'relay', 'reported', 'legacy',
+                11, 7, 18, NULL, 3, 1, 1, 0,
+                '2026-08-16T00:00:00Z',
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+            );
+            """
+        )
+
+    Bridge(tmp_path, db, "migration-agent", "test")
+
+    with sqlite3.connect(db) as connection:
+        connection.row_factory = sqlite3.Row
+        version = connection.execute(
+            "SELECT value FROM metadata WHERE key='schema_version'"
+        ).fetchone()[0]
+        row = connection.execute(
+            "SELECT * FROM inference_usage WHERE message_id='message-1'"
+        ).fetchone()
+    assert version == "17"
+    assert row["input_tokens_reported_calls"] == 1
+    assert row["output_tokens_reported_calls"] == 1
+    assert row["total_tokens_reported_calls"] == 1
+    assert row["cached_input_tokens_reported_calls"] == 0
+    assert row["reasoning_tokens_reported_calls"] == 1
+
+
+def test_schema_v11_discussions_migrate_without_duplicate_rounds_to_v17(
     tmp_path: Path,
 ) -> None:
     state = tmp_path / ".peerbridge"
@@ -3781,7 +4379,7 @@ def test_schema_v11_discussions_migrate_without_duplicate_rounds_to_v15(
         rows = connection.execute(
             "SELECT * FROM room_discussions ORDER BY discussion_id"
         ).fetchall()
-    assert version == "15"
+    assert version == "17"
     assert [(row["discussion_id"], row["processed_round"]) for row in rows] == [
         ("legacy-active", 2),
         ("legacy-completed", 2),
@@ -3892,7 +4490,7 @@ def test_schema_v14_profile_route_migrates_nullable_and_fails_closed_without_sha
                  WHERE message_id='legacy-v14-message'"""
         ).fetchone()[0]
 
-    assert version == "15"
+    assert version == "17"
     assert profile_sha_column[3] == 0
     assert stored_profile_sha256 is None
     message = bridge.poll_messages({})["messages"][0]
@@ -3914,6 +4512,7 @@ def test_monitor_time_order_indexes_are_installed(tmp_path: Path) -> None:
     expected = {
         "messages": "idx_messages_scope_created",
         "message_dispatches": "idx_message_dispatches_scope_updated",
+        "inference_usage": "idx_inference_usage_scope_time",
         "message_dispatch_retry_schedules": "idx_dispatch_retry_schedule_due",
         "tasks": "idx_tasks_scope_updated",
         "work_updates": "idx_work_updates_scope_created",
@@ -3928,7 +4527,7 @@ def test_monitor_time_order_indexes_are_installed(tmp_path: Path) -> None:
             assert index in indexes
 
 
-def test_schema_v8_routes_migrate_without_granting_legacy_class_proof_to_v15(
+def test_schema_v8_routes_migrate_without_granting_legacy_class_proof_to_v17(
     tmp_path: Path,
 ) -> None:
     state = tmp_path / ".peerbridge"
@@ -4043,7 +4642,7 @@ def test_schema_v8_routes_migrate_without_granting_legacy_class_proof_to_v15(
                WHERE message_id='legacy-message'"""
         ).fetchone()[0]
 
-    assert version == "15"
+    assert version == "17"
     assert "requested_route_class" in message_columns
     assert "observed_route_class" in route_receipt_columns
     assert "route_class" in presence_columns
@@ -4062,7 +4661,7 @@ def test_schema_v8_routes_migrate_without_granting_legacy_class_proof_to_v15(
         bridge.ack_message({"message_id": "legacy-message"})
 
 
-def test_schema_v2_presence_migrates_additively_to_v15(tmp_path: Path) -> None:
+def test_schema_v2_presence_migrates_additively_to_v17(tmp_path: Path) -> None:
     state = tmp_path / ".peerbridge"
     state.mkdir()
     db = state / "bridge.sqlite3"
@@ -4115,7 +4714,7 @@ def test_schema_v2_presence_migrates_additively_to_v15(tmp_path: Path) -> None:
                FROM agent_presence WHERE agent_id='migration-agent'"""
         ).fetchone()
 
-    assert version == "15"
+    assert version == "17"
     assert {
         "client_name",
         "provider_id",

@@ -97,6 +97,17 @@ Security: https://github.com/oscarho200407-hue/peerbridge-mcp/blob/main/SECURITY
     $readme,
     [System.Text.UTF8Encoding]::new($false)
 )
+$localizedReadmes = [ordered]@{
+    'README.zh-Hant.md' = 'docs\alpha-quickstart.zh-Hant.md'
+    'README.zh-Hans.md' = 'docs\alpha-quickstart.zh-Hans.md'
+}
+foreach ($localizedName in $localizedReadmes.Keys) {
+    $localizedSource = Join-Path $projectRoot $localizedReadmes[$localizedName]
+    if (-not (Test-Path -LiteralPath $localizedSource -PathType Leaf)) {
+        throw "Required localized quickstart is missing: $localizedSource"
+    }
+    Copy-Item -LiteralPath $localizedSource -Destination (Join-Path $stageRoot $localizedName)
+}
 foreach ($legalName in @('LICENSE', 'TRADEMARKS.md', 'BRAND_ASSETS.md', 'THIRD_PARTY_NOTICES.md')) {
     $legalSource = Join-Path $projectRoot $legalName
     if (-not (Test-Path -LiteralPath $legalSource -PathType Leaf)) {
@@ -217,7 +228,7 @@ $runtimeLicenseManifestSha256 = (
 ).Hash.ToLowerInvariant()
 $sourceCommit = (& git -C $projectRoot rev-parse HEAD 2>$null).Trim()
 $sourceTree = (& git -C $projectRoot rev-parse 'HEAD^{tree}' 2>$null).Trim()
-$sourceStatus = (& git -C $projectRoot status --porcelain=v1 --untracked-files=no 2>$null) -join "`n"
+$sourceStatus = (& git -C $projectRoot status --porcelain=v1 --untracked-files=all 2>$null) -join "`n"
 if ($sourceCommit -notmatch '^[0-9a-f]{40}$' -or $sourceTree -notmatch '^[0-9a-f]{40}$') {
     throw 'Portable provenance could not resolve the source commit and tree.'
 }

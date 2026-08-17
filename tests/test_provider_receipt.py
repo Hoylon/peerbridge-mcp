@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -289,8 +288,9 @@ def test_provider_receipt_binds_intervening_domain_event_window(tmp_path: Path) 
                 "arguments": {
                     "task_id": "provider-message-window",
                     "recipient": "peer-agent",
-                    "subject": "DOMAIN_EVENT_WINDOW",
-                    "body": "Receipt test message.",
+                        "subject": "DOMAIN_EVENT_WINDOW",
+                        "body": "Receipt test message.",
+                        "idempotency_key": "provider-domain-window-1",
                 },
             },
         },

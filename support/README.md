@@ -46,7 +46,7 @@ local maintainer action that writes a create-only ACL-restricted file outside th
 | `schema` | Exactly `peerbridge.feedback-config.v1`. |
 | `recipient_label` | Public display label for the maintainer-controlled recipient. |
 | `endpoint` | Optional absolute public HTTPS URL with no user-info, query, or fragment. |
-| `endpoint_transport` | `raw-zip-v1`, `json-base64-v1`, or the narrowly allowlisted `google-apps-script-v1`. Cloudflare intake uses `json-base64-v1`. |
+| `endpoint_transport` | `raw-zip-v1` or `json-base64-v1`. Public Alpha packages use Cloudflare `json-base64-v1`; the private Apps Script URL and HMAC secret are server-side only and never packaged. |
 | `support_email` | Optional support mailbox. Mail delivery opens a draft and leaves the encrypted bundle local for explicit attachment. |
 | `privacy_url` | Optional absolute public HTTPS privacy notice. |
 | `public_key_path` | Relative path beside the selected `support.json` to the public PEM. |
@@ -55,7 +55,15 @@ local maintainer action that writes a create-only ACL-restricted file outside th
 At least one of `endpoint` or `support_email` should be configured for a public Alpha.
 Full-key escalation additionally requires the pinned public key and the optional
 `peerbridge-mcp[feedback]` dependency. The Windows portable artifact bundles and tests this
-dependency; a wheel installation must install the `feedback` extra or `cryptography>=43`.
+dependency; a wheel installation must install the `feedback` extra or `cryptography>=50,<51`.
+
+Two maintained HTTPS receiver implementations are included:
+
+- `support/cloudflare-edge/`: public HTTPS validation, rate limiting, D1 case metadata,
+  private R2 bundle retention, announcements, and authenticated administration.
+- `support/google-apps-script/`: HMAC-protected zero-domain private backend that sends the
+  verified sealed bundle (up to 8 MiB) to the fixed maintainer Gmail account. Its URL and
+  secret stay server-side.
 
 ## Pre-release verification
 

@@ -104,6 +104,19 @@ class _Configurable:
         self.configurations.append(kwargs)
 
 
+class _OptionWidget(_Configurable):
+    def __init__(self, **options: object) -> None:
+        super().__init__()
+        self.options = dict(options)
+
+    def configure(self, **kwargs: object) -> None:
+        super().configure(**kwargs)
+        self.options.update(kwargs)
+
+    def cget(self, key: str) -> object:
+        return self.options[key]
+
+
 class _Canvas(_Configurable):
     def delete(self, _target: str) -> None:
         return None
@@ -349,6 +362,41 @@ def test_sidebar_stats_keep_every_counter_in_six_compact_lines() -> None:
         "OPEN CALL 1  ACTIVE 1",
         "AUDIT 166991",
         "SYNC 08-15 16:32:27",
+    ]
+
+
+def test_sidebar_stats_accept_localized_status_labels() -> None:
+    text = compact_sidebar_stats(
+        online=3,
+        total_agents=5,
+        rooms=2,
+        messages=54,
+        dispatch="執行0/重試0/失敗17/完成15",
+        memories=9,
+        open_calls=1,
+        active_tasks=1,
+        audit_events=166_991,
+        sync="08-15 16:32:27",
+        labels={
+            "online": "在線",
+            "rooms": "房間",
+            "messages": "訊息",
+            "memory": "記憶",
+            "dispatch": "派送",
+            "open_calls": "待處理呼叫",
+            "active": "進行中",
+            "audit": "審計",
+            "sync": "同步",
+        },
+    )
+
+    assert text.splitlines() == [
+        "在線 3/5  房間 2",
+        "訊息 54  記憶 9",
+        "派送 執行0/重試0/失敗17/完成15",
+        "待處理呼叫 1  進行中 1",
+        "審計 166991",
+        "同步 08-15 16:32:27",
     ]
 
 
@@ -874,6 +922,30 @@ def test_local_provider_save_uses_loopback_descriptor_without_api_key(
     assert calls[0][1]["route_class"] == "local"
     assert calls[0][1]["credential_target"] == "PeerBridgeMCP:v2:test"
     assert posted and posted[0][-1] is None
+
+
+def test_api_key_visibility_toggle_is_presentational_only() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.connection_api_key = _Value("provider-secret-stays-in-memory")
+    monitor.connection_key_visible = _Value(False)
+    monitor.connection_key_entry = _OptionWidget(show="*")
+    monitor.connection_key_visibility_button = _OptionWidget(text="顯示")
+    monitor._t = lambda key: {
+        "provider.show_api_key": "顯示",
+        "provider.hide_api_key": "隱藏",
+    }[key]
+
+    monitor._toggle_connection_key_visibility()
+
+    assert monitor.connection_key_entry.cget("show") == ""
+    assert monitor.connection_key_visibility_button.cget("text") == "隱藏"
+    assert monitor.connection_api_key.get() == "provider-secret-stays-in-memory"
+
+    monitor._toggle_connection_key_visibility()
+
+    assert monitor.connection_key_entry.cget("show") == "*"
+    assert monitor.connection_key_visibility_button.cget("text") == "顯示"
+    assert monitor.connection_api_key.get() == "provider-secret-stays-in-memory"
 
 
 def test_local_provider_save_rejects_non_loopback_endpoint_before_worker_start(

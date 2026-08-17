@@ -25,9 +25,17 @@ from urllib.parse import urlsplit
 
 from . import __version__, credentials
 from .bridge import ROUTE_CLASSES, SAFE_ID, sha256_bytes, stable_sha256
+from .child_environment import build_local_child_environment
 from .protocol import PROTOCOL_VERSION
+from .process_control import (
+    attach_process_tree,
+    process_group_popen_kwargs,
+    release_process_tree,
+    terminate_process_tree,
+)
 from .resource_guard import ResourceGuardError, provider_runtime_slot
 from .server import READ_ONLY_TOOLS
+from .usage import aggregate_usage, normalize_provider_usage
 
 
 RECEIPT_SCHEMA = "peerbridge.openai-compatible-run.v1"
@@ -240,6 +248,7 @@ class StdioMCPTransport:
             self._process = subprocess.Popen(
                 list(self._command),
                 cwd=self._cwd,
+                env=build_local_child_environment(),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
@@ -247,7 +256,9 @@ class StdioMCPTransport:
                 encoding="utf-8",
                 errors="strict",
                 bufsize=1,
+                **process_group_popen_kwargs(),
             )
+            attach_process_tree(self._process)
         except OSError:
             raise MCPTransportError("unable to start the local MCP server") from None
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
@@ -326,12 +337,9 @@ class StdioMCPTransport:
         try:
             process.wait(timeout=2)
         except subprocess.TimeoutExpired:
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait(timeout=2)
+            terminate_process_tree(process, wait_seconds=2)
+        else:
+            release_process_tree(process)
         if self._reader is not None:
             self._reader.join(timeout=2)
 
@@ -818,6 +826,7 @@ class OpenAICompatibleRunner:
         transport_tools = tuple(sorted(set(self._allowed_tools) | {REGISTRY_TOOL}))
         self._http = http_transport or StdlibHTTPTransport()
         self._cancellation_token = cancellation_token
+        self._internal_cancellation = threading.Event()
         self._runtime_admitted = bool(runtime_admitted)
         self._provider_calls: list[dict[str, Any]] = []
         self._tool_input_schemas: dict[str, dict[str, Any]] = {}
@@ -834,19 +843,27 @@ class OpenAICompatibleRunner:
         return f"OpenAICompatibleRunner(config={self.config!r})"
 
     def _check_cancelled(self) -> None:
-        if self._cancellation_token is not None and self._cancellation_token.is_set():
+        if self._internal_cancellation.is_set() or (
+            self._cancellation_token is not None
+            and self._cancellation_token.is_set()
+        ):
             raise RunCancelledError("provider run was cancelled")
+
+    def cancel(self) -> None:
+        self._internal_cancellation.set()
 
     def _retry_wait(self, attempt: int) -> None:
         delay = float(self.config.retry_backoff_seconds) * (2 ** max(0, attempt - 1))
         if delay <= 0:
             self._check_cancelled()
             return
-        if self._cancellation_token is not None:
-            if self._cancellation_token.wait(delay):
-                raise RunCancelledError("provider run was cancelled")
-        else:
-            time.sleep(delay)
+        deadline = time.monotonic() + delay
+        while True:
+            self._check_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            self._internal_cancellation.wait(min(0.05, remaining))
 
     def _mcp_request(
         self,
@@ -1062,7 +1079,7 @@ class OpenAICompatibleRunner:
         api_key: str | None,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
-    ) -> tuple[dict[str, Any], str, str | None, str]:
+    ) -> tuple[dict[str, Any], str, str | None, str, dict[str, Any]]:
         body: dict[str, Any] = {"model": self.config.model, "messages": messages}
         if tools:
             body["tools"] = tools
@@ -1094,7 +1111,12 @@ class OpenAICompatibleRunner:
             if key in message
         }
         _json_dumps(normalized)
-        return normalized, stable_sha256(payload), finish_reason, observed_model
+        raw_usage = payload.get("usage")
+        usage = normalize_provider_usage(
+            raw_usage if isinstance(raw_usage, Mapping) else None,
+            source="openai-compatible/chat.completions",
+        )
+        return normalized, stable_sha256(payload), finish_reason, observed_model, usage
 
     def _tool_calls(self, message: Mapping[str, Any]) -> list[dict[str, Any]]:
         raw_calls = message.get("tool_calls")
@@ -1260,6 +1282,7 @@ class OpenAICompatibleRunner:
         trace: list[dict[str, Any]] = []
         tool_receipts: list[dict[str, Any]] = []
         completion_hashes: list[str] = []
+        completion_usages: list[dict[str, Any]] = []
         observed_response_models: list[str] = []
         response_only_fallback: dict[str, Any] = {
             "used": False,
@@ -1317,6 +1340,7 @@ class OpenAICompatibleRunner:
                         completion_sha,
                         finish_reason,
                         observed_response_model,
+                        completion_usage,
                     ) = self._chat(
                         api_base,
                         access.api_key,
@@ -1324,6 +1348,7 @@ class OpenAICompatibleRunner:
                         tools_for_round,
                     )
                     completion_hashes.append(completion_sha)
+                    completion_usages.append(completion_usage)
                     observed_response_models.append(observed_response_model)
                     calls = self._tool_calls(assistant)
                     if not calls:
@@ -1402,6 +1427,7 @@ class OpenAICompatibleRunner:
                     completion_sha,
                     finish_reason,
                     observed_response_model,
+                    completion_usage,
                 ) = self._chat(
                     api_base,
                     access.api_key,
@@ -1409,6 +1435,7 @@ class OpenAICompatibleRunner:
                     [],
                 )
                 completion_hashes.append(completion_sha)
+                completion_usages.append(completion_usage)
                 observed_response_models.append(observed_response_model)
                 if self._tool_calls(assistant):
                     raise ToolCallError(
@@ -1481,6 +1508,10 @@ class OpenAICompatibleRunner:
             "response_only_fallback": response_only_fallback,
             "mcp_calls": trace,
             "provider_http_calls": self._provider_calls,
+            "usage": aggregate_usage(
+                completion_usages,
+                source="openai-compatible/chat.completions",
+            ),
             "raw_content_recorded": False,
             "credential_contents_recorded": False,
         }

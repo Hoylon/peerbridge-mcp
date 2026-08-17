@@ -50,6 +50,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run check
       - run: npm test
+      - name: Test Google Apps Script feedback receiver contract
+        run: node --test ../google-apps-script/tests/receiver.test.mjs
 
   windows-portable-contract:
     timeout-minutes: 30

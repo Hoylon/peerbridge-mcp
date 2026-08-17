@@ -82,3 +82,51 @@ def test_portable_provenance_rejects_archive_tamper(tmp_path: Path) -> None:
 
     with pytest.raises(ProvenanceError, match="byte count"):
         verify(tmp_path, PROJECT_ROOT, commit)
+
+
+def test_packager_git_inventory_detects_untracked_pyinstaller_input(
+    tmp_path: Path,
+) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.name", "PeerBridge Test"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+    )
+    tracked = tmp_path / "README.md"
+    tracked.write_text("fixture\n", encoding="utf-8")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "fixture"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    hook = tmp_path / "scripts" / "pyinstaller-hooks" / "hook-peerbridge.py"
+    hook.parent.mkdir(parents=True)
+    hook.write_text("hiddenimports = []\n", encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            "git",
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert "?? scripts/pyinstaller-hooks/hook-peerbridge.py" in result.stdout
+    packager = (PROJECT_ROOT / "scripts" / "package_windows_portable.ps1").read_text(
+        encoding="utf-8"
+    )
+    assert "status --porcelain=v1 --untracked-files=all" in packager

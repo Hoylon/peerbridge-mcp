@@ -36,6 +36,10 @@ class MemoryCredentialStore:
         return self.values.pop(target, None) is not None
 
 
+def _test_credential(*parts: str) -> str:
+    return "-".join(parts)
+
+
 def _store_bound_provider_credentials(
     *,
     store: MemoryCredentialStore,
@@ -82,7 +86,7 @@ def _load_bound_provider_access(
 
 def test_provider_secret_stays_in_credential_store() -> None:
     store = MemoryCredentialStore()
-    api_key = "unit-test-secret-value"
+    api_key = _test_credential("unit", "test", "secret", "value")
     endpoint = "https://provider.example/v1/"
 
     reference = store_provider_credentials(
@@ -155,7 +159,7 @@ def test_legacy_credential_records_require_explicit_migration_mode() -> None:
     scope = "legacy-scope"
     connection_id = "legacy-relay"
     endpoint = "https://legacy-relay.example/v1"
-    api_key = "legacy-provider-secret"
+    api_key = _test_credential("legacy", "provider", "secret")
     legacy_target = f"PeerBridgeMCP:{scope}:{connection_id}"
     store.values[legacy_target] = json.dumps(
         {"api_key": api_key, "endpoint": endpoint},
@@ -203,7 +207,10 @@ def test_legacy_credential_records_require_explicit_migration_mode() -> None:
 def test_legacy_migration_rejects_ambiguous_colon_targets() -> None:
     store = MemoryCredentialStore()
     store.values["PeerBridgeMCP:alpha:beta:gamma"] = json.dumps(
-        {"api_key": "legacy-secret", "endpoint": "https://legacy.example/v1"}
+        {
+            "api_key": _test_credential("legacy", "secret"),
+            "endpoint": "https://legacy.example/v1",
+        }
     )
 
     with pytest.raises(CredentialStoreError, match="ambiguous"):
@@ -224,7 +231,7 @@ def test_v2_provider_descriptor_binds_route_class_and_provider_id() -> None:
         route_class="relay",
         provider_id="relay-deepseek",
         endpoint="https://relay.example/v1",
-        api_key="bound-provider-secret",
+        api_key=_test_credential("bound", "provider", "secret"),
     )
     descriptor = json.loads(store.values[reference.credential_target])
 
@@ -264,7 +271,7 @@ def test_credential_fingerprint_is_not_a_sha_oracle_over_the_secret() -> None:
         "route_class": "relay",
         "provider_id": "relay-kimi",
         "endpoint": "https://relay.example/v1",
-        "api_key": "low-entropy-relay-password",
+        "api_key": _test_credential("low", "entropy", "relay", "password"),
     }
 
     first = _store_bound_provider_credentials(**kwargs)

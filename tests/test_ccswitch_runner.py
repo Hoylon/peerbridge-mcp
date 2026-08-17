@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -10,13 +14,95 @@ import pytest
 
 from peerbridge_mcp import openai_compatible_runner as openai_runner_module
 from peerbridge_mcp.ccswitch import CcSwitchProvider, CcSwitchRouteIdentity
-from peerbridge_mcp.ccswitch_runner import CcSwitchRunner, resolve_reference
+from peerbridge_mcp.ccswitch_runner import (
+    CcSwitchRunner,
+    _bounded_process,
+    resolve_reference,
+)
 from peerbridge_mcp.openai_compatible_runner import (
     CredentialUnavailableError,
     ProviderHTTPError,
+    ResourceUnavailableError,
     RouteMismatchError,
     RunnerConfig,
 )
+
+
+def _process_alive(pid: int) -> bool:
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        exit_code = wintypes.DWORD()
+        try:
+            if not ctypes.windll.kernel32.GetExitCodeProcess(
+                handle, ctypes.byref(exit_code)
+            ):
+                return False
+            return exit_code.value == 259  # STILL_ACTIVE
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_bounded_process_timeout_terminates_descendant_tree(tmp_path: Path) -> None:
+    # The Microsoft Store venv redirector can launch its base interpreter
+    # outside a nested Job Object. Exercise the owned executable itself.
+    python_executable = getattr(sys, "_base_executable", sys.executable)
+    child_pid_path = tmp_path / "child.pid"
+    parent_script = tmp_path / "parent.py"
+    parent_script.write_text(
+        "import pathlib, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(60)'])\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding='ascii')\n"
+        "time.sleep(60)\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ResourceUnavailableError, match="timed out"):
+        _bounded_process(
+            [python_executable, str(parent_script), str(child_pid_path)],
+            cwd=tmp_path,
+            environment=os.environ,
+            stdin_text="",
+            timeout_seconds=0.5,
+            runtime_label="test runtime",
+        )
+
+    deadline = time.monotonic() + 3.0
+    while not child_pid_path.exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert child_pid_path.exists()
+    child_pid = int(child_pid_path.read_text(encoding="ascii"))
+    while _process_alive(child_pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert not _process_alive(child_pid)
+
+
+def test_bounded_process_timeout_includes_blocked_stdin_write(tmp_path: Path) -> None:
+    sleeper = tmp_path / "never-read-stdin.py"
+    sleeper.write_text("import time\ntime.sleep(60)\n", encoding="utf-8")
+    started = time.monotonic()
+
+    with pytest.raises(ResourceUnavailableError, match="timed out"):
+        _bounded_process(
+            [sys.executable, str(sleeper)],
+            cwd=tmp_path,
+            environment=os.environ,
+            stdin_text="x" * (16 * 1024 * 1024),
+            timeout_seconds=0.2,
+            runtime_label="blocked stdin runtime",
+        )
+
+    assert time.monotonic() - started < 3.0
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +160,18 @@ def fake_process(*, observed_model: str, result: str):
         stdout = "\n".join(
             (
                 json.dumps({"type": "system", "model": observed_model}),
-                json.dumps({"type": "result", "is_error": False, "result": result}),
+                json.dumps(
+                    {
+                        "type": "result",
+                        "is_error": False,
+                        "result": result,
+                        "usage": {
+                            "input_tokens": 8,
+                            "output_tokens": 3,
+                            "total_tokens": 11,
+                        },
+                    }
+                ),
             )
         ).encode()
         return 0, stdout, b""
@@ -110,6 +207,30 @@ def test_runner_uses_stdin_returns_content_free_receipt_and_exact_model(
     assert result.receipt["route_profile_id"] == "relay-one-claude"
     assert result.receipt["route_profile_sha256"] == "c" * 64
     assert result.receipt["credential_values_recorded"] is False
+    assert result.receipt["usage"]["total_tokens"] == 11
+
+
+def test_runner_passes_only_claude_auth_family_to_child(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "provider-auth")
+    monkeypatch.setenv("GITHUB_TOKEN", "unrelated-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "other-provider-secret")
+    captured: dict[str, str] = {}
+
+    def process_runner(command, **kwargs):
+        captured.update(kwargs["environment"])
+        return fake_process(observed_model="claude-test", result="safe reply")(
+            command, **kwargs
+        )
+
+    make_runner(tmp_path, process_runner).run(
+        [{"role": "user", "content": "test"}]
+    )
+
+    assert captured["ANTHROPIC_AUTH_TOKEN"] == "provider-auth"
+    assert "GITHUB_TOKEN" not in captured
+    assert "OPENAI_API_KEY" not in captured
 
 
 def test_runner_uses_shared_resource_admission_before_native_provider(
@@ -225,7 +346,7 @@ def test_runner_reports_malformed_output_with_structured_status(tmp_path: Path) 
 
 @pytest.mark.parametrize(
     ("status", "retryable"),
-    ((429, True), (503, True), (422, False), (True, True)),
+    ((402, False), (403, False), (429, True), (503, True), (422, False), (True, True)),
 )
 def test_runner_preserves_sanitized_provider_status(
     tmp_path: Path, status: object, retryable: bool
@@ -242,6 +363,28 @@ def test_runner_preserves_sanitized_provider_status(
     assert str(raised.value) == "CC Switch provider request failed"
     assert raised.value.status_code == expected_status
     assert raised.value.retryable is retryable
+
+
+def test_runner_keeps_401_as_credential_failure_but_403_as_provider_failure(
+    tmp_path: Path,
+) -> None:
+    def output(status: int) -> bytes:
+        return json.dumps(
+            {"type": "result", "is_error": True, "api_error_status": status}
+        ).encode()
+
+    with pytest.raises(CredentialUnavailableError):
+        make_runner(
+            tmp_path,
+            lambda *_args, **_kwargs: (1, output(401), b"private"),
+        ).run([{"role": "user", "content": "test"}])
+
+    with pytest.raises(ProviderHTTPError) as denied:
+        make_runner(
+            tmp_path,
+            lambda *_args, **_kwargs: (1, output(403), b"private"),
+        ).run([{"role": "user", "content": "test"}])
+    assert denied.value.status_code == 403
 
 
 def test_runner_reports_empty_response_with_structured_status(tmp_path: Path) -> None:

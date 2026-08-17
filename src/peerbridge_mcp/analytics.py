@@ -7,7 +7,7 @@ import os
 import secrets
 import sqlite3
 import sys
-from contextlib import closing
+from contextlib import closing, suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Mapping
@@ -166,15 +166,27 @@ class AnalyticsStore:
         self.consent_path = self.state_root / "consent.json"
         self.db_path = self.state_root / "daily.sqlite3"
 
+    def _ensure_private_state_root(self) -> None:
+        self.state_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+        with suppress(OSError):
+            os.chmod(self.state_root, 0o700)
+
+    @staticmethod
+    def _ensure_private_file(path: Path) -> None:
+        with suppress(OSError):
+            os.chmod(path, 0o600)
+
     def _atomic_write_json(self, path: Path, payload: dict[str, Any]) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_private_state_root()
         temporary = path.with_name(
             f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
         )
         temporary.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
+        self._ensure_private_file(temporary)
         os.replace(temporary, path)
+        self._ensure_private_file(path)
 
     def _read_consent(self) -> dict[str, Any] | None:
         if not self.consent_path.exists():
@@ -233,8 +245,9 @@ class AnalyticsStore:
         return None
 
     def _connect(self) -> sqlite3.Connection:
-        self.state_root.mkdir(parents=True, exist_ok=True)
+        self._ensure_private_state_root()
         connection = sqlite3.connect(self.db_path)
+        self._ensure_private_file(self.db_path)
         connection.execute(
             """CREATE TABLE IF NOT EXISTS daily_aggregates (
                    utc_date TEXT NOT NULL,
@@ -258,10 +271,8 @@ class AnalyticsStore:
         if _blocked_by_environment(self.environ):
             raise AnalyticsError("telemetry is disabled by an environment override")
         current = self._read_consent()
-        if current is not None and current["enabled"]:
-            consent = current
-        else:
-            consent = self._new_consent("cli")
+        if current is None or not current["enabled"]:
+            self._new_consent("cli")
         self.record("installation_activated")
         return self.status()
 

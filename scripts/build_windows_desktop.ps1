@@ -11,6 +11,7 @@ $icon = Join-Path $projectRoot 'src\peerbridge_mcp\release_support\peerbridge-ic
 $entry = Join-Path $projectRoot 'scripts\peerbridge_control_room_entry.py'
 $versionTemplate = Join-Path $projectRoot 'scripts\peerbridge_control_room_version_info.template'
 $pyInstallerRunner = Join-Path $projectRoot 'scripts\run_pyinstaller.py'
+$hookRoot = Join-Path $projectRoot 'scripts\pyinstaller-hooks'
 $pyproject = Join-Path $projectRoot 'pyproject.toml'
 if (-not $ArtifactRoot) {
     $ArtifactRoot = Join-Path $projectRoot '.peerbridge-artifacts\windows'
@@ -32,6 +33,9 @@ foreach ($requiredPath in @($PythonPath, $icon, $entry, $versionTemplate, $pyIns
     if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
         throw "Required Windows build input not found: $requiredPath"
     }
+}
+if (-not (Test-Path -LiteralPath $hookRoot -PathType Container)) {
+    throw "Required PyInstaller hook directory not found: $hookRoot"
 }
 
 $packageVersion = (& $PythonPath $pyInstallerRunner --peerbridge-project-version $pyproject).Trim()
@@ -69,6 +73,7 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     --icon $icon `
     --version-file $versionFile `
     --paths (Join-Path $projectRoot 'src') `
+    --additional-hooks-dir $hookRoot `
     --collect-data peerbridge_mcp `
     --hidden-import cryptography.hazmat.primitives.hashes `
     --hidden-import cryptography.hazmat.primitives.serialization `

@@ -20,25 +20,32 @@ separate Windows DPAPI-protected private identity.
 
 ## Delivery and retention
 
-The local Alpha opens a private email draft addressed to the configured support mailbox and
-keeps the sealed ZIP on the user's computer for explicit attachment. Automatic HTTPS intake
-is not claimed until a later release publishes and verifies a maintainer-controlled endpoint.
-The normal report and user-selected safe attachments are **not** end-to-end encrypted by
-PeerBridge; they receive only the protection provided by the user's mail transport and Gmail.
-Only the explicitly enabled complete-credential envelope is encrypted end to end to the
-pinned maintainer public key.
+The packaged Alpha submits the sealed ZIP to a maintainer-controlled HTTPS endpoint. The
+endpoint validates the archive, stores the private bundle temporarily in a non-public R2
+bucket, records bounded case metadata in D1, and sends a private maintainer notification.
+If HTTPS delivery is unavailable, PeerBridge keeps the sealed bundle locally so the user can
+retry without re-entering a credential. The normal report and user-selected safe attachments
+are **not** end-to-end encrypted by PeerBridge; they rely on HTTPS and the configured private
+storage/mail processors. Only the explicitly enabled complete-credential envelope is encrypted
+end to end to the pinned maintainer public key before it leaves the user's computer.
 
-GitHub hosts this public notice and the release metadata. Gmail is the support-mail processor
-for this Alpha. PeerBridge sends no feedback to a model provider and has no hidden feedback
-collector. The maintainer uses a submitted case only to diagnose PeerBridge and provider
-onboarding compatibility problems. A reply is possible only when the user supplies a valid
-contact address.
+GitHub hosts this public notice and the release metadata. Cloudflare processes the HTTPS
+request and temporary private bundle; Gmail is the maintainer notification/mail processor.
+PeerBridge sends no feedback to a model provider and has no hidden feedback collector. The
+maintainer uses a submitted case only to diagnose PeerBridge and provider onboarding
+compatibility problems. A reply is possible only when the user supplies a valid contact
+address.
 
-The maintainer targets deletion of resolved feedback mail, bundles, and attachments within
-30 days after resolution. Gmail trash/backup behavior remains subject to Google's service
-terms and cannot be shortened by PeerBridge. The encrypted credential, when supplied, is not
-retained separately from its case bundle. Users retain control of local outbox copies and
-must delete those copies themselves.
+The HTTPS intake targets deletion of private R2 bundles and D1 case metadata after 30 days.
+An independent 30-day R2 lifecycle rule bounds object retention if the Worker's scheduled
+metadata-aware cleanup cannot run. The Worker deletes an R2 object before deleting its D1
+metadata; if the R2 binding or delete operation is unavailable, it keeps the metadata for a
+later retry rather than leaving an untracked object. Failed intake rollback deletes also leave
+a durable D1 cleanup record. The maintainer targets deletion of resolved feedback mail and
+attachments within 30 days after resolution. Cloudflare and Gmail backup behavior remains
+subject to their service terms and cannot be shortened by PeerBridge. The encrypted credential,
+when supplied, is not retained separately from its case bundle. Users retain control of local
+outbox copies and must delete those copies themselves.
 
 Users should remove unrelated personal information before submission. A user may request
 deletion by emailing the configured support address with the case ID shown by PeerBridge.

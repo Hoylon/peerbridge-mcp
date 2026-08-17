@@ -15,6 +15,7 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+import uuid
 import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -31,6 +32,14 @@ from .announcements import (
     fetch_announcements,
     load_announcement_preferences,
     save_announcement_preferences,
+)
+from .agent_install import (
+    AgentInstallError,
+    AgentInstallStatus,
+    detect_all_installable_agents,
+    installable_agent_spec,
+    installable_agent_specs,
+    launch_agent_installer,
 )
 from .attachments import stage_chat_attachments
 from .bridge import DEFAULT_ROOM_ID, Bridge
@@ -79,7 +88,7 @@ from .openai_compatible_runner import (
     discover_provider_models,
 )
 from .secret_scan import contains_secret, redact_secrets
-from .updates import UpdateCheckError, UpdateCheckResult, check_for_updates
+from .updates import UpdateCheckResult, check_for_updates
 
 
 APP_VERSION = __version__
@@ -104,6 +113,16 @@ DEFAULT_MONITOR_SNAPSHOT_LIMIT = 120
 DEFAULT_ROOM_PAGE_SIZE = 60
 CHAT_PAGE_MIN_CONTENT_HEIGHT = 860
 CHAT_HISTORY_MIN_HEIGHT = 250
+USAGE_TABLE_COLUMNS = (
+    "provider",
+    "model",
+    "calls",
+    "reported",
+    "input",
+    "output",
+    "total",
+)
+MESSAGE_PRIORITIES = ("low", "normal", "high", "critical")
 AUTOMATION_MODE_TO_KEY = {
     "off": "chat.mode.off",
     "once": "chat.mode.once",
@@ -301,15 +320,28 @@ def compact_sidebar_stats(
     active_tasks: int,
     audit_events: int,
     sync: str,
+    labels: Mapping[str, str] | None = None,
 ) -> str:
     """Keep every status counter visible in a height-constrained sidebar."""
+    names = {
+        "online": "ONLINE",
+        "rooms": "ROOMS",
+        "messages": "MESSAGES",
+        "memory": "MEMORY",
+        "dispatch": "DISPATCH",
+        "open_calls": "OPEN CALL",
+        "active": "ACTIVE",
+        "audit": "AUDIT",
+        "sync": "SYNC",
+        **dict(labels or {}),
+    }
     return (
-        f"ONLINE {online}/{total_agents}  ROOMS {rooms}\n"
-        f"MESSAGES {messages}  MEMORY {memories}\n"
-        f"DISPATCH {dispatch}\n"
-        f"OPEN CALL {open_calls}  ACTIVE {active_tasks}\n"
-        f"AUDIT {audit_events}\n"
-        f"SYNC {sync}"
+        f"{names['online']} {online}/{total_agents}  {names['rooms']} {rooms}\n"
+        f"{names['messages']} {messages}  {names['memory']} {memories}\n"
+        f"{names['dispatch']} {dispatch}\n"
+        f"{names['open_calls']} {open_calls}  {names['active']} {active_tasks}\n"
+        f"{names['audit']} {audit_events}\n"
+        f"{names['sync']} {sync}"
     )
 
 
@@ -1063,6 +1095,12 @@ class Snapshot:
     memories: tuple[dict[str, Any], ...]
     messages: tuple[dict[str, Any], ...]
     message_dispatches: tuple[dict[str, Any], ...]
+    usage_totals: dict[str, Any]
+    usage_by_provider: tuple[dict[str, Any], ...]
+    usage_by_model: tuple[dict[str, Any], ...]
+    usage_model_totals: tuple[dict[str, Any], ...]
+    usage_daily: tuple[dict[str, Any], ...]
+    usage_recent: tuple[dict[str, Any], ...]
     peer_calls: tuple[dict[str, Any], ...]
     peer_reviews: tuple[dict[str, Any], ...]
     tasks: tuple[dict[str, Any], ...]
@@ -1077,6 +1115,11 @@ class Snapshot:
             "counts": self.table_counts,
             "latest": {
                 "message": self.messages[0].get("content_sha256") if self.messages else None,
+                "usage": (
+                    self.usage_recent[0].get("usage_sha256")
+                    if self.usage_recent
+                    else None
+                ),
                 "call": self.peer_calls[0].get("response_sha256") if self.peer_calls else None,
                 "event": self.events[0].get("payload_sha256") if self.events else None,
                 "update": self.work_updates[0].get("update_sha256") if self.work_updates else None,
@@ -1108,6 +1151,7 @@ class BridgeReader:
         "message_route_receipts",
         "messages",
         "message_dispatches",
+        "inference_usage",
         "peer_calls",
         "peer_reviews",
         "tasks",
@@ -1263,6 +1307,184 @@ class BridgeReader:
                 "ORDER BY updated_utc DESC, message_id LIMIT ?",
                 (*params, limit),
             )
+            usage_total_row = connection.execute(
+                f"""SELECT COUNT(*) AS completed_dispatches,
+                             COALESCE(SUM(total_calls), 0) AS provider_calls,
+                             COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                             SUM(input_tokens) AS input_tokens,
+                             SUM(output_tokens) AS output_tokens,
+                             SUM(total_tokens) AS total_tokens,
+                             SUM(cached_input_tokens) AS cached_input_tokens,
+                             SUM(reasoning_tokens) AS reasoning_tokens,
+                             COALESCE(SUM(input_tokens_reported_calls), 0)
+                                 AS input_tokens_reported_calls,
+                             COALESCE(SUM(output_tokens_reported_calls), 0)
+                                 AS output_tokens_reported_calls,
+                             COALESCE(SUM(total_tokens_reported_calls), 0)
+                                 AS total_tokens_reported_calls,
+                             COALESCE(SUM(cached_input_tokens_reported_calls), 0)
+                                 AS cached_input_tokens_reported_calls,
+                             COALESCE(SUM(reasoning_tokens_reported_calls), 0)
+                                 AS reasoning_tokens_reported_calls,
+                            COALESCE(SUM(total_tokens_derived), 0)
+                                AS derived_total_dispatches,
+                            SUM(CASE WHEN usage_status='reported' THEN 1 ELSE 0 END)
+                                AS fully_reported_dispatches,
+                            SUM(CASE WHEN usage_status='partial' THEN 1 ELSE 0 END)
+                                AS partial_dispatches,
+                            SUM(CASE WHEN usage_status='unavailable' THEN 1 ELSE 0 END)
+                                AS unavailable_dispatches
+                       FROM inference_usage{where}""",
+                params,
+            ).fetchone()
+            usage_totals = dict(usage_total_row)
+            dispatch_status_rows = connection.execute(
+                f"""SELECT status, COUNT(*) AS count
+                       FROM message_dispatches{where}
+                      GROUP BY status""",
+                params,
+            ).fetchall()
+            usage_totals["dispatch_statuses"] = {
+                str(row["status"]): int(row["count"])
+                for row in dispatch_status_rows
+            }
+            usage_by_model = self._rows(
+                connection,
+                f"""SELECT COALESCE(provider_id, '--') AS provider_id,
+                            COALESCE(model_id, '--') AS model_id,
+                            COUNT(*) AS completed_dispatches,
+                             COALESCE(SUM(total_calls), 0) AS provider_calls,
+                             COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                             SUM(input_tokens) AS input_tokens,
+                             SUM(output_tokens) AS output_tokens,
+                             SUM(total_tokens) AS total_tokens,
+                             SUM(cached_input_tokens) AS cached_input_tokens,
+                             SUM(reasoning_tokens) AS reasoning_tokens,
+                             COALESCE(SUM(input_tokens_reported_calls), 0)
+                                 AS input_tokens_reported_calls,
+                             COALESCE(SUM(output_tokens_reported_calls), 0)
+                                 AS output_tokens_reported_calls,
+                             COALESCE(SUM(total_tokens_reported_calls), 0)
+                                 AS total_tokens_reported_calls,
+                             COALESCE(SUM(cached_input_tokens_reported_calls), 0)
+                                 AS cached_input_tokens_reported_calls,
+                             COALESCE(SUM(reasoning_tokens_reported_calls), 0)
+                                 AS reasoning_tokens_reported_calls
+                            ,COALESCE(SUM(total_tokens_derived), 0)
+                                AS derived_total_dispatches
+                       FROM inference_usage{where}
+                      GROUP BY provider_id, model_id
+                      ORDER BY total_tokens DESC, provider_calls DESC, model_id
+                      LIMIT 100""",
+                params,
+            )
+            usage_model_totals = self._rows(
+                connection,
+                f"""SELECT COALESCE(model_id, '--') AS model_id,
+                            COUNT(*) AS completed_dispatches,
+                             COALESCE(SUM(total_calls), 0) AS provider_calls,
+                             COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                             SUM(input_tokens) AS input_tokens,
+                             SUM(output_tokens) AS output_tokens,
+                             SUM(total_tokens) AS total_tokens,
+                             SUM(cached_input_tokens) AS cached_input_tokens,
+                             SUM(reasoning_tokens) AS reasoning_tokens,
+                             COALESCE(SUM(input_tokens_reported_calls), 0)
+                                 AS input_tokens_reported_calls,
+                             COALESCE(SUM(output_tokens_reported_calls), 0)
+                                 AS output_tokens_reported_calls,
+                             COALESCE(SUM(total_tokens_reported_calls), 0)
+                                 AS total_tokens_reported_calls,
+                             COALESCE(SUM(cached_input_tokens_reported_calls), 0)
+                                 AS cached_input_tokens_reported_calls,
+                             COALESCE(SUM(reasoning_tokens_reported_calls), 0)
+                                 AS reasoning_tokens_reported_calls
+                       FROM inference_usage{where}
+                      GROUP BY model_id
+                      ORDER BY total_tokens DESC, provider_calls DESC, model_id
+                      LIMIT 100""",
+                params,
+            )
+            usage_by_provider = self._rows(
+                connection,
+                f"""SELECT COALESCE(provider_id, '--') AS provider_id,
+                            COUNT(*) AS completed_dispatches,
+                             COALESCE(SUM(total_calls), 0) AS provider_calls,
+                             COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                             SUM(input_tokens) AS input_tokens,
+                             SUM(output_tokens) AS output_tokens,
+                             SUM(total_tokens) AS total_tokens,
+                             COALESCE(SUM(input_tokens_reported_calls), 0)
+                                 AS input_tokens_reported_calls,
+                             COALESCE(SUM(output_tokens_reported_calls), 0)
+                                 AS output_tokens_reported_calls,
+                             COALESCE(SUM(total_tokens_reported_calls), 0)
+                                 AS total_tokens_reported_calls,
+                            CASE
+                              WHEN SUM(CASE WHEN substr(recorded_utc, 1, 10) = date('now')
+                                            THEN 1 ELSE 0 END) = 0 THEN 0
+                               ELSE SUM(CASE WHEN substr(recorded_utc, 1, 10) = date('now')
+                                             THEN total_tokens END)
+                             END AS today_tokens
+                            ,COALESCE(SUM(CASE
+                               WHEN substr(recorded_utc, 1, 10) = date('now')
+                               THEN total_tokens_reported_calls ELSE 0 END), 0)
+                                 AS today_total_tokens_reported_calls
+                       FROM inference_usage{where}
+                      GROUP BY provider_id
+                      ORDER BY total_tokens DESC, provider_calls DESC, provider_id
+                      LIMIT 12""",
+                params,
+            )
+            daily_scope_join = " AND usage.scope=?" if scope is not None else ""
+            usage_daily = self._rows(
+                connection,
+                f"""WITH RECURSIVE days(utc_date) AS (
+                            SELECT date('now', '-29 days')
+                            UNION ALL
+                            SELECT date(utc_date, '+1 day') FROM days
+                             WHERE utc_date < date('now')
+                        )
+                        SELECT days.utc_date AS utc_date,
+                            COUNT(usage.message_id) AS completed_dispatches,
+                             COALESCE(SUM(usage.total_calls), 0) AS provider_calls,
+                             COALESCE(SUM(usage.reported_calls), 0) AS reported_calls,
+                             CASE WHEN COUNT(usage.message_id) = 0 THEN 0
+                                  ELSE SUM(usage.input_tokens) END AS input_tokens,
+                             CASE WHEN COUNT(usage.message_id) = 0 THEN 0
+                                  ELSE SUM(usage.output_tokens) END AS output_tokens,
+                             CASE WHEN COUNT(usage.message_id) = 0 THEN 0
+                                  ELSE SUM(usage.total_tokens) END AS total_tokens,
+                             CASE WHEN COUNT(usage.message_id) = 0 THEN 0
+                                  ELSE SUM(usage.cached_input_tokens) END
+                                 AS cached_input_tokens,
+                             CASE WHEN COUNT(usage.message_id) = 0 THEN 0
+                                  ELSE SUM(usage.reasoning_tokens) END
+                                 AS reasoning_tokens,
+                             COALESCE(SUM(usage.input_tokens_reported_calls), 0)
+                                 AS input_tokens_reported_calls,
+                             COALESCE(SUM(usage.output_tokens_reported_calls), 0)
+                                 AS output_tokens_reported_calls,
+                             COALESCE(SUM(usage.total_tokens_reported_calls), 0)
+                                 AS total_tokens_reported_calls,
+                             COALESCE(SUM(usage.cached_input_tokens_reported_calls), 0)
+                                 AS cached_input_tokens_reported_calls,
+                             COALESCE(SUM(usage.reasoning_tokens_reported_calls), 0)
+                                 AS reasoning_tokens_reported_calls
+                       FROM days
+                       LEFT JOIN inference_usage AS usage
+                         ON substr(usage.recorded_utc, 1, 10) = days.utc_date
+                        {daily_scope_join}
+                      GROUP BY days.utc_date
+                      ORDER BY days.utc_date""",
+                params,
+            )
+            usage_recent = self._rows(
+                connection,
+                f"SELECT * FROM inference_usage{where} "
+                "ORDER BY recorded_utc DESC, message_id LIMIT ?",
+                (*params, limit),
+            )
             calls = self._rows(
                 connection,
                 f"SELECT * FROM peer_calls{where} ORDER BY request_utc DESC LIMIT ?",
@@ -1304,6 +1526,12 @@ class BridgeReader:
             memories=memories,
             messages=messages,
             message_dispatches=message_dispatches,
+            usage_totals=usage_totals,
+            usage_by_provider=usage_by_provider,
+            usage_by_model=usage_by_model,
+            usage_model_totals=usage_model_totals,
+            usage_daily=usage_daily,
+            usage_recent=usage_recent,
             peer_calls=calls,
             peer_reviews=reviews,
             tasks=tasks,
@@ -1774,9 +2002,9 @@ class McpHumanClient:
     ) -> dict[str, Any]:
         clean_body = body.strip()
         if contains_secret(clean_body):
-            raise ValueError("訊息看似包含 API key/token；為避免寫入審計庫，已拒絕發送。")
+            raise ValueError("MESSAGE_SECRET_REJECTED")
         if len(clean_body) > 20_000:
-            raise ValueError("訊息超過 20,000 字元上限。")
+            raise ValueError("MESSAGE_BODY_TOO_LONG")
         payload = {
             "room_id": room_id,
             "recipient": recipient,
@@ -1785,6 +2013,7 @@ class McpHumanClient:
             "body": clean_body,
             "priority": priority,
             "artifact_paths": list(artifact_paths),
+            "idempotency_key": uuid.uuid4().hex,
         }
         for key, value in (
             ("route_profile_id", route_profile_id),
@@ -1808,9 +2037,9 @@ class McpHumanClient:
     ) -> dict[str, Any]:
         clean_body = body.strip()
         if contains_secret(clean_body):
-            raise ValueError("訊息看似包含 API key/token；為避免寫入審計庫，已拒絕發送。")
+            raise ValueError("MESSAGE_SECRET_REJECTED")
         if len(clean_body) > 20_000:
-            raise ValueError("訊息超過 20,000 字元上限。")
+            raise ValueError("MESSAGE_BODY_TOO_LONG")
         return self.call_tool(
             "send_room_fanout",
             {
@@ -1820,6 +2049,7 @@ class McpHumanClient:
                 "body": clean_body,
                 "priority": priority,
                 "artifact_paths": list(artifact_paths),
+                "idempotency_key": uuid.uuid4().hex,
             },
         )
 
@@ -1835,9 +2065,9 @@ class McpHumanClient:
     ) -> dict[str, Any]:
         clean_body = body.strip()
         if contains_secret(clean_body):
-            raise ValueError("訊息看似包含 API key/token；為避免寫入審計庫，已拒絕發送。")
+            raise ValueError("MESSAGE_SECRET_REJECTED")
         if len(clean_body) > 20_000:
-            raise ValueError("訊息超過 20,000 字元上限。")
+            raise ValueError("MESSAGE_BODY_TOO_LONG")
         return self.call_tool(
             "post_room_message",
             {
@@ -1847,6 +2077,7 @@ class McpHumanClient:
                 "body": clean_body,
                 "priority": priority,
                 "artifact_paths": list(artifact_paths),
+                "idempotency_key": uuid.uuid4().hex,
             },
         )
 
@@ -2012,6 +2243,7 @@ class PixelMonitor:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._app_icon: tk.PhotoImage | None = None
         self._windows_icon_handles: tuple[int, ...] = ()
+        self._window_icon_after_id: str | None = None
         self._install_window_icon()
         self.chat_focus_mode = False
         self.root.bind("<F11>", self._toggle_chat_focus_event)
@@ -2057,6 +2289,7 @@ class PixelMonitor:
         # Once a human explicitly selects broadcast, refreshes preserve it.
         self.message_recipient = tk.StringVar(value="")
         self.message_priority = tk.StringVar(value="normal")
+        self.message_priority_label = tk.StringVar(value="")
         self.message_route_profile = tk.StringVar(value="DIRECT")
         self.message_provider_choice = tk.StringVar(
             value=translate(self.locale.get(), DIRECT_LABEL)
@@ -2078,19 +2311,37 @@ class PixelMonitor:
         self.connection_class = tk.StringVar(value="relay")
         self.connection_endpoint = tk.StringVar(value="")
         self.connection_api_key = tk.StringVar(value="")
+        self.connection_key_visible = tk.BooleanVar(value=False)
         self.connection_agent = tk.StringVar(value="")
         self.connection_client = tk.StringVar(value="")
         self.connection_route_id = tk.StringVar(value="")
         self.connection_model = tk.StringVar(value="")
         self.connection_response_model = tk.StringVar(value="")
         self.connection_reasoning = tk.StringVar(value="")
-        self.connection_status = tk.StringVar(value="秘密只進 Windows Credential Manager；MCP 只記錄 SHA-256。")
+        self.connection_status = tk.StringVar(
+            value=translate(self.locale.get(), "connection.status.initial")
+        )
         self.connection_in_progress = False
+        self.agent_install_status = {
+            spec.agent_id: tk.StringVar(
+                value=translate(self.locale.get(), "agent_install.detecting")
+            )
+            for spec in installable_agent_specs()
+        }
+        self._agent_install_statuses: dict[str, AgentInstallStatus] = {}
+        self._agent_install_buttons: dict[str, tk.Button] = {}
+        self._agent_install_docs_buttons: dict[str, tk.Button] = {}
+        self._agent_install_processes: dict[str, subprocess.Popen[bytes]] = {}
+        self._agent_detection_in_progress = False
         self.feedback_contact = tk.StringVar(value="")
         self.feedback_include_key = tk.BooleanVar(value=False)
         self.feedback_key = tk.StringVar(value="")
-        self.feedback_status = tk.StringVar(value="描述問題後即可送出；診斷不依賴任何 Agent 或 Provider。")
-        self.feedback_attachment_status = tk.StringVar(value="未附加檔案")
+        self.feedback_status = tk.StringVar(
+            value=translate(self.locale.get(), "feedback.status.initial")
+        )
+        self.feedback_attachment_status = tk.StringVar(
+            value=translate(self.locale.get(), "feedback.attachment.none")
+        )
         self.feedback_in_progress = False
         self._feedback_attachment_paths: tuple[Path, ...] = ()
         self._last_feedback_bundle: FeedbackBundle | None = None
@@ -2100,7 +2351,9 @@ class PixelMonitor:
         self.ccswitch_model = tk.StringVar(value="")
         self.ccswitch_agent = tk.StringVar(value="codex-main")
         self.ccswitch_reasoning = tk.StringVar(value="")
-        self.ccswitch_status = tk.StringVar(value="使用 CC Switch 官方 CLI；不讀取其資料庫或匯出憑證。")
+        self.ccswitch_status = tk.StringVar(
+            value=translate(self.locale.get(), "ccswitch.status.initial")
+        )
         self._ccswitch_providers: dict[str, CcSwitchProvider] = {}
         self.room_choice = tk.StringVar(value="")
         self.room_status = tk.StringVar(value="ROOMS LOADING...")
@@ -2119,7 +2372,9 @@ class PixelMonitor:
         self.seat_status = tk.StringVar(
             value=translate(self.locale.get(), "chat.seat_hint")
         )
-        self.library_selection = tk.StringVar(value="GLOBAL LIBRARY // NONE SELECTED")
+        self.library_selection = tk.StringVar(
+            value=translate(self.locale.get(), "sidebar.library_none")
+        )
         self.selected_room_id = DEFAULT_ROOM_ID
         self._rooms: dict[str, dict[str, Any]] = {}
         self._room_ids_by_label: dict[str, str] = {}
@@ -2170,11 +2425,34 @@ class PixelMonitor:
         self._schedule_ui_pump()
         self.refresh(force=True)
         self._schedule_announcement_check(1500)
+        self.root.after(900, self.refresh_official_agent_statuses)
         if not self.tutorial_completed:
             self.root.after(350, self.show_tutorial)
 
     def _t(self, key: str) -> str:
-        return translate(self.locale.get(), key)
+        locale = getattr(self, "locale", None)
+        return translate(locale.get() if locale is not None else "zh-Hant", key)
+
+    def _library_selection_text(self, agent_id: str | None = None) -> str:
+        if agent_id:
+            return self._t("sidebar.library_selected").format(agent=agent_id)
+        return self._t("sidebar.library_none")
+
+    def _sidebar_stat_labels(self) -> dict[str, str]:
+        return {
+            key: self._t(f"sidebar.{key}")
+            for key in (
+                "online",
+                "rooms",
+                "messages",
+                "memory",
+                "dispatch",
+                "open_calls",
+                "active",
+                "audit",
+                "sync",
+            )
+        }
 
     def _install_window_icon(self) -> None:
         png_path, ico_path = packaged_icon_paths()
@@ -2190,6 +2468,25 @@ class PixelMonitor:
             except tk.TclError:
                 self._app_icon = None
         self._windows_icon_handles = apply_windows_window_icon(self.root, ico_path)
+        if sys.platform == "win32":
+            # Tk replaces its native top-level during initial mapping. Reapply the
+            # application identity and icon after that final HWND exists.
+            self._window_icon_after_id = self.root.after(
+                250, self._reapply_mapped_window_icon
+            )
+
+    def _reapply_mapped_window_icon(self) -> None:
+        self._window_icon_after_id = None
+        if self._closing:
+            return
+        configure_windows_app_identity()
+        _png_path, ico_path = packaged_icon_paths()
+        replacement_handles = apply_windows_window_icon(self.root, ico_path)
+        if not replacement_handles:
+            return
+        previous_handles = self._windows_icon_handles
+        self._windows_icon_handles = replacement_handles
+        release_windows_icon_handles(previous_handles)
 
     def _toggle_chat_focus_event(self, _event: Any = None) -> str:
         self._set_chat_focus(not self.chat_focus_mode)
@@ -2368,6 +2665,11 @@ class PixelMonitor:
             self.seat_reasoning_choice.get(), PROVIDER_DEFAULT_REASONING_LABEL
         )
         self.locale_label.set(LOCALE_LABELS.get(locale, LOCALE_LABELS["en"]))
+        self.version_label.configure(
+            text=self._t("sidebar.version").format(version=APP_VERSION)
+        )
+        self.agent_library_label.configure(text=self._t("sidebar.agent_library"))
+        self.language_label.configure(text=self._t("toolbar.language"))
         for key, button in self.nav_buttons.items():
             button.configure(text=self._t(f"nav.{key}"))
         self.search_label.configure(text=self._t("toolbar.search"))
@@ -2387,6 +2689,8 @@ class PixelMonitor:
             text=self._t("chat.clear_attachments")
         )
         self.chat_attachment_note.configure(text=self._t("chat.attachment_note"))
+        for key, label in self.composer_labels.items():
+            label.configure(text=self._t(f"chat.{key}"))
         self.new_room_button.configure(text=self._t("chat.new_room"))
         self.operator_room_button.configure(text=self._t("chat.join_control"))
         self.older_history_button.configure(text=self._t("chat.older"))
@@ -2412,6 +2716,56 @@ class PixelMonitor:
         self.add_seat_button.configure(text=self._t("chat.apply_seat"))
         self.remove_seat_button.configure(text=self._t("chat.remove_seat"))
         self.manage_sources_button.configure(text=self._t("chat.manage_providers"))
+        self.agent_install_frame.configure(text=self._t("agent_install.heading"))
+        self.agent_install_intro.configure(text=self._t("agent_install.intro"))
+        self.agent_install_detect_button.configure(
+            text=self._t("agent_install.detect_all")
+        )
+        for spec in installable_agent_specs():
+            self._agent_install_docs_buttons[spec.agent_id].configure(
+                text=self._t("agent_install.docs")
+            )
+            status = self._agent_install_statuses.get(spec.agent_id)
+            if spec.agent_id in self._agent_install_processes:
+                status_text = self._t("agent_install.running")
+            elif status is None:
+                status_text = self._t("agent_install.detecting")
+            elif status.installed:
+                status_text = self._t("agent_install.installed").format(
+                    version=status.version
+                    or self._t("agent_install.version_unknown")
+                )
+                status_text += "  " + self._t(spec.note_key)
+            else:
+                status_text = (
+                    self._t("agent_install.not_installed")
+                    + "  "
+                    + self._t(spec.note_key)
+                )
+            self.agent_install_status[spec.agent_id].set(status_text)
+            action_key = (
+                "agent_install.update"
+                if status is not None and status.installed
+                else "agent_install.install"
+            )
+            if not spec.automatic_install_supported:
+                action_key = "agent_install.open_guide"
+            self._agent_install_buttons[spec.agent_id].configure(
+                text=self._t(action_key)
+            )
+        self.connect_heading_label.configure(text=self._t("connect.heading"))
+        self.connect_privacy_label.configure(text=self._t("connect.privacy"))
+        self.native_connection_frame.configure(
+            text=self._t("connect.native_heading")
+        )
+        self._apply_connection_key_visibility()
+        for key, button in self.native_connection_buttons.items():
+            button.configure(text=self._t(key))
+        self.ccswitch_connection_frame.configure(
+            text=self._t("connect.ccswitch_heading")
+        )
+        for key, button in self.ccswitch_connection_buttons.items():
+            button.configure(text=self._t(key))
         if not self.send_in_progress:
             self.send_button.configure(text=self._t("chat.send"))
         if self._catalog_value_matches(self.message_status.get(), "chat.message_hint"):
@@ -2459,6 +2813,27 @@ class PixelMonitor:
         self._schedule_feedback_reflow()
         if not self.feedback_in_progress:
             self.feedback_send_button.configure(text=self._t("feedback.send"))
+        for variable, key in (
+            (self.feedback_status, "feedback.status.initial"),
+            (self.connection_status, "connection.status.initial"),
+            (self.ccswitch_status, "ccswitch.status.initial"),
+        ):
+            if self._catalog_value_matches(variable.get(), key):
+                variable.set(self._t(key))
+        if not self._feedback_attachment_paths:
+            self.feedback_attachment_status.set(
+                self._t("feedback.attachment.none")
+            )
+        for key, label in self.usage_kpi_labels.items():
+            label.configure(text=self._t(f"usage.{key}"))
+        self.usage_provider_frame.configure(text=self._t("usage.platforms"))
+        self.usage_daily_frame.configure(text=self._t("usage.daily"))
+        self.usage_model_frame.configure(text=self._t("usage.models"))
+        for column in USAGE_TABLE_COLUMNS:
+            self.usage_tree.heading(column, text=self._t(f"usage.{column}"))
+        self._sync_priority_choices()
+        if self.snapshot is None:
+            self.usage_note_label.configure(text=self._t("usage.note"))
         self.announcement_popup_toggle.configure(text=self._t("announcement.popup"))
         self.announcement_sync_button.configure(text=self._t("announcement.sync"))
         for column, key in (
@@ -2468,6 +2843,14 @@ class PixelMonitor:
         ):
             self.announcement_tree.tree.heading(column, text=self._t(key))
         self._render_announcements(self.search.get().strip().lower())
+        self.library_selection.set(
+            self._library_selection_text(self.seat_agent.get().strip() or None)
+        )
+        self._last_agent_canvas_signature = ""
+        if self.snapshot is not None:
+            self._render_presence()
+        else:
+            self._draw_agents(list(self._library_agents))
         self.show_page(self.active_page)
         if save:
             try:
@@ -2522,21 +2905,23 @@ class PixelMonitor:
             font=("Cascadia Mono", 17, "bold"),
         )
         title.pack(anchor="w", padx=18, pady=(18, 4))
-        tk.Label(
+        self.version_label = tk.Label(
             sidebar,
-            text=f"RO VIEW + MCP TX // v{APP_VERSION}",
+            text=self._t("sidebar.version").format(version=APP_VERSION),
             bg=COLORS["black"],
             fg=COLORS["muted"],
             font=("Cascadia Mono", 8),
-        ).pack(anchor="w", padx=18, pady=(0, 16))
+        )
+        self.version_label.pack(anchor="w", padx=18, pady=(0, 16))
 
-        tk.Label(
+        self.agent_library_label = tk.Label(
             sidebar,
-            text="GLOBAL AGENT LIBRARY // AGENT != MODEL",
+            text=self._t("sidebar.agent_library"),
             bg=COLORS["black"],
             fg=COLORS["amber"],
             font=("Cascadia Mono", 8, "bold"),
-        ).pack(anchor="w", padx=18, pady=(0, 5))
+        )
+        self.agent_library_label.pack(anchor="w", padx=18, pady=(0, 5))
         agent_canvas_host = tk.Frame(sidebar, bg=COLORS["black"])
         agent_canvas_host.pack(padx=16, fill="x")
         self.agent_canvas = tk.Canvas(
@@ -2577,6 +2962,7 @@ class PixelMonitor:
             ("connect", self._t("nav.connect")),
             ("memory", self._t("nav.memory")),
             ("feedback", self._t("nav.feedback")),
+            ("usage", self._t("nav.usage")),
         ]
         nav = tk.Frame(sidebar, bg=COLORS["black"])
         nav.pack(fill="x", padx=12, pady=(8, 6))
@@ -2621,7 +3007,7 @@ class PixelMonitor:
         toolbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
         toolbar.grid_columnconfigure(2, weight=1)
         self.toolbar_frame = toolbar
-        self.page_title = tk.Label(toolbar, text="對話", bg=COLORS["panel"], fg=COLORS["amber"], font=("Cascadia Mono", 14, "bold"))
+        self.page_title = tk.Label(toolbar, text=self._t("page.chat"), bg=COLORS["panel"], fg=COLORS["amber"], font=("Cascadia Mono", 14, "bold"))
         self.page_title.grid(row=0, column=0, padx=14, pady=12, sticky="w")
         self.search_label = tk.Label(
             toolbar,
@@ -2686,7 +3072,7 @@ class PixelMonitor:
         language_cluster.grid(row=1, column=0, padx=(14, 5), pady=(0, 10), sticky="w")
         self.language_label = tk.Label(
             language_cluster,
-            text="Language",
+            text=self._t("toolbar.language"),
             bg=COLORS["panel"],
             fg=COLORS["muted"],
             font=("Cascadia Mono", 8, "bold"),
@@ -2802,6 +3188,7 @@ class PixelMonitor:
             ],
         )
         self._build_feedback_page(page_host)
+        self._build_usage_page(page_host)
         self._build_announcements_page(page_host)
         self.show_page("chat")
 
@@ -3253,6 +3640,486 @@ class PixelMonitor:
             )
         self.announcement_tree.replace(rows)
 
+    def _build_usage_page(self, host: tk.Frame) -> None:
+        page = tk.Frame(host, bg=COLORS["panel"], bd=2, relief="ridge")
+        page.grid(row=0, column=0, sticky="nsew")
+        page.grid_columnconfigure(0, weight=1)
+        page.grid_rowconfigure(2, weight=2)
+        page.grid_rowconfigure(3, weight=3)
+        self.pages["usage"] = page
+
+        kpi_strip = tk.Frame(page, bg=COLORS["panel"])
+        kpi_strip.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        self.usage_kpi_labels: dict[str, tk.Label] = {}
+        self.usage_kpi_values: dict[str, tk.StringVar] = {}
+        for column, key in enumerate(
+            ("total_tokens", "input_tokens", "output_tokens", "coverage", "dispatches")
+        ):
+            kpi_strip.grid_columnconfigure(column, weight=1, uniform="usage-kpi")
+            cell = tk.Frame(kpi_strip, bg=COLORS["black"], bd=1, relief="ridge")
+            cell.grid(row=0, column=column, sticky="nsew", padx=3)
+            label = tk.Label(
+                cell,
+                text=self._t(f"usage.{key}"),
+                bg=COLORS["black"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            label.pack(fill="x", padx=10, pady=(7, 1))
+            value = tk.StringVar(value="0")
+            tk.Label(
+                cell,
+                textvariable=value,
+                bg=COLORS["black"],
+                fg=COLORS["cyan"] if key != "dispatches" else COLORS["amber"],
+                anchor="w",
+                font=("Cascadia Mono", 13, "bold"),
+            ).pack(fill="x", padx=10, pady=(1, 8))
+            self.usage_kpi_labels[key] = label
+            self.usage_kpi_values[key] = value
+
+        self.usage_provider_frame = tk.LabelFrame(
+            page,
+            text=self._t("usage.platforms"),
+            bg=COLORS["panel_2"],
+            fg=COLORS["amber"],
+            bd=1,
+            relief="ridge",
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        self.usage_provider_frame.grid(
+            row=1, column=0, sticky="ew", padx=10, pady=5
+        )
+        self.usage_provider_canvas = tk.Canvas(
+            self.usage_provider_frame,
+            height=160,
+            bg=COLORS["black"],
+            highlightthickness=0,
+        )
+        self.usage_provider_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        self._usage_provider_rows: tuple[dict[str, Any], ...] = ()
+        self.usage_provider_canvas.bind(
+            "<Configure>", lambda _event: self._draw_usage_charts()
+        )
+
+        charts = tk.Frame(page, bg=COLORS["panel"])
+        charts.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        charts.grid_columnconfigure(0, weight=3, uniform="usage-chart")
+        charts.grid_columnconfigure(1, weight=2, uniform="usage-chart")
+        charts.grid_rowconfigure(0, weight=1)
+        self.usage_daily_frame = tk.LabelFrame(
+            charts,
+            text=self._t("usage.daily"),
+            bg=COLORS["panel_2"],
+            fg=COLORS["amber"],
+            bd=1,
+            relief="ridge",
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        self.usage_daily_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
+        self.usage_model_frame = tk.LabelFrame(
+            charts,
+            text=self._t("usage.models"),
+            bg=COLORS["panel_2"],
+            fg=COLORS["amber"],
+            bd=1,
+            relief="ridge",
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        self.usage_model_frame.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
+        self.usage_daily_canvas = tk.Canvas(
+            self.usage_daily_frame,
+            height=175,
+            bg=COLORS["black"],
+            highlightthickness=0,
+        )
+        self.usage_daily_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        self.usage_model_canvas = tk.Canvas(
+            self.usage_model_frame,
+            height=175,
+            bg=COLORS["black"],
+            highlightthickness=0,
+        )
+        self.usage_model_canvas.pack(fill="both", expand=True, padx=6, pady=6)
+        self._usage_daily_rows: tuple[dict[str, Any], ...] = ()
+        self._usage_model_rows: tuple[dict[str, Any], ...] = ()
+        self.usage_daily_canvas.bind(
+            "<Configure>", lambda _event: self._draw_usage_charts()
+        )
+        self.usage_model_canvas.bind(
+            "<Configure>", lambda _event: self._draw_usage_charts()
+        )
+
+        table_wrap = tk.Frame(page, bg=COLORS["panel"], bd=1, relief="ridge")
+        table_wrap.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
+        table_wrap.grid_rowconfigure(0, weight=1)
+        table_wrap.grid_columnconfigure(0, weight=1)
+        self.usage_tree = ttk.Treeview(
+            table_wrap,
+            columns=USAGE_TABLE_COLUMNS,
+            show="headings",
+            selectmode="browse",
+            height=7,
+        )
+        widths = (155, 220, 76, 90, 105, 105, 115)
+        for key, width in zip(USAGE_TABLE_COLUMNS, widths):
+            self.usage_tree.heading(key, text=self._t(f"usage.{key}"))
+            self.usage_tree.column(
+                key,
+                width=width,
+                minwidth=64,
+                stretch=key in {"provider", "model"},
+                anchor="e" if key in {"calls", "reported", "input", "output", "total"} else "w",
+            )
+        usage_scroll = ttk.Scrollbar(
+            table_wrap, orient="vertical", command=self.usage_tree.yview
+        )
+        self.usage_tree.configure(yscrollcommand=usage_scroll.set)
+        self.usage_tree.grid(row=0, column=0, sticky="nsew")
+        usage_scroll.grid(row=0, column=1, sticky="ns")
+
+        self.usage_note_label = tk.Label(
+            page,
+            text=self._t("usage.note"),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            font=("Cascadia Mono", 8),
+        )
+        self.usage_note_label.grid(
+            row=4, column=0, sticky="ew", padx=14, pady=(1, 9)
+        )
+
+    def _usage_number(self, value: Any) -> str:
+        if value is None:
+            return self._t("usage.unavailable")
+        try:
+            return f"{int(value):,}"
+        except (TypeError, ValueError):
+            return self._t("usage.unavailable")
+
+    def _usage_number_with_coverage(
+        self,
+        row: Mapping[str, Any],
+        field: str,
+    ) -> str:
+        rendered = self._usage_number(row.get(field))
+        calls = max(0, int(row.get("provider_calls") or 0))
+        covered = max(0, int(row.get(f"{field}_reported_calls") or 0))
+        if calls and covered < calls:
+            return f"{rendered} · {covered:,}/{calls:,}"
+        return rendered
+
+    @staticmethod
+    def _usage_short_number(value: Any) -> str:
+        try:
+            number = max(0, int(value or 0))
+        except (TypeError, ValueError):
+            return "0"
+        for divisor, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+            if number >= divisor:
+                scaled = number / divisor
+                precision = 0 if scaled >= 100 else 1
+                return f"{scaled:.{precision}f}{suffix}"
+        return f"{number:,}"
+
+    def _render_usage_provider_chart(
+        self, rows: tuple[dict[str, Any], ...]
+    ) -> None:
+        self._usage_provider_rows = rows
+
+    def _draw_usage_bar_chart(
+        self,
+        canvas: tk.Canvas,
+        rows: tuple[dict[str, Any], ...],
+        *,
+        label_key: str,
+        limit: int,
+        orientation: str = "vertical",
+    ) -> None:
+        canvas.delete("all")
+        width = max(260, int(canvas.winfo_width()))
+        height = max(130, int(canvas.winfo_height()))
+        visible = list(rows[-limit:] if label_key == "utc_date" else rows[:limit])
+        token_values = [max(0, int(row.get("total_tokens") or 0)) for row in visible]
+        use_calls = not any(token_values)
+        values = (
+            [max(0, int(row.get("provider_calls") or 0)) for row in visible]
+            if use_calls
+            else token_values
+        )
+        if not values or max(values, default=0) <= 0:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text=self._t("usage.no_data"),
+                fill=COLORS["muted"],
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            return
+        canvas.create_text(
+            10,
+            8,
+            anchor="nw",
+            text=(
+                self._t("usage.calls_no_tokens")
+                if use_calls
+                else self._t("usage.provider_reported_tokens")
+            ),
+            fill=COLORS["muted"],
+            font=("Cascadia Mono", 7, "bold"),
+        )
+        maximum = max(values)
+        color = COLORS["cyan"] if not use_calls else COLORS["amber"]
+        if orientation == "horizontal":
+            top, bottom = 30, height - 12
+            gap = 3
+            natural_height = (
+                max(1, bottom - top) - gap * max(0, len(values) - 1)
+            ) / len(values)
+            bar_height = min(24, max(6, natural_height))
+            group_height = bar_height * len(values) + gap * max(0, len(values) - 1)
+            group_top = max(top, top + (max(1, bottom - top) - group_height) / 2)
+            label_right = min(130, max(82, width // 4))
+            track_left = label_right + 8
+            value_width = 62
+            track_right = max(track_left + 30, width - value_width)
+            for index, (row, value) in enumerate(zip(visible, values)):
+                y0 = group_top + index * (bar_height + gap)
+                y1 = y0 + bar_height
+                label = clip(str(row.get(label_key) or "--"), 16)
+                canvas.create_text(
+                    label_right,
+                    (y0 + y1) / 2,
+                    anchor="e",
+                    text=label,
+                    fill=COLORS["muted"],
+                    font=("Cascadia Mono", 7),
+                )
+                canvas.create_rectangle(
+                    track_left,
+                    y0,
+                    track_right,
+                    y1,
+                    fill=COLORS["line"],
+                    outline="",
+                )
+                x1 = track_left + (track_right - track_left) * (value / maximum)
+                canvas.create_rectangle(
+                    track_left,
+                    y0,
+                    x1,
+                    y1,
+                    fill=color,
+                    outline="",
+                )
+                canvas.create_text(
+                    width - 8,
+                    (y0 + y1) / 2,
+                    anchor="e",
+                    text=self._usage_number(value),
+                    fill=COLORS["text"],
+                    font=("Cascadia Mono", 7, "bold"),
+                )
+            return
+
+        left, top, bottom = 12, 28, height - 30
+        chart_height = max(30, bottom - top)
+        gap = 5
+        available_width = max(1, width - left * 2)
+        natural_width = (
+            available_width - gap * max(0, len(values) - 1)
+        ) / len(values)
+        bar_width = min(54, max(8, natural_width))
+        group_width = bar_width * len(values) + gap * max(0, len(values) - 1)
+        group_left = max(left, (width - group_width) / 2)
+        canvas.create_line(
+            left,
+            bottom,
+            width - left,
+            bottom,
+            fill=COLORS["line"],
+        )
+        for index, (row, value) in enumerate(zip(visible, values)):
+            x0 = group_left + index * (bar_width + gap)
+            x1 = min(width - left, x0 + bar_width)
+            y0 = bottom - chart_height * (value / maximum)
+            canvas.create_rectangle(x0, y0, x1, bottom, fill=color, outline="")
+            canvas.create_text(
+                (x0 + x1) / 2,
+                max(top, y0 - 4),
+                anchor="s",
+                text=self._usage_number(value),
+                fill=COLORS["text"],
+                font=("Cascadia Mono", 7, "bold"),
+            )
+            label = str(row.get(label_key) or "--")
+            if label_key == "utc_date":
+                label = label[5:]
+            else:
+                label = clip(label, 10)
+            canvas.create_text(
+                (x0 + x1) / 2,
+                bottom + 7,
+                anchor="n",
+                text=label,
+                fill=COLORS["muted"],
+                font=("Cascadia Mono", 6),
+            )
+
+    def _draw_usage_trend_chart(
+        self,
+        canvas: tk.Canvas,
+        rows: tuple[dict[str, Any], ...],
+        *,
+        limit: int = 30,
+    ) -> None:
+        canvas.delete("all")
+        width = max(320, int(canvas.winfo_width()))
+        height = max(150, int(canvas.winfo_height()))
+        visible = list(rows[-limit:])
+        series = (
+            ("input_tokens", self._t("usage.input"), COLORS["cyan"], ()),
+            ("output_tokens", self._t("usage.output"), COLORS["amber"], ()),
+            (
+                "cached_input_tokens",
+                self._t("usage.cached_input"),
+                COLORS["purple"],
+                (4, 3),
+            ),
+            (
+                "reasoning_tokens",
+                self._t("usage.reasoning"),
+                COLORS["green"],
+                (2, 3),
+            ),
+        )
+        numeric_values = [
+            max(0, int(row[field]))
+            for row in visible
+            for field, _label, _color, _dash in series
+            if row.get(field) is not None
+        ]
+        maximum = max(numeric_values, default=0)
+        if not visible or maximum <= 0:
+            canvas.create_text(
+                width / 2,
+                height / 2,
+                text=self._t("usage.no_data"),
+                fill=COLORS["muted"],
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            return
+
+        left, right, top, bottom = 54, width - 12, 30, height - 28
+        chart_width = max(1, right - left)
+        chart_height = max(1, bottom - top)
+        for tick in range(5):
+            ratio = tick / 4
+            y = bottom - chart_height * ratio
+            canvas.create_line(left, y, right, y, fill=COLORS["line"])
+            canvas.create_text(
+                left - 7,
+                y,
+                anchor="e",
+                text=self._usage_short_number(round(maximum * ratio)),
+                fill=COLORS["muted"],
+                font=("Cascadia Mono", 6),
+            )
+
+        legend_x = left
+        for _field, label, color, dash in series:
+            canvas.create_line(
+                legend_x,
+                14,
+                legend_x + 20,
+                14,
+                fill=color,
+                width=2,
+                dash=dash or None,
+            )
+            canvas.create_text(
+                legend_x + 25,
+                14,
+                anchor="w",
+                text=label,
+                fill=COLORS["muted"],
+                font=("Cascadia Mono", 6, "bold"),
+            )
+            legend_x += 76
+
+        divisor = max(1, len(visible) - 1)
+        label_step = max(1, len(visible) // 6)
+        for index, row in enumerate(visible):
+            if index % label_step and index != len(visible) - 1:
+                continue
+            x = left + chart_width * (index / divisor)
+            canvas.create_text(
+                x,
+                bottom + 7,
+                anchor="n",
+                text=str(row.get("utc_date") or "--")[5:],
+                fill=COLORS["muted"],
+                font=("Cascadia Mono", 6),
+            )
+
+        for field, _label, color, dash in series:
+            segments: list[list[float]] = []
+            points: list[float] = []
+            for index, row in enumerate(visible):
+                raw_value = row.get(field)
+                if raw_value is None:
+                    if points:
+                        segments.append(points)
+                        points = []
+                    continue
+                value = max(0, int(raw_value))
+                x = left + chart_width * (index / divisor)
+                y = bottom - chart_height * (value / maximum)
+                points.extend((x, y))
+            if points:
+                segments.append(points)
+            for segment in segments:
+                if len(segment) == 2:
+                    x, y = segment
+                    canvas.create_oval(
+                        x - 3, y - 3, x + 3, y + 3, fill=color, outline=""
+                    )
+                    continue
+                canvas.create_line(
+                    *segment,
+                    fill=color,
+                    width=2,
+                    smooth=True,
+                    splinesteps=12,
+                    dash=dash or None,
+                )
+
+    def _draw_usage_charts(self) -> None:
+        if not hasattr(self, "usage_daily_canvas"):
+            return
+        self._draw_usage_bar_chart(
+            self.usage_provider_canvas,
+            self._usage_provider_rows,
+            label_key="provider_id",
+            limit=12,
+            orientation="horizontal",
+        )
+        self._draw_usage_trend_chart(
+            self.usage_daily_canvas,
+            self._usage_daily_rows,
+            limit=30,
+        )
+        self._draw_usage_bar_chart(
+            self.usage_model_canvas,
+            self._usage_model_rows,
+            label_key="model_id",
+            limit=8,
+            orientation="horizontal",
+        )
+
     def _build_feedback_page(self, host: tk.Frame) -> None:
         page = tk.Frame(host, bg=COLORS["panel"], bd=2, relief="ridge")
         page.grid(row=0, column=0, sticky="nsew")
@@ -3509,15 +4376,20 @@ class PixelMonitor:
             except Exception as exc:
                 self.feedback_include_key.set(False)
                 self.feedback_key_entry.configure(state="disabled")
-                self.feedback_status.set(f"完整 Key 加密設定不可用：{clip(exc, 120)}")
+                self.feedback_status.set(
+                    self._t("feedback.encrypt_error").format(error=clip(exc, 120))
+                )
                 return
             if not config.encrypted_secret_available:
                 self.feedback_include_key.set(False)
                 self.feedback_key_entry.configure(state="disabled")
-                self.feedback_status.set("此發行包尚未綁定可用的支援公鑰／加密元件。")
+                self.feedback_status.set(self._t("feedback.encrypt_unavailable"))
                 return
             self.feedback_status.set(
-                f"加密收件者：{config.recipient_label} // KEY SHA-256 {config.public_key_sha256}"
+                self._t("feedback.recipient_ready").format(
+                    recipient=config.recipient_label,
+                    sha=config.public_key_sha256,
+                )
             )
         self.feedback_key_entry.configure(state="normal" if enabled else "disabled")
         if not enabled:
@@ -3526,10 +4398,10 @@ class PixelMonitor:
     def _choose_feedback_attachments(self) -> None:
         selected = filedialog.askopenfilenames(
             parent=self.root,
-            title="選擇最多 5 個畫面或診斷檔",
+            title=self._t("feedback.file_dialog_title"),
             filetypes=(
-                ("安全附件", "*.png *.jpg *.jpeg *.webp *.gif *.txt *.log *.json"),
-                ("所有檔案", "*.*"),
+                (self._t("feedback.file_dialog_safe"), "*.png *.jpg *.jpeg *.webp *.gif *.txt *.log *.json"),
+                (self._t("feedback.file_dialog_all"), "*.*"),
             ),
         )
         if not selected:
@@ -3541,26 +4413,28 @@ class PixelMonitor:
 
     def _clear_feedback_attachments(self) -> None:
         self._feedback_attachment_paths = ()
-        self.feedback_attachment_status.set("未附加檔案")
+        self.feedback_attachment_status.set(self._t("feedback.attachment.none"))
 
     def submit_feedback(self) -> None:
         if self.feedback_in_progress:
             return
         message = self.feedback_message.get("1.0", "end-1c").strip()
         if not message:
-            self.feedback_status.set("請先用一句話描述問題。")
+            self.feedback_status.set(self._t("feedback.describe_required"))
             return
         include_key = self.feedback_include_key.get()
         credential = self.feedback_key.get() if include_key else ""
         if include_key and not credential:
-            self.feedback_status.set("已選擇附加完整 Key，請先貼上內容。")
+            self.feedback_status.set(self._t("feedback.key_required"))
             return
         summary = clip(message, 160)
         contact = self.feedback_contact.get().strip()
         attachments = self._feedback_attachment_paths
         self.feedback_in_progress = True
-        self.feedback_send_button.configure(state="disabled", text="送出中...")
-        self.feedback_status.set("正在本機建立私密案件包；不經過 Agent 或 Provider。")
+        self.feedback_send_button.configure(
+            state="disabled", text=self._t("feedback.sending")
+        )
+        self.feedback_status.set(self._t("feedback.packaging"))
 
         def worker() -> None:
             bundle: FeedbackBundle | None = None
@@ -3606,24 +4480,46 @@ class PixelMonitor:
         if bundle is not None:
             self._last_feedback_bundle = bundle
         if error is not None:
-            suffix = f"；本機包：{bundle.path}" if bundle is not None else ""
-            self.feedback_status.set(f"送出未完成：{clip(error, 140)}{suffix}")
+            suffix = (
+                self._t("feedback.local_bundle_suffix").format(path=bundle.path)
+                if bundle is not None
+                else ""
+            )
+            self.feedback_status.set(
+                self._t("feedback.send_failed").format(
+                    error=clip(error, 140), suffix=suffix
+                )
+            )
             return
         assert bundle is not None and result is not None
         self.feedback_message.delete("1.0", "end")
         self._clear_feedback_attachments()
         if result.get("delivered"):
+            if result.get("notification_sent") is True:
+                status = self._t("feedback.received_notified")
+            elif result.get("notification_sent") is False:
+                status = self._t("feedback.received_notify_failed")
+            else:
+                status = self._t("feedback.received_notify_unknown")
             self.feedback_status.set(
-                f"已私密送出 // 案件 {bundle.case_id} // SHA {bundle.sha256[:16]}"
+                self._t("feedback.received_summary").format(
+                    status=status,
+                    case_id=bundle.case_id,
+                    sha=bundle.sha256[:16],
+                )
             )
         elif mailto:
             webbrowser.open(mailto, new=1)
             self.feedback_status.set(
-                f"已建立案件 {bundle.case_id}；郵件已開啟，請附上：{bundle.path}"
+                self._t("feedback.email_opened").format(
+                    case_id=bundle.case_id, path=bundle.path
+                )
             )
         else:
             self.feedback_status.set(
-                f"未設定私有收件端；已安全保存案件 {bundle.case_id}：{bundle.path}"
+                self._t("feedback.saved_local").format(
+                    case_id=bundle.case_id, path=bundle.path
+                )
             )
 
     def _build_chat_page(self, host: tk.Frame) -> None:
@@ -4034,7 +4930,25 @@ class PixelMonitor:
 
         composer = tk.Frame(self.chat_split, bg=COLORS["black"], bd=2, relief="ridge")
         composer.grid_columnconfigure(7, weight=1, minsize=104)
-        tk.Label(composer, text="TO", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=0, column=0, padx=(8, 4), pady=6)
+        self.composer_labels: dict[str, tk.Label] = {}
+        for key, row, column, padx, pady in (
+            ("to", 0, 0, (8, 4), 6),
+            ("priority", 0, 2, (10, 4), 6),
+            ("task", 0, 4, (10, 4), 6),
+            ("provider", 1, 0, (8, 4), 4),
+            ("model", 1, 2, (8, 4), 4),
+            ("reasoning", 1, 4, (8, 4), 4),
+            ("subject", 2, 0, (8, 4), 4),
+        ):
+            label = tk.Label(
+                composer,
+                text=self._t(f"chat.{key}"),
+                bg=COLORS["black"],
+                fg=COLORS["amber"],
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            label.grid(row=row, column=column, padx=padx, pady=pady)
+            self.composer_labels[key] = label
         recipient = ttk.Combobox(
             composer,
             textvariable=self.message_recipient,
@@ -4045,16 +4959,16 @@ class PixelMonitor:
         self.recipient_combo = recipient
         recipient.grid(row=0, column=1, padx=4, pady=6)
         recipient.bind("<<ComboboxSelected>>", self._on_recipient_selected)
-        tk.Label(composer, text="PRIORITY", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=0, column=2, padx=(10, 4), pady=6)
-        priority = ttk.Combobox(
+        self.priority_combo = ttk.Combobox(
             composer,
-            textvariable=self.message_priority,
-            values=("low", "normal", "high", "critical"),
+            textvariable=self.message_priority_label,
+            values=(),
             width=9,
             state="readonly",
         )
-        priority.grid(row=0, column=3, padx=4, pady=6)
-        tk.Label(composer, text="TASK", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=0, column=4, padx=(10, 4), pady=6)
+        self.priority_combo.grid(row=0, column=3, padx=4, pady=6)
+        self.priority_combo.bind("<<ComboboxSelected>>", self._on_priority_selected)
+        self._sync_priority_choices()
         tk.Entry(
             composer,
             textvariable=self.message_task,
@@ -4066,7 +4980,6 @@ class PixelMonitor:
             font=("Cascadia Mono", 9),
         ).grid(row=0, column=5, columnspan=3, sticky="ew", padx=4, pady=6)
 
-        tk.Label(composer, text="PROVIDER", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=1, column=0, padx=(8, 4), pady=4)
         self.profile_combo = ttk.Combobox(
             composer,
             textvariable=self.message_provider_choice,
@@ -4083,7 +4996,6 @@ class PixelMonitor:
             width=14,
             state="readonly",
         )
-        tk.Label(composer, text="MODEL", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=1, column=2, padx=(8, 4), pady=4)
         self.model_combo = ttk.Combobox(
             composer,
             textvariable=self.message_model,
@@ -4093,7 +5005,6 @@ class PixelMonitor:
         )
         self.model_combo.grid(row=1, column=3, padx=4, pady=4)
         self.model_combo.bind("<<ComboboxSelected>>", self._on_model_selected)
-        tk.Label(composer, text="REASON", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=1, column=4, padx=(8, 4), pady=4)
         self.reasoning_combo = ttk.Combobox(
             composer,
             textvariable=self.message_reasoning,
@@ -4118,7 +5029,6 @@ class PixelMonitor:
         )
         self.manage_sources_button.grid(row=1, column=7, sticky="ew", padx=(4, 8), pady=4)
 
-        tk.Label(composer, text="SUBJECT", bg=COLORS["black"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=2, column=0, padx=(8, 4), pady=4)
         tk.Entry(
             composer,
             textvariable=self.message_subject,
@@ -4352,7 +5262,7 @@ class PixelMonitor:
             max_messages = int(self.room_message_limit.get())
             stagnation_rounds = int(self.room_stagnation_limit.get())
         except ValueError:
-            self.discussion_status.set("AUTO // LIMIT 必須是整數")
+            self.discussion_status.set(self._t("discussion.limit_integer"))
             self.discussion_status_label.configure(fg=COLORS["red"])
             return
         self._run_room_action(
@@ -4726,7 +5636,11 @@ class PixelMonitor:
             self._sync_room_control_states()
             return
         if error:
-            target.set(f"失敗：{clip(redact_sensitive(error), 150)}")
+            target.set(
+                self._t("status.failed").format(
+                    error=clip(redact_sensitive(error), 150)
+                )
+            )
             target_label.configure(fg=COLORS["red"])
             self._sync_room_control_states()
             return
@@ -4743,11 +5657,11 @@ class PixelMonitor:
             clean_id = self._safe_identifier(room_id, "ROOM ID")
             clean_name = name.strip()
             if clean_id == DEFAULT_ROOM_ID:
-                raise ValueError("Lobby 已存在，請使用其他 ROOM ID。")
+                raise ValueError(self._t("room.lobby_exists"))
             if not clean_name or len(clean_name) > 200:
-                raise ValueError("ROOM NAME 必須為 1 到 200 字元。")
+                raise ValueError(self._t("room.name_length"))
             if contains_secret(clean_name):
-                raise ValueError("ROOM NAME 看似包含秘密，已拒絕寫入。")
+                raise ValueError(self._t("room.name_sensitive"))
         except ValueError as exc:
             self.room_status.set(redact_sensitive(exc))
             self.room_status_label.configure(fg=COLORS["red"])
@@ -4952,7 +5866,9 @@ class PixelMonitor:
         provider_ids = self._agent_provider_ids(agent_id)
         local_codex = agent_id == "codex-main"
         if not provider_ids and not local_codex:
-            self.seat_status.set(f"{agent_id} 沒有可安全查詢的 Provider connection。")
+            self.seat_status.set(
+                self._t("seat.no_connections").format(agent=agent_id)
+            )
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         if local_codex:
@@ -4961,14 +5877,12 @@ class PixelMonitor:
             provider_ids=provider_ids,
             force=True,
         )
-        self.seat_status.set(f"正在安全重新查詢 {agent_id} 的 Provider 模型清單...")
+        self.seat_status.set(self._t("seat.refreshing").format(agent=agent_id))
         self.seat_status_label.configure(fg=COLORS["amber"])
 
     def _on_seat_agent_selected(self, _event: Any = None) -> None:
         agent_id = self.seat_agent.get().strip()
-        self.library_selection.set(
-            f"GLOBAL LIBRARY // {agent_id}" if agent_id else "GLOBAL LIBRARY // NONE SELECTED"
-        )
+        self.library_selection.set(self._library_selection_text(agent_id or None))
         self._draw_agents(list(self._library_agents))
         registered_profiles = tuple(
             row
@@ -5023,18 +5937,18 @@ class PixelMonitor:
         if current_profile:
             self._select_seat_profile(current_profile)
             self._selected_room_seat_agent = agent_id
-            self.seat_status.set(
-                f"{agent_id} 已選取；可修改 Provider / Model / 思考強度後套用。"
-            )
+            self.seat_status.set(self._t("seat.selected").format(agent=agent_id))
             self.seat_status_label.configure(fg=COLORS["cyan"])
         elif len(self._seat_provider_ids) == 1:
             self.seat_provider_choice.set(next(iter(self._seat_provider_ids)))
             self._on_seat_provider_selected()
         elif not self._seat_profiles and agent_id:
-            self.seat_status.set(f"{agent_id} 尚未登記可執行模型 Route。")
+            self.seat_status.set(self._t("seat.no_route").format(agent=agent_id))
             self.seat_status_label.configure(fg=COLORS["red"])
         elif agent_id:
-            self.seat_status.set(f"{agent_id} 有多個 Provider；請先選擇。")
+            self.seat_status.set(
+                self._t("seat.multiple_providers").format(agent=agent_id)
+            )
             self.seat_status_label.configure(fg=COLORS["amber"])
         self._sync_room_control_states()
 
@@ -5068,7 +5982,7 @@ class PixelMonitor:
         if len(models) == 1:
             self._on_seat_model_selected()
         elif models:
-            self.seat_status.set("請選擇此 Agent 要使用的 Model。")
+            self.seat_status.set(self._t("seat.select_model"))
             self.seat_status_label.configure(fg=COLORS["amber"])
         self._sync_room_control_states()
 
@@ -5099,7 +6013,7 @@ class PixelMonitor:
         if len(labels) == 1:
             self._on_seat_reasoning_selected()
         elif labels:
-            self.seat_status.set("請選擇此 Model 的思考強度。")
+            self.seat_status.set(self._t("seat.select_reasoning"))
             self.seat_status_label.configure(fg=COLORS["amber"])
         self._sync_room_control_states()
 
@@ -5127,17 +6041,21 @@ class PixelMonitor:
         self._seat_selected_candidate = dict(profile) if advertised_only else None
         if advertised_only:
             self.seat_status.set(
-                f"API 已列出 {model_id}；按「套用席位」會再次核驗並建立 Route。"
+                self._t("seat.advertised").format(model=model_id)
             )
             self.seat_status_label.configure(fg=COLORS["amber"])
         elif profile:
             self.seat_status.set(
-                f"設定完成：{self.seat_agent.get()} → {model_id or 'provider-default'}"
-                f" / {reasoning_mode or 'provider-default'}；按「套用席位」。"
+                self._t("seat.configured").format(
+                    agent=self.seat_agent.get(),
+                    model=model_id or self._t(PROVIDER_DEFAULT_MODEL_LABEL),
+                    reasoning=reasoning_mode
+                    or self._t(PROVIDER_DEFAULT_REASONING_LABEL),
+                )
             )
             self.seat_status_label.configure(fg=COLORS["green"])
         else:
-            self.seat_status.set("找不到唯一 Route；請重新選擇 Provider / Model / 思考強度。")
+            self.seat_status.set(self._t("seat.route_unique"))
             self.seat_status_label.configure(fg=COLORS["red"])
         self._sync_room_control_states()
 
@@ -5302,9 +6220,7 @@ class PixelMonitor:
                     y_root=event.y_root,
                 )
         elif dragged:
-            self.seat_status.set(
-                "DROP CANCELLED // Agent 仍留在 Global Library，未建立 Room Seat。"
-            )
+            self.seat_status.set(self._t("seat.drop_agent_cancelled"))
             self.seat_status_label.configure(fg=COLORS["muted"])
 
     def _finish_room_agent_drag(self, event: tk.Event[Any]) -> None:
@@ -5317,9 +6233,7 @@ class PixelMonitor:
         if should_remove and agent_id:
             self._remove_room_agent(agent_id)
         elif dragged:
-            self.seat_status.set(
-                "DROP CANCELLED // Seat 仍在 Room；拖到左側 Global Library 才會移除。"
-            )
+            self.seat_status.set(self._t("seat.drop_seat_cancelled"))
             self.seat_status_label.configure(fg=COLORS["muted"])
         elif agent_id:
             self._select_room_agent_card(agent_id)
@@ -5370,7 +6284,12 @@ class PixelMonitor:
         )
         current_route = str((member or {}).get("route_profile_id") or "")
         if current_route:
-            menu.add_command(label=f"目前：{room_seat_route(member or {})}", state="disabled")
+            menu.add_command(
+                label=self._t("seat.menu_current").format(
+                    route=room_seat_route(member or {})
+                ),
+                state="disabled",
+            )
             menu.add_separator()
 
         grouped: dict[str, dict[str, list[dict[str, Any]]]] = {}
@@ -5383,7 +6302,9 @@ class PixelMonitor:
         model_count = sum(len(models) for models in grouped.values())
         if grouped:
             menu.add_command(
-                label=f"可選 {model_count} 模型 / {len(grouped)} Providers",
+                label=self._t("seat.menu_options").format(
+                    models=model_count, providers=len(grouped)
+                ),
                 state="disabled",
             )
             menu.add_separator()
@@ -5419,7 +6340,11 @@ class PixelMonitor:
                         or self._t(PROVIDER_DEFAULT_REASONING_LABEL)
                     )
                     prefix = "✓ " if str(profile.get("route_id") or "") == current_route else ""
-                    suffix = " · API 已列出，點選後核驗" if profile.get("_advertised_only") else ""
+                    suffix = (
+                        self._t("seat.menu_advertised")
+                        if profile.get("_advertised_only")
+                        else ""
+                    )
                     model_menu.add_command(
                         label=f"{prefix}{reasoning}{suffix}",
                         command=lambda selected=dict(profile): self._apply_room_agent_profile(
@@ -5432,7 +6357,7 @@ class PixelMonitor:
                 menu=provider_menu,
             )
         if not profiles:
-            menu.add_command(label="沒有可用 Route，請先到 06 接入", state="disabled")
+            menu.add_command(label=self._t("seat.menu_no_route"), state="disabled")
         refreshable = agent_id == "codex-main" or any(
             provider_id in self._provider_model_catalog
             or provider_id in self._provider_discovery_inflight
@@ -5442,13 +6367,13 @@ class PixelMonitor:
         if refreshable:
             menu.add_separator()
             menu.add_command(
-                label="重新同步 Provider 模型清單",
+                label=self._t("seat.menu_refresh"),
                 command=lambda: self._refresh_agent_provider_models(agent_id),
             )
         if member:
             menu.add_separator()
             menu.add_command(
-                label="移除此房間席位（保留歷史）",
+                label=self._t("seat.menu_remove"),
                 command=lambda: self._remove_room_agent(agent_id),
             )
         if x_root is None or y_root is None:
@@ -5475,7 +6400,7 @@ class PixelMonitor:
         agent_id = self.seat_agent.get().strip()
         library_ids = {str(row["agent_id"]) for row in self._library_agents}
         if agent_id not in library_ids:
-            self.seat_status.set("請先從 Global Agent Library 選擇 Agent。")
+            self.seat_status.set(self._t("seat.select_agent"))
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         if self._seat_selected_candidate:
@@ -5486,9 +6411,7 @@ class PixelMonitor:
             return
         route_id = self._seat_selected_route_id
         if not route_id:
-            self.seat_status.set(
-                "尚未完成模型設定：請選擇 Provider、Model 與思考強度。"
-            )
+            self.seat_status.set(self._t("seat.incomplete"))
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         updating = any(
@@ -5531,7 +6454,7 @@ class PixelMonitor:
         route_class = str(profile.get("route_class") or "")
         client_name = str(profile.get("client_name") or "openai-compatible")
         if not all((provider_id, model_id, route_class)):
-            self.seat_status.set("未登記模型缺少 Provider identity；已停止套用。")
+            self.seat_status.set(self._t("seat.missing_provider_identity"))
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         route_id = discovered_route_profile_id(
@@ -5558,7 +6481,7 @@ class PixelMonitor:
                 and row.get("secret_backend") == "windows-credential-manager"
             ]
             if len(matches) != 1:
-                raise ValueError("找不到唯一、可安全重新驗證的 Provider connection。")
+                raise ValueError(self._t("seat.no_revalidatable_connection"))
             discovery = discover_provider_models(
                 scope=self.scope,
                 connection_id=provider_id,
@@ -5566,7 +6489,7 @@ class PixelMonitor:
                 provider_id=provider_id,
             )
             if model_id not in discovery.models:
-                raise ValueError("Provider 已不再列出所選模型；沒有建立 Route。")
+                raise ValueError(self._t("seat.provider_model_removed"))
             payload: dict[str, Any] = {
                 "route_id": route_id,
                 "agent_id": agent_id,
@@ -5629,7 +6552,7 @@ class PixelMonitor:
             or profile.get("route_class") != "official"
             or not model_id
         ):
-            self.seat_status.set("官方 Codex 模型 identity 不完整；已停止套用。")
+            self.seat_status.set(self._t("seat.codex_identity_incomplete"))
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         route_id = discovered_route_profile_id(
@@ -5645,10 +6568,10 @@ class PixelMonitor:
             catalog = discover_codex_model_catalog()
             matches = [item for item in catalog.models if item.model_id == model_id]
             if len(matches) != 1:
-                raise CodexCatalogError("Codex 已不再列出所選模型；沒有建立 Route")
+                raise CodexCatalogError(self._t("seat.codex_model_removed"))
             model = matches[0]
             if reasoning_mode and reasoning_mode not in model.supported_reasoning_modes:
-                raise CodexCatalogError("所選思考強度不再受這個 Codex 模型支援")
+                raise CodexCatalogError(self._t("seat.codex_reasoning_removed"))
             route = self.human_client.call_tool(
                 "upsert_route_profile",
                 {
@@ -5707,7 +6630,7 @@ class PixelMonitor:
             )
         )
         if not member:
-            self.seat_status.set("請先選擇要移除的 Room Seat。")
+            self.seat_status.set(self._t("seat.select_remove"))
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         agent_id = str(member.get("agent_id") or "")
@@ -5715,13 +6638,13 @@ class PixelMonitor:
 
     def _remove_room_agent(self, agent_id: str) -> None:
         if agent_id == HUMAN_AGENT_ID:
-            self.seat_status.set("Control operator Seat 請保留，以維持 Room 操作權。")
+            self.seat_status.set(self._t("seat.keep_control"))
             self.seat_status_label.configure(fg=COLORS["red"])
             return
         room_id = self.selected_room_id
         if not messagebox.askyesno(
             "Remove Room Seat",
-            f"停止 {agent_id} 接收 {room_id} 的新訊息？\n既有訊息與歷史不會刪除。",
+            self._t("seat.confirm_remove").format(agent=agent_id, room=room_id),
         ):
             return
         self._run_room_action(
@@ -5840,9 +6763,7 @@ class PixelMonitor:
                     ),
                 )
                 self._seat_records[row_id] = {**agent, **active_route}
-            self.seat_status.set(
-                "Lobby 只喚醒已綁定 Route 的 Seat；在 Agent 方格 ▼ 選擇模型。"
-            )
+            self.seat_status.set(self._t("seat.lobby_bound_only"))
             self.seat_status_label.configure(fg=COLORS["muted"])
             return
         for member in self._room_members:
@@ -6092,6 +7013,19 @@ class PixelMonitor:
         entry.grid(row=row + 1, column=column, sticky="ew", padx=8, pady=(0, 5), ipady=4)
         return entry
 
+    def _apply_connection_key_visibility(self) -> None:
+        visible = bool(self.connection_key_visible.get())
+        self.connection_key_entry.configure(show="" if visible else "*")
+        self.connection_key_visibility_button.configure(
+            text=self._t(
+                "provider.hide_api_key" if visible else "provider.show_api_key"
+            )
+        )
+
+    def _toggle_connection_key_visibility(self) -> None:
+        self.connection_key_visible.set(not self.connection_key_visible.get())
+        self._apply_connection_key_visibility()
+
     def _build_connections_page(self, host: tk.Frame) -> None:
         page = tk.Frame(host, bg=COLORS["panel"], bd=2, relief="ridge")
         page.grid(row=0, column=0, sticky="nsew")
@@ -6109,23 +7043,120 @@ class PixelMonitor:
 
         heading = tk.Frame(inner, bg=COLORS["black"], bd=2, relief="ridge")
         heading.pack(fill="x", padx=10, pady=10)
-        tk.Label(
+        self.connect_heading_label = tk.Label(
             heading,
-            text="安全接入 // 秘密平面與協作平面分離",
+            text=self._t("connect.heading"),
             bg=COLORS["black"], fg=COLORS["cyan"],
             font=("Cascadia Mono", 12, "bold"),
-        ).pack(anchor="w", padx=12, pady=(10, 2))
-        tk.Label(
+        )
+        self.connect_heading_label.pack(anchor="w", padx=12, pady=(10, 2))
+        self.connect_privacy_label = tk.Label(
             heading,
-            text=("API key 與完整私人網址不進 MCP、SQLite、訊息、審計、receipt、CLI 參數、deep link 或 Git。\n"
-                  "此頁只把紅acted metadata 與 SHA-256 寫入 PeerBridge。"),
+            text=self._t("connect.privacy"),
             bg=COLORS["black"], fg=COLORS["muted"], justify="left",
             font=("Cascadia Mono", 9),
-        ).pack(anchor="w", padx=12, pady=(2, 10))
+        )
+        self.connect_privacy_label.pack(anchor="w", padx=12, pady=(2, 10))
 
-        native = tk.LabelFrame(
+        self.agent_install_frame = tk.LabelFrame(
             inner,
-            text=" 01  自備 Provider / Relay ",
+            text=self._t("agent_install.heading"),
+            bg=COLORS["panel"],
+            fg=COLORS["amber"],
+            bd=2,
+            relief="ridge",
+            font=("Cascadia Mono", 10, "bold"),
+        )
+        self.agent_install_frame.pack(fill="x", padx=10, pady=6)
+        self.agent_install_frame.grid_columnconfigure(1, weight=1)
+        self.agent_install_intro = tk.Label(
+            self.agent_install_frame,
+            text=self._t("agent_install.intro"),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=980,
+            font=("Cascadia Mono", 8),
+        )
+        self.agent_install_intro.grid(
+            row=0, column=0, columnspan=4, sticky="ew", padx=8, pady=(8, 6)
+        )
+        for row, spec in enumerate(installable_agent_specs(), start=1):
+            tk.Label(
+                self.agent_install_frame,
+                text=f"{spec.display_name} // {spec.publisher}",
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                anchor="w",
+                font=("Cascadia Mono", 9, "bold"),
+            ).grid(row=row, column=0, sticky="w", padx=8, pady=6)
+            note = tk.Label(
+                self.agent_install_frame,
+                text=self._t(spec.note_key),
+                textvariable=self.agent_install_status[spec.agent_id],
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                anchor="w",
+                justify="left",
+                wraplength=500,
+                font=("Cascadia Mono", 8),
+            )
+            note.grid(row=row, column=1, sticky="ew", padx=8, pady=6)
+            action = tk.Button(
+                self.agent_install_frame,
+                text=self._t(
+                    "agent_install.install"
+                    if spec.automatic_install_supported
+                    else "agent_install.open_guide"
+                ),
+                command=lambda agent_id=spec.agent_id: self.install_official_agent(
+                    agent_id
+                ),
+                bg=COLORS["green"]
+                if spec.automatic_install_supported
+                else COLORS["purple"],
+                fg=COLORS["black"],
+                activebackground=COLORS["cyan"],
+                bd=2,
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            action.grid(row=row, column=2, sticky="ew", padx=4, pady=5)
+            self._agent_install_buttons[spec.agent_id] = action
+            docs = tk.Button(
+                self.agent_install_frame,
+                text=self._t("agent_install.docs"),
+                command=lambda url=spec.docs_url: webbrowser.open(url),
+                bg=COLORS["blue"],
+                fg=COLORS["black"],
+                activebackground=COLORS["cyan"],
+                bd=2,
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            docs.grid(row=row, column=3, sticky="ew", padx=(4, 8), pady=5)
+            self._agent_install_docs_buttons[spec.agent_id] = docs
+        self.agent_install_detect_button = tk.Button(
+            self.agent_install_frame,
+            text=self._t("agent_install.detect_all"),
+            command=self.refresh_official_agent_statuses,
+            bg=COLORS["cyan"],
+            fg=COLORS["black"],
+            activebackground=COLORS["green"],
+            bd=2,
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.agent_install_detect_button.grid(
+            row=len(installable_agent_specs()) + 1,
+            column=0,
+            columnspan=4,
+            sticky="e",
+            padx=8,
+            pady=(4, 9),
+        )
+
+        native = self.native_connection_frame = tk.LabelFrame(
+            inner,
+            text=self._t("connect.native_heading"),
             bg=COLORS["panel"], fg=COLORS["amber"],
             bd=2, relief="ridge", font=("Cascadia Mono", 10, "bold"),
         )
@@ -6138,7 +7169,44 @@ class PixelMonitor:
         ttk.Combobox(native, textvariable=self.connection_class, values=("official", "relay", "local"), state="readonly").grid(row=1, column=2, sticky="ew", padx=8, pady=(0, 5), ipady=4)
         self._field(native, "AGENT ID", self.connection_agent, 0, 3)
         self._field(native, "HTTPS ENDPOINT", self.connection_endpoint, 2, 0)
-        self.connection_key_entry = self._field(native, "API KEY (MASKED)", self.connection_api_key, 2, 1, secret=True)
+        tk.Label(
+            native,
+            text="API KEY",
+            bg=COLORS["panel"],
+            fg=COLORS["amber"],
+            anchor="w",
+            font=("Cascadia Mono", 8, "bold"),
+        ).grid(row=2, column=1, sticky="w", padx=8, pady=(7, 2))
+        connection_key_row = tk.Frame(native, bg=COLORS["panel"])
+        connection_key_row.grid(
+            row=3, column=1, sticky="ew", padx=8, pady=(0, 5)
+        )
+        self.connection_key_entry = tk.Entry(
+            connection_key_row,
+            textvariable=self.connection_api_key,
+            show="*",
+            bg=COLORS["black"],
+            fg=COLORS["text"],
+            insertbackground=COLORS["cyan"],
+            relief="sunken",
+            bd=2,
+            font=("Cascadia Mono", 9),
+        )
+        self.connection_key_entry.pack(
+            side="left", fill="x", expand=True, ipady=4
+        )
+        self.connection_key_visibility_button = tk.Button(
+            connection_key_row,
+            text=self._t("provider.show_api_key"),
+            command=self._toggle_connection_key_visibility,
+            bg=COLORS["blue"],
+            fg=COLORS["black"],
+            activebackground=COLORS["cyan"],
+            bd=2,
+            font=("Cascadia Mono", 8, "bold"),
+            takefocus=True,
+        )
+        self.connection_key_visibility_button.pack(side="right", padx=(5, 0))
         self._field(native, "CLIENT NAME", self.connection_client, 2, 2)
         self._field(native, "ROUTE ID", self.connection_route_id, 2, 3)
         tk.Label(native, text="MODEL", bg=COLORS["panel"], fg=COLORS["amber"], anchor="w", font=("Cascadia Mono", 8, "bold")).grid(row=4, column=0, sticky="w", padx=8, pady=(7, 2))
@@ -6148,16 +7216,20 @@ class PixelMonitor:
         self._field(native, "MODEL-SPECIFIC REASONING", self.connection_reasoning, 4, 2)
         native_buttons = tk.Frame(native, bg=COLORS["panel"])
         native_buttons.grid(row=7, column=0, columnspan=4, sticky="e", padx=8, pady=8)
-        for text, command, color in (
-            (">> 儲存並查模型", self.save_native_connection, COLORS["green"]),
-            (">> 重新查模型", self.discover_native_models, COLORS["purple"]),
-            (">> 登記 Route", self.register_native_route, COLORS["cyan"]),
+        self.native_connection_buttons: dict[str, tk.Button] = {}
+        for key, command, color in (
+            ("connect.save_discover", self.save_native_connection, COLORS["green"]),
+            ("connect.discover", self.discover_native_models, COLORS["purple"]),
+            ("connect.register_route", self.register_native_route, COLORS["cyan"]),
+            ("connect.test_reply", self.test_native_route, COLORS["amber"]),
         ):
-            tk.Button(
-                native_buttons, text=text, command=command, bg=color,
+            button = tk.Button(
+                native_buttons, text=self._t(key), command=command, bg=color,
                 fg=COLORS["black"], activebackground=COLORS["cyan"], bd=2,
                 font=("Cascadia Mono", 8, "bold"),
-            ).pack(side="left", padx=(0, 7), pady=2)
+            )
+            button.pack(side="left", padx=(0, 7), pady=2)
+            self.native_connection_buttons[key] = button
         self.connection_status_label = tk.Label(
             native, textvariable=self.connection_status, bg=COLORS["panel"],
             fg=COLORS["muted"], anchor="w", justify="left", wraplength=760,
@@ -6165,9 +7237,9 @@ class PixelMonitor:
         )
         self.connection_status_label.grid(row=8, column=0, columnspan=4, sticky="ew", padx=8, pady=8)
 
-        cc = tk.LabelFrame(
+        cc = self.ccswitch_connection_frame = tk.LabelFrame(
             inner,
-            text=" 02  CC Switch 已保存 Provider ",
+            text=self._t("connect.ccswitch_heading"),
             bg=COLORS["panel"], fg=COLORS["amber"],
             bd=2, relief="ridge", font=("Cascadia Mono", 10, "bold"),
         )
@@ -6194,15 +7266,26 @@ class PixelMonitor:
         self._field(cc, "REASONING", self.ccswitch_reasoning, 0, 5)
         buttons = tk.Frame(cc, bg=COLORS["panel"])
         buttons.grid(row=2, column=0, columnspan=6, sticky="ew", padx=8, pady=6)
-        for text, command, color in (
-            (">> 重新讀取", self.refresh_ccswitch, COLORS["blue"]),
-            (">> 取得模型", self.fetch_ccswitch_models, COLORS["purple"]),
-            (">> 登記 Route", self.register_ccswitch_route, COLORS["green"]),
-            (">> 同步此來源全部模型", self.sync_ccswitch_routes, COLORS["cyan"]),
-            (">> 明確切換", self.switch_ccswitch_provider, COLORS["amber"]),
-            (">> 開啟 CC Switch", self.open_ccswitch, COLORS["cyan"]),
+        self.ccswitch_connection_buttons: dict[str, tk.Button] = {}
+        for key, command, color in (
+            ("connect.ccswitch_refresh", self.refresh_ccswitch, COLORS["blue"]),
+            ("connect.ccswitch_models", self.fetch_ccswitch_models, COLORS["purple"]),
+            ("connect.ccswitch_register", self.register_ccswitch_route, COLORS["green"]),
+            ("connect.ccswitch_sync", self.sync_ccswitch_routes, COLORS["cyan"]),
+            ("connect.ccswitch_switch", self.switch_ccswitch_provider, COLORS["amber"]),
+            ("connect.ccswitch_open", self.open_ccswitch, COLORS["cyan"]),
         ):
-            tk.Button(buttons, text=text, command=command, bg=color, fg=COLORS["black"], bd=2, font=("Cascadia Mono", 8, "bold")).pack(side="left", padx=(0, 7), pady=2)
+            button = tk.Button(
+                buttons,
+                text=self._t(key),
+                command=command,
+                bg=color,
+                fg=COLORS["black"],
+                bd=2,
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            button.pack(side="left", padx=(0, 7), pady=2)
+            self.ccswitch_connection_buttons[key] = button
         self.ccswitch_status_label = tk.Label(
             cc, textvariable=self.ccswitch_status, bg=COLORS["panel"],
             fg=COLORS["muted"], anchor="w", justify="left", wraplength=1000,
@@ -6218,18 +7301,141 @@ class PixelMonitor:
         self.connection_tree.pack(fill="both", expand=True, padx=10, pady=(6, 12))
         self.pages["connect"] = page
 
-    @staticmethod
-    def _safe_identifier(value: str, label: str) -> str:
+    def refresh_official_agent_statuses(self) -> None:
+        if self._agent_detection_in_progress or self._closing:
+            return
+        self._agent_detection_in_progress = True
+        for spec in installable_agent_specs():
+            self.agent_install_status[spec.agent_id].set(
+                self._t("agent_install.detecting")
+            )
+
+        def worker() -> None:
+            try:
+                statuses = detect_all_installable_agents()
+            except Exception as exc:
+                self._post_to_ui(self._finish_agent_detection, (), exc)
+                return
+            self._post_to_ui(self._finish_agent_detection, statuses, None)
+
+        threading.Thread(
+            target=worker, name="peerbridge-agent-detection", daemon=True
+        ).start()
+
+    def _finish_agent_detection(
+        self,
+        statuses: tuple[AgentInstallStatus, ...],
+        error: Exception | None,
+    ) -> None:
+        self._agent_detection_in_progress = False
+        if error is not None:
+            for spec in installable_agent_specs():
+                self.agent_install_status[spec.agent_id].set(
+                    self._t("agent_install.detect_failed")
+                )
+            return
+        self._agent_install_statuses = {
+            status.agent_id: status for status in statuses
+        }
+        for spec in installable_agent_specs():
+            status = self._agent_install_statuses[spec.agent_id]
+            if status.installed:
+                detail = status.version or self._t("agent_install.version_unknown")
+                text = self._t("agent_install.installed").format(version=detail)
+            else:
+                text = self._t("agent_install.not_installed")
+            text += "  " + self._t(spec.note_key)
+            self.agent_install_status[spec.agent_id].set(text)
+            action_key = (
+                "agent_install.open_guide"
+                if not spec.automatic_install_supported
+                else (
+                    "agent_install.update"
+                    if status.installed
+                    else "agent_install.install"
+                )
+            )
+            self._agent_install_buttons[spec.agent_id].configure(
+                text=self._t(action_key), state="normal"
+            )
+
+    def install_official_agent(self, agent_id: str) -> None:
+        try:
+            spec = installable_agent_spec(agent_id)
+        except AgentInstallError:
+            return
+        if not spec.automatic_install_supported:
+            webbrowser.open(spec.docs_url)
+            self.agent_install_status[agent_id].set(
+                self._t("agent_install.manual_only")
+            )
+            return
+        if agent_id in self._agent_install_processes:
+            return
+        status = self._agent_install_statuses.get(agent_id)
+        update = bool(status and status.installed)
+        if not messagebox.askyesno(
+            self._t("agent_install.confirm_title"),
+            self._t("agent_install.confirm_body").format(
+                name=spec.display_name,
+                package=spec.package_identifier,
+            ),
+            parent=self.root,
+        ):
+            return
+        try:
+            process = launch_agent_installer(agent_id, update=update)
+        except AgentInstallError as exc:
+            self.agent_install_status[agent_id].set(
+                self._t("agent_install.launch_failed").format(error=clip(exc, 100))
+            )
+            return
+        self._agent_install_processes[agent_id] = process
+        self._agent_install_buttons[agent_id].configure(state="disabled")
+        self.agent_install_status[agent_id].set(
+            self._t("agent_install.running")
+        )
+
+        def waiter() -> None:
+            try:
+                return_code = process.wait()
+            except Exception:
+                return_code = -1
+            self._post_to_ui(
+                self._finish_agent_install, agent_id, int(return_code)
+            )
+
+        threading.Thread(
+            target=waiter,
+            name=f"peerbridge-agent-install-{agent_id}",
+            daemon=True,
+        ).start()
+
+    def _finish_agent_install(self, agent_id: str, return_code: int) -> None:
+        self._agent_install_processes.pop(agent_id, None)
+        self._agent_install_buttons[agent_id].configure(state="normal")
+        if return_code == 0:
+            self.agent_install_status[agent_id].set(
+                self._t("agent_install.completed")
+            )
+        else:
+            self.agent_install_status[agent_id].set(
+                self._t("agent_install.failed").format(code=return_code)
+            )
+        self.refresh_official_agent_statuses()
+
+    def _safe_identifier(self, value: str, label: str) -> str:
         text = value.strip()
         if not SAFE_ROUTE_ID.fullmatch(text):
-            raise ValueError(f"{label} 只可包含英文字母、數字、點、底線、冒號或連字號。")
+            raise ValueError(
+                self._t("connect.identifier_chars").format(label=label)
+            )
         return text
 
-    @staticmethod
-    def _safe_error(exc: Exception) -> str:
+    def _safe_error(self, exc: Exception) -> str:
         if isinstance(exc, (CredentialStoreError, CcSwitchError, RunnerError, ValueError)):
             return clip(str(exc), 180)
-        return "本機接入失敗；詳細內容已隱藏以避免洩漏憑證。"
+        return self._t("connect.safe_error")
 
     def save_native_connection(self) -> None:
         if self.connection_in_progress:
@@ -6320,6 +7526,8 @@ class PixelMonitor:
     ) -> None:
         self.connection_in_progress = False
         self.connection_api_key.set("")
+        self.connection_key_visible.set(False)
+        self._apply_connection_key_visibility()
         self.connection_endpoint.set("")
         if error:
             self.connection_status.set(
@@ -6334,10 +7542,17 @@ class PixelMonitor:
         self.connection_model_combo.configure(values=discovery.models)
         if len(discovery.models) == 1:
             self.connection_model.set(discovery.models[0])
-        suffix = f"；Route {route['route_id']} 已登記" if route else "；尚未建立 Route"
+        suffix = self._t(
+            "connect.route_registered_suffix"
+            if route
+            else "connect.route_missing_suffix"
+        ).format(route=route["route_id"] if route else "")
         self.connection_status.set(
-            f"已安全接入 {connection['connection_id']}；找到 {len(discovery.models)} 個模型 // "
-            f"SHA {connection['connection_sha256'][:16]}{suffix}"
+            self._t("connect.saved").format(
+                connection=connection["connection_id"],
+                count=len(discovery.models),
+                suffix=f"SHA {connection['connection_sha256'][:16]}{suffix}",
+            )
         )
         self.connection_status_label.configure(fg=COLORS["green"])
         self.refresh(force=True)
@@ -6349,13 +7564,13 @@ class PixelMonitor:
             connection_id = self._safe_identifier(self.connection_id.get(), "CONNECTION ID")
             route_class = self.connection_class.get().strip()
             if route_class not in {"official", "relay", "local"}:
-                raise ValueError("CLASS 必須是 official、relay 或 local。")
+                raise ValueError(self._t("provider.class_invalid"))
         except Exception as exc:
             self.connection_status.set(self._safe_error(exc))
             self.connection_status_label.configure(fg=COLORS["red"])
             return
         self.connection_in_progress = True
-        self.connection_status.set("正在由 Windows Credential Manager 讀取並直接查詢 /v1/models...")
+        self.connection_status.set(self._t("connect.discovering"))
         self.connection_status_label.configure(fg=COLORS["amber"])
 
         def worker() -> None:
@@ -6380,7 +7595,11 @@ class PixelMonitor:
     ) -> None:
         self.connection_in_progress = False
         if error:
-            self.connection_status.set("模型探測失敗：" + self._safe_error(error))
+            self.connection_status.set(
+                self._t("connect.discovery_failed").format(
+                    error=self._safe_error(error)
+                )
+            )
             self.connection_status_label.configure(fg=COLORS["red"])
             return
         assert discovery is not None
@@ -6388,8 +7607,10 @@ class PixelMonitor:
         if len(discovery.models) == 1:
             self.connection_model.set(discovery.models[0])
         self.connection_status.set(
-            f"已直接從 API 取得 {len(discovery.models)} 個模型 // registry SHA "
-            f"{discovery.registry_sha256[:16]}"
+            self._t("connect.discovered").format(
+                count=len(discovery.models),
+                sha=discovery.registry_sha256[:16],
+            )
         )
         self.connection_status_label.configure(fg=COLORS["green"])
 
@@ -6415,7 +7636,7 @@ class PixelMonitor:
                 reasoning = self._safe_identifier(reasoning, "REASONING")
             advertised = tuple(self.connection_model_combo.cget("values"))
             if advertised and model_id not in advertised:
-                raise ValueError("MODEL 不在剛才驗證的 Provider 模型清單內。")
+                raise ValueError(self._t("connect.model_unverified"))
             connections = self.human_client.call_tool(
                 "list_provider_connections", {"enabled_only": True}
             ).get("connections", [])
@@ -6428,7 +7649,7 @@ class PixelMonitor:
                 and row.get("secret_backend") == "windows-credential-manager"
             ]
             if len(matches) != 1:
-                raise ValueError("找不到唯一、已啟用的 direct API connection；請先儲存並查模型。")
+                raise ValueError(self._t("connect.connection_missing"))
             payload: dict[str, Any] = {
                 "route_id": route_id,
                 "agent_id": agent_id,
@@ -6445,23 +7666,100 @@ class PixelMonitor:
                 payload["reasoning_mode"] = reasoning
             route = self.human_client.call_tool("upsert_route_profile", payload)
         except Exception as exc:
-            self.connection_status.set("Route 未建立：" + self._safe_error(exc))
+            self.connection_status.set(
+                self._t("connect.route_failed").format(
+                    error=self._safe_error(exc)
+                )
+            )
             self.connection_status_label.configure(fg=COLORS["red"])
             return
         self.connection_status.set(
-            f"Route {route['route_id']} 已登記；model={route['model_id']} // "
-            f"SHA {route['profile_sha256'][:16]}"
+            self._t("connect.route_registered").format(
+                route=route["route_id"],
+                model=route["model_id"],
+                sha=route["profile_sha256"][:16],
+            )
         )
         self.connection_status_label.configure(fg=COLORS["green"])
         self.refresh(force=True)
 
+    def test_native_route(self) -> None:
+        """Queue one auditable, explicitly paid route probe through normal dispatch."""
+        try:
+            agent_id = self._safe_identifier(self.connection_agent.get(), "AGENT ID")
+            route_id = self._safe_identifier(self.connection_route_id.get(), "ROUTE ID")
+            profiles = self.human_client.call_tool(
+                "list_route_profiles",
+                {"agent_id": agent_id, "enabled_only": True},
+            ).get("profiles", [])
+            matches = [
+                row
+                for row in profiles
+                if isinstance(row, dict) and row.get("route_id") == route_id
+            ]
+            if len(matches) != 1:
+                raise ValueError(self._t("provider.test_route_missing"))
+            profile = matches[0]
+        except Exception as exc:
+            self.connection_status.set(self._safe_error(exc))
+            self.connection_status_label.configure(fg=COLORS["red"])
+            return
+        if not messagebox.askyesno(
+            self._t("provider.test_confirm_title"),
+            self._t("provider.test_confirm_body").format(
+                agent=agent_id,
+                model=profile.get("model_id") or "provider-default",
+            ),
+            parent=self.root,
+        ):
+            return
+        task_id = f"provider-preflight-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        try:
+            receipt = self.human_client.send_message(
+                room_id=DEFAULT_ROOM_ID,
+                recipient=agent_id,
+                task_id=task_id,
+                subject="PROVIDER PREFLIGHT",
+                body=(
+                    "Reply with exactly PEERBRIDGE_PROVIDER_OK. This is an explicit "
+                    "one-request provider availability test; do not call tools."
+                ),
+                priority="high",
+                route_profile_id=route_id,
+                requested_provider_id=str(profile.get("provider_id") or "") or None,
+                requested_model_id=str(profile.get("model_id") or "") or None,
+                requested_reasoning_mode=(
+                    str(profile.get("reasoning_mode") or "") or None
+                ),
+            )
+        except Exception as exc:
+            self.connection_status.set(
+                self._t("provider.test_queue_failed").format(
+                    error=self._safe_error(exc)
+                )
+            )
+            self.connection_status_label.configure(fg=COLORS["red"])
+            return
+        self.connection_status.set(
+            self._t("provider.test_queued").format(
+                task=task_id,
+                sha=str(receipt.get("content_sha256") or "")[:16],
+            )
+        )
+        self.connection_status_label.configure(fg=COLORS["amber"])
+        self.selected_room_id = DEFAULT_ROOM_ID
+        self._request_room_refresh(force=True)
+        self.show_page("chat")
+
     def refresh_ccswitch(self) -> None:
         if not ccswitch_find_cli():
-            self.ccswitch_status.set("找不到 CC Switch 官方 CLI。")
+            self.ccswitch_status.set(self._t("ccswitch.cli_missing"))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
         app = self.ccswitch_app.get()
-        self.ccswitch_status.set(f"正在透過官方 CLI 讀取 {app} provider（不匯出憑證）...")
+        self.ccswitch_status.set(
+            self._t("ccswitch.reading").format(app=app)
+        )
         self.ccswitch_status_label.configure(fg=COLORS["amber"])
 
         def worker() -> None:
@@ -6491,13 +7789,15 @@ class PixelMonitor:
         self.ccswitch_provider.set(selected or (next(iter(labels), "")))
         self.ccswitch_model.set("")
         self.ccswitch_model_combo.configure(values=())
-        self.ccswitch_status.set(f"已讀取 {len(labels)} 個 provider；完整網址與 API key 未離開 CC Switch。")
+        self.ccswitch_status.set(
+            self._t("ccswitch.read").format(count=len(labels))
+        )
         self.ccswitch_status_label.configure(fg=COLORS["green"])
 
     def _selected_ccswitch_provider(self) -> CcSwitchProvider:
         provider = self._ccswitch_providers.get(self.ccswitch_provider.get())
         if not provider:
-            raise ValueError("請先重新讀取並選擇 CC Switch provider。")
+            raise ValueError(self._t("ccswitch.choose"))
         return provider
 
     def fetch_ccswitch_models(self) -> None:
@@ -6507,7 +7807,7 @@ class PixelMonitor:
             self.ccswitch_status.set(self._safe_error(exc))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
-        self.ccswitch_status.set("正在由 CC Switch 使用其已保存憑證取得模型列表...")
+        self.ccswitch_status.set(self._t("ccswitch.fetching"))
         self.ccswitch_status_label.configure(fg=COLORS["amber"])
 
         def worker() -> None:
@@ -6527,7 +7827,9 @@ class PixelMonitor:
             return
         self.ccswitch_model_combo.configure(values=models)
         self.ccswitch_model.set(models[0] if models else "")
-        self.ccswitch_status.set(f"已取得 {len(models)} 個模型；模型名稱是 route metadata，不是 reasoning level。")
+        self.ccswitch_status.set(
+            self._t("ccswitch.fetched").format(count=len(models))
+        )
         self.ccswitch_status_label.configure(fg=COLORS["green"])
 
     def register_ccswitch_route(self) -> None:
@@ -6548,7 +7850,7 @@ class PixelMonitor:
             models=(model,),
             reasoning_mode=reasoning or None,
         )
-        self.ccswitch_status.set("正在經 MCP 登記 CC Switch 紅acted connection 與 route...")
+        self.ccswitch_status.set(self._t("ccswitch.registering"))
         self.ccswitch_status_label.configure(fg=COLORS["amber"])
 
         def worker() -> None:
@@ -6577,14 +7879,15 @@ class PixelMonitor:
             self.ccswitch_status.set(self._safe_error(exc))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
-        self.ccswitch_status.set("正在取得並登記此來源的全部模型；不會切換 Provider...")
+        self.ccswitch_status.set(self._t("ccswitch.syncing"))
         self.ccswitch_status_label.configure(fg=COLORS["amber"])
+        no_models_error = self._t("ccswitch.no_models")
 
         def worker() -> None:
             try:
                 models = ccswitch_fetch_models(provider.app, provider.provider_id)
                 if not models:
-                    raise ValueError("此 Provider 沒有回傳可登記模型。")
+                    raise ValueError(no_models_error)
                 connection, routes = ccswitch_route_specs(
                     provider,
                     agent_id=agent_id,
@@ -6606,7 +7909,9 @@ class PixelMonitor:
             self.ccswitch_status.set(self._safe_error(error))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
-        self.ccswitch_status.set(f"已登記 {count} 個模型 Route；CC Switch 來源沒有被切換。")
+        self.ccswitch_status.set(
+            self._t("ccswitch.synced").format(count=count)
+        )
         self.ccswitch_status_label.configure(fg=COLORS["green"])
         self.refresh(force=True)
 
@@ -6616,7 +7921,9 @@ class PixelMonitor:
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
         assert route is not None
-        self.ccswitch_status.set(f"Route {route['route_id']} 已登記；未自動切換 CC Switch。")
+        self.ccswitch_status.set(
+            self._t("ccswitch.registered").format(route=route["route_id"])
+        )
         self.ccswitch_status_label.configure(fg=COLORS["green"])
         self.refresh(force=True)
 
@@ -6628,8 +7935,11 @@ class PixelMonitor:
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
         if not messagebox.askyesno(
-            "明確切換 CC Switch",
-            f"確定把 {provider.app} 切換至「{provider.name}」？\nPeerBridge 不會讀取或複製其 API key。",
+            self._t("ccswitch.switch_title"),
+            self._t("ccswitch.switch_body").format(
+                app=provider.app,
+                provider=provider.name,
+            ),
         ):
             return
         try:
@@ -6638,13 +7948,18 @@ class PixelMonitor:
             self.ccswitch_status.set(self._safe_error(exc))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
-        self.ccswitch_status.set(f"已明確切換 {provider.app} 至 {provider.name}。")
+        self.ccswitch_status.set(
+            self._t("ccswitch.switched").format(
+                app=provider.app,
+                provider=provider.name,
+            )
+        )
         self.ccswitch_status_label.configure(fg=COLORS["green"])
         self.refresh_ccswitch()
 
     def open_ccswitch(self) -> None:
         if not ccswitch_find_app():
-            self.ccswitch_status.set("找不到 CC Switch 桌面程式。")
+            self.ccswitch_status.set(self._t("ccswitch.app_missing"))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
             return
         try:
@@ -6749,6 +8064,29 @@ class PixelMonitor:
         self.message_route_profile.set("DIRECT")
         self._select_exact_route()
 
+    def _sync_priority_choices(self) -> None:
+        if not hasattr(self, "priority_combo"):
+            return
+        self._priority_ids = {
+            self._t(f"chat.priority.{priority}"): priority
+            for priority in MESSAGE_PRIORITIES
+        }
+        values = tuple(self._priority_ids)
+        self.priority_combo.configure(values=values)
+        selected = self.message_priority.get()
+        self.message_priority_label.set(
+            self._t(f"chat.priority.{selected}")
+            if selected in MESSAGE_PRIORITIES
+            else self._t("chat.priority.normal")
+        )
+
+    def _on_priority_selected(self, _event: Any = None) -> None:
+        selected = getattr(self, "_priority_ids", {}).get(
+            self.message_priority_label.get()
+        )
+        if selected in MESSAGE_PRIORITIES:
+            self.message_priority.set(selected)
+
     def _select_exact_route(self) -> None:
         self.message_route_profile.set("DIRECT")
         provider = self.message_provider.get()
@@ -6822,7 +8160,7 @@ class PixelMonitor:
         model = self.message_model.get().strip()
         reasoning = self.message_reasoning.get().strip()
         if not body or not task_id or not subject:
-            self.message_status.set("需要 TASK、SUBJECT 和訊息內容。")
+            self.message_status.set(self._t("chat.required_fields"))
             self.message_status_label.configure(fg=COLORS["red"])
             return
         if any((provider, model, reasoning)):
@@ -6847,8 +8185,9 @@ class PixelMonitor:
             )
             if missing_routes:
                 self.message_status.set(
-                    "全體送出已停止：請先用 Agent 方格右側 ▼ 設定模型："
-                    + ", ".join(missing_routes)
+                    self._t("chat.broadcast_missing_routes").format(
+                        agents=", ".join(missing_routes)
+                    )
                 )
                 self.message_status_label.configure(fg=COLORS["red"])
                 return
@@ -6857,7 +8196,7 @@ class PixelMonitor:
             and not self._catalog_value_matches(route_profile, DIRECT_LABEL)
         ) or any((provider, model, reasoning))
         if routed and recipient == "*":
-            self.message_status.set("指定模型路由時必須選擇一個 Agent，不能廣播。")
+            self.message_status.set(self._t("chat.routed_broadcast_forbidden"))
             self.message_status_label.configure(fg=COLORS["red"])
             return
         requested_room_id = self.selected_room_id
@@ -6886,7 +8225,7 @@ class PixelMonitor:
         self.chat_attach_button.configure(state="disabled")
         self.chat_clear_attachments_button.configure(state="disabled")
         self.message_status.set(
-            f"正透過 MCP stdio 寫入 {requested_room_id} 的 SHA 綁定訊息..."
+            self._t("chat.sending").format(room=requested_room_id)
         )
         self.message_status_label.configure(fg=COLORS["amber"])
 
@@ -6947,7 +8286,14 @@ class PixelMonitor:
         if error:
             if self.selected_room_id != expected_room_id:
                 return
-            self.message_status.set(f"發送失敗：{clip(error, 180)}")
+            error_key = {
+                "MESSAGE_SECRET_REJECTED": "chat.secret_rejected",
+                "MESSAGE_BODY_TOO_LONG": "chat.body_too_long",
+            }.get(error)
+            safe_error = self._t(error_key) if error_key else clip(error, 180)
+            self.message_status.set(
+                self._t("chat.send_failed").format(error=safe_error)
+            )
             self.message_status_label.configure(fg=COLORS["red"])
             return
         assert receipt is not None
@@ -6958,10 +8304,16 @@ class PixelMonitor:
         if self.selected_room_id != expected_room_id:
             return
         fanout = int(receipt.get("fanout_count") or 0)
-        delivery = f"FANOUT {fanout} AGENTS // " if fanout else ""
+        delivery = (
+            self._t("chat.fanout").format(count=fanout) if fanout else ""
+        )
         self.message_status.set(
-            f"{delivery}已送出至 {receipt.get('room_id') or self.selected_room_id} // "
-            f"SHA {sha[:16]} // {utc_text(receipt.get('created_utc'))}"
+            self._t("chat.sent").format(
+                fanout=delivery,
+                room=receipt.get("room_id") or self.selected_room_id,
+                sha=sha[:16],
+                created=utc_text(receipt.get("created_utc")),
+            )
         )
         self.message_status_label.configure(fg=COLORS["green"])
         self._request_room_refresh(force=True)
@@ -7039,7 +8391,10 @@ class PixelMonitor:
         except Exception as exc:  # UI must remain alive on transient WAL/lock errors.
             self.root.title(f"{WINDOW_TITLE} // ERROR")
             self.refresh_status.set(self._t("toolbar.refresh_failed"))
-            self.stats_label.configure(text=f"DB ERROR\n{clip(exc, 80)}", fg=COLORS["red"])
+            self.stats_label.configure(
+                text=f"{self._t('sidebar.database_error')}\n{clip(exc, 80)}",
+                fg=COLORS["red"],
+            )
         self._refresh_after_id = self.root.after(self.REFRESH_MS, self.refresh)
 
     def render(self, force: bool = False) -> None:
@@ -7059,6 +8414,7 @@ class PixelMonitor:
             "connect": self._render_connections,
             "memory": self._render_memories,
             "feedback": lambda _query: None,
+            "usage": self._render_usage,
             "announcement": self._render_announcements,
         }
         renderers[self.active_page](query)
@@ -7093,7 +8449,7 @@ class PixelMonitor:
         self.seat_agent_combo.configure(values=library_ids)
         if self.seat_agent.get() not in library_ids:
             self.seat_agent.set("")
-            self.library_selection.set("GLOBAL LIBRARY // NONE SELECTED")
+            self.library_selection.set(self._library_selection_text())
             self._seat_profiles = ()
             self._seat_provider_ids = {}
             self._reset_seat_route_selection()
@@ -7107,10 +8463,10 @@ class PixelMonitor:
         dispatch_line = "/".join(
             f"{label}{dispatch_counts.get(status, 0)}"
             for label, status in (
-                ("RUN", "CLAIMED"),
-                ("RETRY", "RETRYABLE"),
-                ("FAIL", "FAILED"),
-                ("DONE", "COMPLETED"),
+                (self._t("sidebar.dispatch_running"), "CLAIMED"),
+                (self._t("sidebar.dispatch_retry"), "RETRYABLE"),
+                (self._t("sidebar.dispatch_failed"), "FAILED"),
+                (self._t("sidebar.dispatch_completed"), "COMPLETED"),
             )
         )
         online = sum(1 for row in self._library_agents if row.get("online"))
@@ -7171,6 +8527,7 @@ class PixelMonitor:
                 active_tasks=active_tasks,
                 audit_events=self.snapshot.table_counts["events"],
                 sync=utc_text(self.snapshot.generated_utc),
+                labels=self._sidebar_stat_labels(),
             ),
             fg=COLORS["amber"] if self.paused.get() else COLORS["muted"],
         )
@@ -7214,7 +8571,7 @@ class PixelMonitor:
             canvas.create_text(
                 92,
                 82,
-                text="GLOBAL LIBRARY EMPTY",
+                text=self._t("sidebar.library_empty"),
                 fill=COLORS["muted"],
                 font=("Cascadia Mono", 9, "bold"),
             )
@@ -7610,6 +8967,80 @@ class PixelMonitor:
             )
         self.memory_tree.replace(rows)
 
+    def _render_usage(self, query: str) -> None:
+        assert self.snapshot is not None
+        totals = self.snapshot.usage_totals
+        statuses = totals.get("dispatch_statuses") or {}
+        provider_calls = int(totals.get("provider_calls") or 0)
+        reported_calls = int(totals.get("total_tokens_reported_calls") or 0)
+        coverage = (
+            f"{reported_calls / provider_calls:.0%}  {reported_calls:,}/{provider_calls:,}"
+            if provider_calls
+            else "0%  0/0"
+        )
+        self.usage_kpi_values["total_tokens"].set(
+            self._usage_number(totals.get("total_tokens"))
+        )
+        self.usage_kpi_values["input_tokens"].set(
+            self._usage_number(totals.get("input_tokens"))
+        )
+        self.usage_kpi_values["output_tokens"].set(
+            self._usage_number(totals.get("output_tokens"))
+        )
+        self.usage_kpi_values["coverage"].set(coverage)
+        self.usage_kpi_values["dispatches"].set(
+            f"{int(totals.get('completed_dispatches') or 0):,} / "
+            f"{int(statuses.get('failed') or 0):,}"
+        )
+
+        model_rows = tuple(
+            row
+            for row in self.snapshot.usage_by_model
+            if self._match(row, query)
+        )
+        provider_rows = tuple(
+            row
+            for row in self.snapshot.usage_by_provider
+            if self._match(row, query)
+        )
+        self._render_usage_provider_chart(provider_rows)
+        self.usage_tree.delete(*self.usage_tree.get_children())
+        for index, row in enumerate(model_rows):
+            calls = int(row.get("provider_calls") or 0)
+            reported = int(row.get("total_tokens_reported_calls") or 0)
+            self.usage_tree.insert(
+                "",
+                "end",
+                iid=f"usage-{index}",
+                values=(
+                    row.get("provider_id") or "--",
+                    row.get("model_id") or "--",
+                    self._usage_number(calls),
+                    f"{reported:,}/{calls:,}",
+                    self._usage_number_with_coverage(row, "input_tokens"),
+                    self._usage_number_with_coverage(row, "output_tokens"),
+                    self._usage_number_with_coverage(row, "total_tokens"),
+                ),
+            )
+        self._usage_daily_rows = self.snapshot.usage_daily
+        self._usage_model_rows = tuple(
+            row
+            for row in self.snapshot.usage_model_totals
+            if self._match(row, query)
+        )
+        unavailable = int(totals.get("unavailable_dispatches") or 0)
+        partial = int(totals.get("partial_dispatches") or 0)
+        derived = int(totals.get("derived_total_dispatches") or 0)
+        self.usage_note_label.configure(
+            text=(
+                f"{self._t('usage.note')}  // "
+                f"{self._t('usage.unavailable')} {unavailable:,}  // "
+                f"{self._t('usage.partial')} {partial:,}  // "
+                f"{self._t('usage.derived_total')} {derived:,}"
+            )
+        )
+        self._draw_usage_charts()
+
     def copy_text(self, value: str) -> None:
         if not value:
             return
@@ -7645,6 +9076,10 @@ class PixelMonitor:
             with contextlib.suppress(tk.TclError):
                 self.root.after_cancel(self._feedback_reflow_after_id)
             self._feedback_reflow_after_id = None
+        if getattr(self, "_window_icon_after_id", None) is not None:
+            with contextlib.suppress(tk.TclError):
+                self.root.after_cancel(self._window_icon_after_id)
+            self._window_icon_after_id = None
         if getattr(self, "_announcement_window", None) is not None:
             with contextlib.suppress(tk.TclError):
                 self._announcement_window.destroy()
@@ -7710,6 +9145,9 @@ class PixelMonitor:
         checks["secret_plane"] = (
             self.connection_key_entry.cget("show") == "*"
             and self.connection_api_key.get() == ""
+            and not self.connection_key_visible.get()
+            and self.connection_key_visibility_button.cget("text")
+            == self._t("provider.show_api_key")
             and self.connection_endpoint.get() == ""
             and self.feedback_key_entry.cget("show") == "*"
             and self.feedback_key.get() == ""
@@ -7728,7 +9166,7 @@ class PixelMonitor:
         checks["localization"] = (
             tuple(self.locale_combo.cget("values")) == tuple(LOCALE_LABELS.values())
             and self.locale_label.get() in LOCALE_LABELS.values()
-            and self.language_label.cget("text") == "Language"
+            and self.language_label.cget("text") == self._t("toolbar.language")
             and bool(self.refresh_status.get())
             and self.help_button.cget("state") == "normal"
         )

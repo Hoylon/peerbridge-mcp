@@ -8,9 +8,6 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import Any
-
-
 class CodexCatalogError(RuntimeError):
     """A redacted local Codex catalog discovery error."""
 

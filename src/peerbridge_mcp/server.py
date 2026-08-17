@@ -13,7 +13,6 @@ from . import __version__
 from .bridge import Bridge, BridgeError, stable_sha256
 from .protocol import (
     LEGACY_PROTOCOLS,
-    MODERN_PROTOCOL_VERSION,
     PROTOCOL_VERSION,
     SUPPORTED_PROTOCOLS,
     content_response,
@@ -37,6 +36,10 @@ def _object(properties: dict[str, Any], required: list[str] | None = None) -> di
 
 
 STRING = {"type": "string"}
+IDEMPOTENCY_KEY = {
+    "type": "string",
+    "pattern": "^[A-Za-z0-9_.:-]{1,200}$",
+}
 STRING_ARRAY = {"type": "array", "items": STRING}
 SHA256_OR_NULL = {
     "anyOf": [
@@ -45,6 +48,63 @@ SHA256_OR_NULL = {
     ]
 }
 HASH_MAP = {"type": "object", "additionalProperties": SHA256_OR_NULL}
+NULLABLE_NONNEGATIVE_INTEGER = {
+    "anyOf": [
+        {"type": "integer", "minimum": 0},
+        {"type": "null"},
+    ]
+}
+FIELD_REPORTED_CALLS_SCHEMA = _object(
+    {
+        field: {"type": "integer", "minimum": 0}
+        for field in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_input_tokens",
+            "reasoning_tokens",
+        )
+    },
+    [
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cached_input_tokens",
+        "reasoning_tokens",
+    ],
+)
+INFERENCE_USAGE_SCHEMA = _object(
+    {
+        "schema": {"type": "string", "enum": ["peerbridge.inference-usage.v1"]},
+        "status": {
+            "type": "string",
+            "enum": ["reported", "partial", "unavailable"],
+        },
+        "source": STRING,
+        "input_tokens": NULLABLE_NONNEGATIVE_INTEGER,
+        "output_tokens": NULLABLE_NONNEGATIVE_INTEGER,
+        "total_tokens": NULLABLE_NONNEGATIVE_INTEGER,
+        "cached_input_tokens": NULLABLE_NONNEGATIVE_INTEGER,
+        "reasoning_tokens": NULLABLE_NONNEGATIVE_INTEGER,
+        "field_reported_calls": FIELD_REPORTED_CALLS_SCHEMA,
+        "reported_calls": {"type": "integer", "minimum": 0},
+        "total_calls": {"type": "integer", "minimum": 1},
+        "total_tokens_derived": {"type": "boolean"},
+    },
+    [
+        "schema",
+        "status",
+        "source",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "cached_input_tokens",
+        "reasoning_tokens",
+        "reported_calls",
+        "total_calls",
+        "total_tokens_derived",
+    ],
+)
 
 TOOL_SCHEMAS = [
     {
@@ -73,8 +133,9 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "enum": ["official", "relay", "local"],
                 },
+                "idempotency_key": IDEMPOTENCY_KEY,
             },
-            ["recipient", "task_id", "subject", "body"],
+            ["recipient", "task_id", "subject", "body", "idempotency_key"],
         ),
     },
     {
@@ -96,8 +157,9 @@ TOOL_SCHEMAS = [
                     "enum": ["low", "normal", "high", "critical"],
                 },
                 "artifact_paths": STRING_ARRAY,
+                "idempotency_key": IDEMPOTENCY_KEY,
             },
-            ["room_id", "task_id", "subject", "body"],
+            ["room_id", "task_id", "subject", "body", "idempotency_key"],
         ),
     },
     {
@@ -118,8 +180,9 @@ TOOL_SCHEMAS = [
                     "enum": ["low", "normal", "high", "critical"],
                 },
                 "artifact_paths": STRING_ARRAY,
+                "idempotency_key": IDEMPOTENCY_KEY,
             },
-            ["room_id", "task_id", "subject", "body"],
+            ["room_id", "task_id", "subject", "body", "idempotency_key"],
         ),
     },
     {
@@ -179,10 +242,30 @@ TOOL_SCHEMAS = [
         "name": "reconcile_message_dispatches",
         "description": (
             "Coordinator-only terminal reconciliation for active discussion prompts "
-            "whose seat, immutable route, or retry budget can no longer run."
+            "whose seat, immutable route, runtime match, or retry budget can no longer run."
         ),
         "inputSchema": _object(
-            {"limit": {"type": "integer", "minimum": 1, "maximum": 1000}}
+            {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 1000},
+                "route_runtime_observations": {
+                    "type": "array",
+                    "items": _object(
+                        {
+                            "message_id": STRING,
+                            "route_request_sha256": {
+                                "type": "string",
+                                "pattern": "^[0-9a-f]{64}$",
+                            },
+                            "match_count": {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 1000,
+                            },
+                        },
+                        ["message_id", "route_request_sha256", "match_count"],
+                    ),
+                },
+            }
         ),
     },
     {
@@ -337,7 +420,11 @@ TOOL_SCHEMAS = [
                 "provider_id": STRING,
                 "secret_backend": {
                     "type": "string",
-                    "enum": ["windows-credential-manager", "cc-switch"],
+                    "enum": [
+                        "windows-credential-manager",
+                        "cc-switch",
+                        "native-acp",
+                    ],
                 },
                 "credential_target": STRING,
                 "endpoint_sha256": STRING,
@@ -413,6 +500,7 @@ TOOL_SCHEMAS = [
                 "subject": STRING,
                 "body": STRING,
                 "inference_receipt_sha256": STRING,
+                "inference_usage": INFERENCE_USAGE_SCHEMA,
             },
             ["message_id", "lease_token", "body", "inference_receipt_sha256"],
         ),
@@ -687,6 +775,13 @@ READ_ONLY_TOOLS = {
     "verify_audit_chain",
 }
 
+# These tools allocate message, fanout, and dispatch identifiers. Persist their
+# completed results before the trailing tool audit so a retried JSON-RPC request
+# cannot allocate a second delivery after the first mutation committed.
+IDEMPOTENT_MESSAGE_TOOLS = frozenset(
+    {"send_message", "send_room_fanout", "post_room_message"}
+)
+
 for _tool in TOOL_SCHEMAS:
     _tool["annotations"] = {
         "readOnlyHint": _tool["name"] in READ_ONLY_TOOLS,
@@ -753,6 +848,78 @@ def dispatch(bridge: Bridge, name: str, arguments: dict[str, Any]) -> dict[str, 
         raise BridgeError(f"unknown tool: {name}")
     method: Callable[[dict[str, Any]], dict[str, Any]] = getattr(bridge, method_name)
     return method(arguments)
+
+
+def _mutation_call_sha256(
+    bridge: Bridge,
+    name: str,
+    arguments: dict[str, Any],
+) -> str:
+    idempotency_key = str(arguments.get("idempotency_key") or "")
+    return stable_sha256(
+        {
+            "scope": bridge.scope,
+            "actor": bridge.agent_id,
+            "tool": name,
+            "idempotency_key": idempotency_key,
+        }
+    )
+
+
+def _load_mutation_receipt(
+    bridge: Bridge,
+    call_sha256: str,
+    name: str,
+    arguments: dict[str, Any],
+) -> dict[str, Any] | None:
+    with bridge._connect() as connection:
+        connection.execute(
+            """CREATE TABLE IF NOT EXISTS mcp_mutation_receipts(
+                   call_sha256 TEXT PRIMARY KEY,
+                   scope TEXT NOT NULL,
+                   actor TEXT NOT NULL,
+                   session_id TEXT NOT NULL,
+                   tool TEXT NOT NULL,
+                   arguments_sha256 TEXT NOT NULL,
+                   result_json TEXT NOT NULL,
+                   result_sha256 TEXT NOT NULL,
+                   created_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+               )"""
+        )
+        row = connection.execute(
+            """SELECT actor, tool, arguments_sha256, result_json, result_sha256
+                 FROM mcp_mutation_receipts
+                WHERE call_sha256=? AND scope=?""",
+            (call_sha256, bridge.scope),
+        ).fetchone()
+    if row is None:
+        return None
+    if (
+        str(row["actor"]) != bridge.agent_id
+        or str(row["tool"]) != name
+        or str(row["arguments_sha256"]) != stable_sha256(arguments)
+    ):
+        raise BridgeError("MCP idempotency key was reused with different arguments")
+    result = json.loads(str(row["result_json"]))
+    if not isinstance(result, dict) or stable_sha256(result) != row["result_sha256"]:
+        raise sqlite3.DatabaseError("MCP mutation receipt integrity check failed")
+    return result
+
+
+def _audit_tool_result_fail_safe(
+    bridge: Bridge, name: str, result: dict[str, Any]
+) -> None:
+    try:
+        with bridge._connect() as connection:
+            bridge._event(
+                connection,
+                "tool.returned",
+                {"tool": name, "result_sha256": stable_sha256(result)},
+            )
+    except sqlite3.Error:
+        # Dispatch already committed. Audit availability must not turn that
+        # durable success into an internal error that invites a duplicate retry.
+        return
 
 
 def _request_protocol_version(request: dict[str, Any]) -> str | None:
@@ -974,6 +1141,28 @@ def handle_request(
         # Restricted model runs pass an explicit allow-list; keep their read-only
         # calls fully audited because provider receipts bind those exact events.
         audit_tool_call = name not in READ_ONLY_TOOLS or allowed_tools is not None
+        call_sha256 = (
+            _mutation_call_sha256(bridge, name, arguments)
+            if name in IDEMPOTENT_MESSAGE_TOOLS
+            else None
+        )
+        replayed_result: dict[str, Any] | None = None
+        if call_sha256 is not None:
+            try:
+                replayed_result = _load_mutation_receipt(
+                    bridge, call_sha256, name, arguments
+                )
+            except BridgeError as exc:
+                return content_response(
+                    request_id,
+                    {"error": str(exc), "tool": name},
+                    modern=modern,
+                    is_error=True,
+                )
+            except (json.JSONDecodeError, sqlite3.Error):
+                return error_response(
+                    request_id, -32603, "internal bridge database error"
+                )
         if audit_tool_call:
             with bridge._connect() as connection:
                 bridge._event(
@@ -982,14 +1171,24 @@ def handle_request(
                     {"tool": name, "arguments_sha256": stable_sha256(arguments)},
                 )
         try:
-            result = dispatch(bridge, str(name), arguments)
+            dispatch_arguments = arguments
+            if call_sha256 is not None and replayed_result is None:
+                dispatch_arguments = {
+                    **arguments,
+                    "__mcp_receipt": {
+                        "call_sha256": call_sha256,
+                        "arguments_sha256": stable_sha256(arguments),
+                        "session_id": bridge.session_id,
+                        "tool": name,
+                    },
+                }
+            result = (
+                replayed_result
+                if replayed_result is not None
+                else dispatch(bridge, str(name), dispatch_arguments)
+            )
             if audit_tool_call:
-                with bridge._connect() as connection:
-                    bridge._event(
-                        connection,
-                        "tool.returned",
-                        {"tool": name, "result_sha256": stable_sha256(result)},
-                    )
+                _audit_tool_result_fail_safe(bridge, name, result)
             return content_response(request_id, result, modern=modern)
         except (BridgeError, ValueError, TypeError) as exc:
             if audit_tool_call:

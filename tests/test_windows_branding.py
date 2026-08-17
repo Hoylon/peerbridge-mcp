@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import runpy
 import struct
+import sys
 from pathlib import Path
 
 from peerbridge_mcp.monitor import (
@@ -58,6 +60,11 @@ def test_desktop_shortcut_installer_binds_the_peerbridge_icon() -> None:
     assert "PeerBridge.MCP.ControlRoom" in script
     assert "GetFolderPath('Programs')" in script
     assert "HKCU:\\Software\\Classes\\AppUserModelId" in script
+    assert "[string]$ExecutablePath" in script
+    assert '"--workspace-launch --project-root' in script
+    assert '--db `"$database`" --scope `"peerbridge-main`"' in script
+    assert "$shortcutWorkingDirectory = $projectRoot" in script
+    assert "$shortcutIcon = $ExecutablePath" in script
 
 
 def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
@@ -75,6 +82,8 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     ).read_text(encoding="utf-8")
 
     assert "$pyInstallerRunner" in build_script
+    assert "$hookRoot" in build_script
+    assert "--additional-hooks-dir $hookRoot" in build_script
     assert "-m PyInstaller" not in build_script
     assert "--collect-all cryptography" not in build_script
     for module in (
@@ -86,11 +95,16 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     ):
         assert f"--hidden-import {module}" in build_script
     assert "--icon $icon" in build_script
+    assert 'args[:1] == ["--workspace-launch"]' in entry
     assert "--version-file $versionFile" in build_script
     assert "PeerBridgeControlRoom.exe" in build_script
     assert "[string]$ArtifactRoot" in build_script
     assert "--source-launch" in launcher
     assert "--launcher-ready-path" in launcher
+    assert "__PYVENV_LAUNCHER__" in launcher
+    assert "sys._base_executable" in launcher
+    assert "-f $entryScript, $projectRoot, $database, $scope, $readyPath" in launcher
+    assert "'\"{0}\" --source-launch" in launcher
     assert "runtime_kind -ne 'source'" in launcher
     assert ".peerbridge-artifacts" not in launcher
     assert "PeerBridgeControlRoom.exe" not in launcher
@@ -121,6 +135,24 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
         assert f"StringStruct('{field}'" in version_template
 
 
+def test_source_launcher_keeps_managed_children_in_the_active_environment() -> None:
+    entry_path = PROJECT_ROOT / "scripts" / "peerbridge_control_room_entry.py"
+    namespace = runpy.run_path(str(entry_path), run_name="peerbridge_entry_contract_test")
+
+    expected_runtime = Path(sys.executable).resolve()
+    assert namespace["_runtime_path"]() == expected_runtime
+    expected_command_runtime = expected_runtime
+    if sys.platform == "win32":
+        expected_command_runtime = Path(sys._base_executable).resolve()
+    assert namespace["_runtime_command"]() == [
+        str(expected_command_runtime),
+        str(entry_path.resolve()),
+    ]
+    environment = namespace["_runtime_environment"]()
+    if sys.platform == "win32":
+        assert environment["__PYVENV_LAUNCHER__"] == str(expected_runtime)
+
+
 def test_pyinstaller_runner_avoids_windows_wmi_dependency() -> None:
     script = (PROJECT_ROOT / "scripts" / "run_pyinstaller.py").read_text(
         encoding="utf-8"
@@ -144,6 +176,10 @@ def test_windows_portable_packager_is_create_only_and_credential_free() -> None:
     assert "create-only" in script
     assert "Compress-Archive" in script
     assert "Launch PeerBridge.cmd" in script
+    assert "README.zh-Hant.md" in script
+    assert "README.zh-Hans.md" in script
+    assert "status --porcelain=v1 --untracked-files=all" in script
+    assert "--untracked-files=no" not in script
     assert "%LOCALAPPDATA%\\PeerBridge\\workspace" in script
     assert "Credential Manager" in script
     for name in (
@@ -200,6 +236,8 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "--send-self-test" in script
     assert "'peerbridge_mcp', 'doctor'" in script
     assert "Portable create-only init did not create" in script
+    assert "Portable localized quickstart differs from source" in script
+    assert "$leaf -eq 'direct_url.json'" in script
     assert "THIRD_PARTY_NOTICES.md" in script
     assert "peerbridge.windows-runtime-licenses.v1" in script
     assert "Portable runtime-license file differs from its manifest" in script
@@ -273,3 +311,14 @@ def test_windows_icon_helpers_are_safe_without_a_windows_icon(monkeypatch, tmp_p
     monkeypatch.setattr("peerbridge_mcp.monitor.sys.platform", "linux")
     assert apply_windows_window_icon(object(), tmp_path / "missing.ico") == ()
     release_windows_icon_handles((123,))
+
+
+def test_monitor_reapplies_branding_after_tk_maps_the_native_window() -> None:
+    source = (PROJECT_ROOT / "src" / "peerbridge_mcp" / "monitor.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "250, self._reapply_mapped_window_icon" in source
+    assert "configure_windows_app_identity()" in source
+    assert "release_windows_icon_handles(previous_handles)" in source
+    assert "self.root.after_cancel(self._window_icon_after_id)" in source

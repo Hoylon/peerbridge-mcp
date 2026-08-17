@@ -1,5 +1,6 @@
 param(
-    [string]$ShortcutPath
+    [string]$ShortcutPath,
+    [string]$ExecutablePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -7,14 +8,31 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $launcher = Join-Path $projectRoot 'scripts\launch_control_room.ps1'
 $icon = Join-Path $projectRoot 'src\peerbridge_mcp\release_support\peerbridge-icon.ico'
 $appUserModelId = 'PeerBridge.MCP.ControlRoom'
+$database = Join-Path $projectRoot '.peerbridge\peerbridge.sqlite3'
 if (-not $ShortcutPath) {
     $ShortcutPath = Join-Path ([Environment]::GetFolderPath('Desktop')) 'PeerBridge MCP Control Room.lnk'
 }
-if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
-    throw "Launcher not found: $launcher"
+if ($ExecutablePath) {
+    $ExecutablePath = [System.IO.Path]::GetFullPath($ExecutablePath)
+    if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+        throw "PeerBridge executable not found: $ExecutablePath"
+    }
+    $shortcutTarget = $ExecutablePath
+    $shortcutArguments = "--workspace-launch --project-root `"$projectRoot`" --db `"$database`" --scope `"peerbridge-main`""
+    $shortcutWorkingDirectory = $projectRoot
+    $shortcutIcon = $ExecutablePath
 }
-if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
-    throw "Icon not found: $icon"
+else {
+    if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+        throw "Launcher not found: $launcher"
+    }
+    if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
+        throw "Icon not found: $icon"
+    }
+    $shortcutTarget = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+    $shortcutArguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
+    $shortcutWorkingDirectory = $projectRoot
+    $shortcutIcon = $icon
 }
 
 if (-not ('PeerBridge.WindowsShortcutIdentity' -as [type])) {
@@ -122,10 +140,10 @@ $shortcutPaths = @($ShortcutPath, $startMenuShortcut) | Select-Object -Unique
 
 foreach ($path in $shortcutPaths) {
     $shortcut = $shell.CreateShortcut($path)
-    $shortcut.TargetPath = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
-    $shortcut.WorkingDirectory = $projectRoot
-    $shortcut.IconLocation = "$icon,0"
+    $shortcut.TargetPath = $shortcutTarget
+    $shortcut.Arguments = $shortcutArguments
+    $shortcut.WorkingDirectory = $shortcutWorkingDirectory
+    $shortcut.IconLocation = "$shortcutIcon,0"
     $shortcut.Description = 'Launch the PeerBridge MCP Control Room'
     $shortcut.Save()
     [PeerBridge.WindowsShortcutIdentity]::SetAppUserModelId($path, $appUserModelId)
@@ -134,12 +152,14 @@ foreach ($path in $shortcutPaths) {
 $registrationPath = "HKCU:\Software\Classes\AppUserModelId\$appUserModelId"
 New-Item -Path $registrationPath -Force | Out-Null
 New-ItemProperty -Path $registrationPath -Name 'DisplayName' -Value 'PeerBridge MCP Control Room' -PropertyType String -Force | Out-Null
-New-ItemProperty -Path $registrationPath -Name 'IconUri' -Value $icon -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $registrationPath -Name 'IconUri' -Value $shortcutIcon -PropertyType String -Force | Out-Null
 
 [pscustomobject]@{
     Shortcut = (Resolve-Path -LiteralPath $ShortcutPath).Path
     StartMenuShortcut = (Resolve-Path -LiteralPath $startMenuShortcut).Path
-    Icon = (Resolve-Path -LiteralPath $icon).Path
-    Target = $shortcut.TargetPath
+    Icon = (Resolve-Path -LiteralPath $shortcutIcon).Path
+    Target = $shortcutTarget
+    Arguments = $shortcutArguments
+    WorkingDirectory = $shortcutWorkingDirectory
     AppUserModelId = $appUserModelId
 } | ConvertTo-Json

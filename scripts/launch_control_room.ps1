@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
+$python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $pythonw = Join-Path $projectRoot '.venv\Scripts\pythonw.exe'
 $entryScript = Join-Path $PSScriptRoot 'peerbridge_control_room_entry.py'
 $database = Join-Path $projectRoot '.peerbridge\peerbridge.sqlite3'
@@ -19,7 +20,7 @@ function Show-LaunchError {
     ) | Out-Null
 }
 
-if (-not (Test-Path -LiteralPath $pythonw)) {
+if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $pythonw)) {
     Show-LaunchError "PeerBridge Python runtime not found:`n$pythonw"
     exit 1
 }
@@ -32,12 +33,22 @@ if (-not (Test-Path -LiteralPath $entryScript -PathType Leaf)) {
 $readyDirectory = Join-Path $projectRoot '.peerbridge\launcher-ready'
 [System.IO.Directory]::CreateDirectory($readyDirectory) | Out-Null
 $readyPath = Join-Path $readyDirectory ("source-launch-{0}.json" -f [Guid]::NewGuid().ToString('N'))
-$arguments = '--source-launch --project-root "{0}" --db "{1}" --scope "{2}" --launcher-ready-path "{3}"' -f $projectRoot, $database, $scope, $readyPath
+$arguments = '"{0}" --source-launch --project-root "{1}" --db "{2}" --scope "{3}" --launcher-ready-path "{4}"' -f $entryScript, $projectRoot, $database, $scope, $readyPath
 $launcher = $null
 $supervisorPid = $null
 
 try {
-    $launcher = Start-Process -FilePath $pythonw -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Normal -PassThru
+    $basePython = (& $python -c "import sys; print(sys._base_executable)").Trim()
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $basePython -PathType Leaf)) {
+        throw 'PeerBridge could not resolve the active virtual environment base runtime.'
+    }
+    $previousVenvLauncher = [Environment]::GetEnvironmentVariable('__PYVENV_LAUNCHER__', 'Process')
+    try {
+        [Environment]::SetEnvironmentVariable('__PYVENV_LAUNCHER__', $pythonw, 'Process')
+        $launcher = Start-Process -FilePath $basePython -ArgumentList $arguments -WorkingDirectory $projectRoot -WindowStyle Hidden -PassThru
+    } finally {
+        [Environment]::SetEnvironmentVariable('__PYVENV_LAUNCHER__', $previousVenvLauncher, 'Process')
+    }
     $deadline = [DateTime]::UtcNow.AddSeconds($startupTimeoutSeconds)
     $payload = $null
     $lastReadError = $null
@@ -83,9 +94,10 @@ try {
     }
 
     $supervisorPid = [int]$payload.supervisor_pid
+    $launcher.Refresh()
     $supervisor = Get-Process -Id $supervisorPid -ErrorAction Stop
-    if (-not [string]::Equals([string]$supervisor.Path, $expectedRuntime, [StringComparison]::OrdinalIgnoreCase)) {
-        throw 'Source supervisor runtime does not match the source UI runtime.'
+    if (-not [string]::Equals([string]$supervisor.Path, [string]$launcher.Path, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Source supervisor process image does not match the source UI process image.'
     }
     exit 0
 } catch {

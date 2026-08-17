@@ -17,11 +17,16 @@ JWT_PATTERN = re.compile(
     r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b"
 )
 AWS_ACCESS_KEY_PATTERN = re.compile(r"\bAKIA[0-9A-Z]{16}\b")
+PRIVATE_KEY_BLOCK_PATTERN = re.compile(
+    r"-----BEGIN (?P<private_key_kind>(?:RSA |EC |OPENSSH )?PRIVATE KEY)-----"
+    r".*?-----END (?P=private_key_kind)-----",
+    re.IGNORECASE | re.DOTALL,
+)
 PRIVATE_KEY_PATTERN = re.compile(
     r"-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----", re.IGNORECASE
 )
 AUTH_PATTERN = re.compile(
-    r"(?im)(?P<prefix>authorization\s*[:=]\s*(?:bearer|basic)?\s*|"
+    r"(?im)(?P<prefix>authorization[ \t]*[:=][ \t]*(?:bearer|basic)?[ \t]*|"
     r"(?:bearer|basic)\s+)(?P<value>[^\r\n,;]+)"
 )
 SENSITIVE_QUERY_PATTERN = re.compile(
@@ -30,7 +35,7 @@ SENSITIVE_QUERY_PATTERN = re.compile(
 )
 ASSIGNMENT_PATTERN = re.compile(
     r"(?im)(?P<prefix>[\"']?[A-Za-z0-9_.-]*(?:api[_-]?key|access[_-]?token|token|"
-    r"authorization|password|secret)[\"']?\s*[:=]\s*)(?P<value>[^\r\n,;}&]+)"
+    r"authorization|password|secret)[\"']?[ \t]*[:=][ \t]*)(?P<value>[^\r\n,;}&]+)"
 )
 
 # Kept for compatibility with receipt modules that need a compiled search/sub pattern.
@@ -54,20 +59,14 @@ _SOURCE_REFERENCE_VALUES = {
     "token",
     "value",
 }
-_TEST_SOURCE_MARKERS = (
-    "fixture",
-    "placeholder",
-    "test",
-    "example",
-    "fake",
-    "dummy",
-    "not-for",
-    "not-allowed",
-    "password",
-    "provider-secret",
-    "relay-key",
-    "secret",
-    "unused",
+SAFE_TEST_CREDENTIAL_LITERALS = frozenset(
+    {
+        "test-admin-token-not-for-production",
+        "test-apps-script-secret-0123456789-ABCDEFGHIJKLMN",
+        "test-ingress-secret-0123456789-ABCDEFGHIJKLMNO",
+        "test-rate-salt-not-for-production",
+        "unit-test-provider-secret",
+    }
 )
 _SENSITIVE_NAMES = {
     "api_key",
@@ -174,9 +173,8 @@ def _target_names(node: ast.AST) -> tuple[str, ...]:
 
 
 def _source_assignment_contains_secret(value: str, allow_test_fixtures: bool) -> bool:
-    if allow_test_fixtures and any(
-        marker in value.lower() for marker in _TEST_SOURCE_MARKERS
-    ):
+    candidate = _normalized_assignment_value(value)
+    if allow_test_fixtures and candidate in SAFE_TEST_CREDENTIAL_LITERALS:
         return False
     return _assignment_contains_secret(value)
 
@@ -261,16 +259,13 @@ def source_text_contains_secret(
 def redact_secrets(value: Any, replacement: str = "[REDACTED]") -> str:
     """Redact credentials while retaining assignment/query structure for diagnosis."""
     text = "" if value is None else str(value)
+    text = PRIVATE_KEY_BLOCK_PATTERN.sub(replacement, text)
     text = AUTH_PATTERN.sub(lambda match: f"{match.group('prefix')}{replacement}", text)
     text = SENSITIVE_QUERY_PATTERN.sub(
         lambda match: f"{match.group('prefix')}{replacement}", text
     )
     text = ASSIGNMENT_PATTERN.sub(
-        lambda match: (
-            f"{match.group('prefix')}{replacement}"
-            if _assignment_contains_secret(match.group("value"))
-            else match.group(0)
-        ),
+        lambda match: f"{match.group('prefix')}{replacement}",
         text,
     )
     for pattern in (

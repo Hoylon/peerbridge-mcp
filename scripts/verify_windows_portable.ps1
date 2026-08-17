@@ -104,6 +104,7 @@ try {
         if (
             $leaf -eq '.env' -or $leaf.EndsWith('.pem') -or $leaf.EndsWith('.key') -or
             $leaf.EndsWith('.p12') -or $leaf.EndsWith('.pfx') -or
+            $leaf -eq 'direct_url.json' -or
             $leaf.EndsWith('.sqlite') -or $leaf.EndsWith('.sqlite3') -or
             $leaf.EndsWith('.db') -or $leaf.EndsWith('.log')
         ) {
@@ -136,6 +137,23 @@ foreach ($legalName in @('LICENSE', 'TRADEMARKS.md', 'BRAND_ASSETS.md', 'THIRD_P
     $packagedHash = (Get-FileHash -LiteralPath $packaged -Algorithm SHA256).Hash
     if ($sourceHash -ne $packagedHash) {
         throw "Portable legal file differs from source: $legalName"
+    }
+}
+$localizedReadmes = [ordered]@{
+    'README.zh-Hant.md' = 'docs\alpha-quickstart.zh-Hant.md'
+    'README.zh-Hans.md' = 'docs\alpha-quickstart.zh-Hans.md'
+}
+foreach ($localizedName in $localizedReadmes.Keys) {
+    $source = Join-Path $projectRoot $localizedReadmes[$localizedName]
+    $packaged = Join-Path $packageRoot.FullName $localizedName
+    if (-not (Test-Path -LiteralPath $packaged -PathType Leaf)) {
+        throw "Portable localized quickstart is missing: $localizedName"
+    }
+    if (
+        (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne
+        (Get-FileHash -LiteralPath $packaged -Algorithm SHA256).Hash
+    ) {
+        throw "Portable localized quickstart differs from source: $localizedName"
     }
 }
 

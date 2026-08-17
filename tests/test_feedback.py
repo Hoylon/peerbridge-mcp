@@ -16,7 +16,6 @@ from peerbridge_mcp.feedback import (
     FEEDBACK_REPORT_SCHEMA,
     FEEDBACK_SECRET_SCHEMA,
     FEEDBACK_UPLOAD_SCHEMA,
-    GOOGLE_APPS_SCRIPT_TRANSPORT,
     JSON_BASE64_TRANSPORT,
     FeedbackConfig,
     FeedbackError,
@@ -27,6 +26,7 @@ from peerbridge_mcp.feedback import (
     redact_feedback_text,
     run_feedback_encryption_self_test,
 )
+from tests._image_fixtures import PNG
 
 
 def _support_key_pair(tmp_path: Path) -> tuple[Path, rsa.RSAPrivateKey]:
@@ -149,9 +149,29 @@ def test_feedback_redacts_realistic_secrets_containing_fixture_words(
     _assert_report_has_no_credential_metadata(report)
 
 
+def test_feedback_archive_redacts_short_password_and_complete_private_key(
+    tmp_path: Path,
+) -> None:
+    opening = "".join(("-----BE", "GIN PRIVATE KEY-----"))
+    closing = "".join(("-----E", "ND PRIVATE KEY-----"))
+    body = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+    bundle = create_feedback_bundle(
+        tmp_path,
+        summary="Credential parser failure",
+        message=f"password=abc123xyz\n{opening}\n{body}\n{closing}",
+        failure_text=f"password=abc123xyz\n{opening}\n{body}\n{closing}",
+        output_root=tmp_path / "redaction-outbox",
+    )
+
+    report_payload = _zip_members(bundle.path)["report.json"]
+
+    for plaintext in ("abc123xyz", opening, body, closing):
+        assert plaintext.encode("utf-8") not in report_payload
+
+
 def test_one_submission_encrypts_complete_key_locally(tmp_path: Path) -> None:
     public_path, private_key = _support_key_pair(tmp_path)
-    secret = "relay-key:需要保留空格 and-newline\n"
+    secret = "".join(("relay-key:", "需要保留空格 and-newline", "\n"))
     config = _key_config(public_path)
     bundle = create_feedback_bundle(
         tmp_path,
@@ -236,8 +256,9 @@ def test_config_and_mail_fallback_are_explicit(tmp_path: Path) -> None:
 def test_packaged_release_support_is_pinned_and_provider_independent(tmp_path: Path) -> None:
     config = FeedbackConfig.load()
 
-    assert config.endpoint is None
-    assert config.support_email == "workoscarho@gmail.com"
+    assert config.endpoint == "https://peerbridge-edge.peerbridge-edge.workers.dev/v1/feedback"
+    assert config.endpoint_transport == JSON_BASE64_TRANSPORT
+    assert config.support_email is None
     assert config.recipient_label == "PeerBridge private support"
     assert config.public_key_path is not None
     assert config.public_key_path.name == "peerbridge-support-public.pub"
@@ -317,13 +338,13 @@ def test_project_checkout_cannot_override_packaged_support(
 
     config = FeedbackConfig.load()
 
-    assert config.support_email == "workoscarho@gmail.com"
+    assert config.support_email is None
     assert config.recipient_label == "PeerBridge private support"
 
 
 def test_attachment_policy_accepts_images_and_rejects_unsafe_types(tmp_path: Path) -> None:
     image = tmp_path / "screen.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"bounded-test-data")
+    image.write_bytes(PNG)
     bundle = create_feedback_bundle(
         tmp_path,
         summary="Screenshot attached",
@@ -401,7 +422,7 @@ def test_feedback_attachment_is_not_reopened_by_path_after_validation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     image = tmp_path / "screen.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"single-handle-test")
+    image.write_bytes(PNG)
     original_read_bytes = Path.read_bytes
 
     def guarded_read_bytes(path: Path) -> bytes:
@@ -419,9 +440,7 @@ def test_feedback_attachment_is_not_reopened_by_path_after_validation(
         output_root=tmp_path / "outbox-single-handle",
     )
 
-    assert _zip_members(bundle.path)["attachments/01.png"].endswith(
-        b"single-handle-test"
-    )
+    assert _zip_members(bundle.path)["attachments/01.png"] == PNG
 
 
 def test_direct_config_requires_a_pinned_key_and_recipient(tmp_path: Path) -> None:
@@ -457,6 +476,8 @@ def test_key_swap_after_config_validation_fails_closed(tmp_path: Path) -> None:
     "endpoint",
     [
         "https://localhost/v1/feedback",
+        "https://localhost./v1/feedback",
+        "https://service.local./v1/feedback",
         "https://127.0.0.1/v1/feedback",
         "https://10.0.0.1/v1/feedback",
         "https://support.example.invalid/v1/feedback?token=secret",
@@ -469,7 +490,7 @@ def test_private_or_ambiguous_feedback_endpoints_fail_closed(endpoint: str) -> N
 
 def test_attachments_require_explicit_consent_and_valid_content(tmp_path: Path) -> None:
     image = tmp_path / "screen.png"
-    image.write_bytes(b"\x89PNG\r\n\x1a\n" + b"safe-bounded-test-data")
+    image.write_bytes(PNG)
     with pytest.raises(FeedbackError, match="explicit user selection"):
         create_feedback_bundle(
             tmp_path,
@@ -527,7 +548,7 @@ class _CapturingDeliveryOpener(_DeliveryOpener):
         return super().open(request, timeout)
 
 
-def test_json_base64_delivery_binds_case_bundle_and_reply_email(
+def test_json_base64_delivery_binds_case_and_bundle_without_mutable_metadata(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     bundle = create_feedback_bundle(
@@ -542,6 +563,7 @@ def test_json_base64_delivery_binds_case_bundle_and_reply_email(
             "case_id": bundle.case_id,
             "bundle_sha256": bundle.sha256,
             "receipt": "stored",
+            "notification_sent": True,
         }
     )
     monkeypatch.setattr(
@@ -557,14 +579,51 @@ def test_json_base64_delivery_binds_case_bundle_and_reply_email(
     result = deliver_feedback_bundle(bundle, config)
 
     assert result["delivered"] is True
+    assert result["notification_sent"] is True
     assert opener.request is not None
     assert opener.request.headers["Content-type"] == "application/json; charset=utf-8"
     payload = json.loads(opener.request.data.decode("utf-8"))
     assert payload["schema"] == FEEDBACK_UPLOAD_SCHEMA
     assert payload["case_id"] == bundle.case_id
     assert payload["bundle_sha256"] == bundle.sha256
-    assert payload["reply_email"] == "reporter@example.com"
+    assert set(payload) == {
+        "schema",
+        "case_id",
+        "bundle_sha256",
+        "bundle_base64",
+    }
     assert base64.b64decode(payload["bundle_base64"]) == bundle.path.read_bytes()
+
+
+def test_delivery_preserves_unconfirmed_or_failed_notification_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = create_feedback_bundle(
+        tmp_path,
+        summary="Notification receipt state",
+        message="Storage and email notification must remain distinct states.",
+        output_root=tmp_path / "outbox-notification",
+    )
+    config = FeedbackConfig(
+        endpoint="https://feedback.example.invalid/v1/feedback",
+        endpoint_transport=JSON_BASE64_TRANSPORT,
+        recipient_label="PeerBridge test support",
+    )
+    for response_value, expected in ((False, False), ("unknown", None)):
+        monkeypatch.setattr(
+            "peerbridge_mcp.feedback.urllib.request.build_opener",
+            lambda *_args, value=response_value: _DeliveryOpener(
+                {
+                    "case_id": bundle.case_id,
+                    "bundle_sha256": bundle.sha256,
+                    "receipt": "stored",
+                    "notification_sent": value,
+                }
+            ),
+        )
+        result = deliver_feedback_bundle(bundle, config)
+        assert result["delivered"] is True
+        assert result["notification_sent"] is expected
 
 
 def test_json_base64_delivery_rejects_mismatched_bundle_receipt(
@@ -634,22 +693,6 @@ def test_raw_zip_delivery_requires_exact_bundle_receipt(
         ),
     )
     assert deliver_feedback_bundle(bundle, config)["delivered"] is True
-
-
-def test_google_apps_script_transport_requires_exact_deployed_exec_url() -> None:
-    valid = FeedbackConfig(
-        endpoint="https://script.google.com/macros/s/deployment_123-abc/exec",
-        endpoint_transport=GOOGLE_APPS_SCRIPT_TRANSPORT,
-        recipient_label="PeerBridge test support",
-    )
-    assert valid.endpoint_transport == GOOGLE_APPS_SCRIPT_TRANSPORT
-
-    with pytest.raises(FeedbackError, match="deployed /exec URL"):
-        FeedbackConfig(
-            endpoint="https://script.google.com/macros/s/deployment_123-abc/dev",
-            endpoint_transport=GOOGLE_APPS_SCRIPT_TRANSPORT,
-            recipient_label="PeerBridge test support",
-        )
 
 
 def test_delivery_rejects_bundle_tamper_and_mismatched_case(

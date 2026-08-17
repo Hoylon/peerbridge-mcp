@@ -1,6 +1,6 @@
 # PeerBridge Local Alpha Support Matrix
 
-This matrix describes the `0.1.0-alpha.2` local candidate. A test or implementation entry
+This matrix describes the `0.1.0-alpha.3` local candidate. A test or implementation entry
 does not upgrade a provider route to verified official identity.
 
 ## Platforms and distribution
@@ -46,7 +46,7 @@ observed model identities separately and fails closed on an unconfigured mismatc
 | Read-only update check | Supported | Alpha checks include GitHub pre-releases; no automatic installation. |
 | Image/text attachment transport | Supported with limits | Agents do not yet receive provider-specific multimodal image payloads. |
 | Skills | Not implemented | No picker, version/hash binding, permission preview, or invocation provenance yet. |
-| Private feedback | Verified local Alpha | A configured private support email draft and release-bound public key are packaged. Normal diagnostics redact secrets; complete-key escalation is explicit and locally encrypted. Automatic HTTPS intake is not claimed. |
+| Private feedback | Verified local Alpha | The packaged HTTPS intake validates a sealed bundle, stores it temporarily in private R2 with bounded D1 metadata, and sends a maintainer notification. Normal diagnostics redact secrets; complete-key escalation is explicit and locally encrypted before upload. Local retry fallback is preserved. |
 | Usage analytics | Off by default, local only | No central sender and no claim of unique-user counts. |
 
 ## Resource and data boundaries

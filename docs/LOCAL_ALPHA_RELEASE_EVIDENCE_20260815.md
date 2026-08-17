@@ -1,18 +1,19 @@
 # PeerBridge Local Alpha Release Evidence
 
-Date: 2026-08-16 (Asia/Taipei)
+Date: 2026-08-17 (Asia/Taipei)
 
 This report records the current **local Alpha candidate** gates. It does not authorize a
 GitHub publication, claim Stable status, or include the remote/mobile product profile.
 
 ## Regression and focused gates
 
-- Full suite: 517 collected, 516 passed, 1 intentionally skipped. The first attempt was
+- Full suite: 590 collected, 589 passed, 1 intentionally skipped. The first attempt was
   invalidated by a Windows permission error in the legacy global pytest temporary root;
   the authoritative run used a new project-local isolated `--basetemp` and completed
   without failures.
-- Optional encrypted-feedback coverage is included in that full run: all 25 Feedback tests
-  passed with locally installed, SHA-256-verified binary dependencies.
+- Optional encrypted-feedback coverage is included in that full run: all 44 direct Python
+  Feedback/decryptor tests passed with locally installed, SHA-256-verified binary dependencies.
+- The Cloudflare HTTPS/D1/R2 intake passed 37 tests and the private mail receiver passed 15.
 - Focused localization, attachment, and drag-interaction suite: 13 passed, 1 intentionally
   skipped.
 - Package UI self-test: every navigation page plus composer, credential plane, room
@@ -27,12 +28,12 @@ GitHub publication, claim Stable status, or include the remote/mobile product pr
 
 ## Memory and lifecycle evidence
 
-- Receipt: `.peerbridge/receipts/local-alpha-soak-20260816T061512Z.json`
-- File SHA-256: `14f620bde6320806974b2d7a685e8b71ed0a34ee59b4216d7647733231a1dde0`
-- Embedded receipt SHA-256: `26571e17d4ac29cbd4b0b33006b9dd9a64fe6c4af9b9ec84cdc3f30a78c4bfbe`
+- Receipt: `.peerbridge-artifacts/soak-final-20260817T183411980.json`
+- File SHA-256: `d3e9b48bcb0c7a054564cbeff2af7707046259b0044a9c9c0e66da6b73960f43`
+- Embedded receipt SHA-256: `95d56e8d6735368f4fa9112dacab0acdc84900557a7ae720f690f7a4981665aa`
 - Messages: 1,200
-- Private-memory plateau growth: 4,096 bytes across the receipt's final four samples,
-  below the 8 MiB acceptance limit.
+- Private-memory plateau growth: 409,600 bytes across the receipt's final eight samples,
+  below the 24 MiB acceptance limit.
 - Audit chain, 1,202 audit events, database restart, crash slot release, singleton lock release, and duplicate
   runtime/supervisor rejection all passed.
 - Live recovery observation at 2026-08-15 11:31 Asia/Taipei: the control-room monitor was
@@ -51,7 +52,7 @@ The exact command profile and final candidate directory are recorded in the crea
 release receipt named below; the source document intentionally does not hard-code a mutable
 candidate sequence number.
 
-- Latest pre-freeze development result: `DEV_CHECK_OK files=144 version=0.1.0a2
+- Latest pre-freeze development result: `DEV_CHECK_OK files=164 version=0.1.0a3
   release_ready=false strict_release_required=true`.
   The final frozen-source result is authoritative only when it is reproduced in the
   create-only receipt described below.
@@ -72,9 +73,9 @@ configured support email and public encryption key are intentional public releas
 The Windows x64 portable ZIP was also extracted into a fresh create-only directory. Its
 unsigned executable passed the packaged UI self-test, launched its frozen MCP child path for
 a real composer-send self-test, initialized a fresh local workspace, and passed `doctor`.
-The latest pre-freeze candidate is 17,879,235 bytes with SHA-256
-`41efb305519cf58b9f94ff56ab08f6a128840726a70e02312c899ba7daaf18ef`; its SBOM SHA-256 is
-`0f5e8beb7e96955630ed3acd31c1e0a72cfc102a1ccbbf8bb85b7e8b921ae3b2` and its exact
+  The latest pre-freeze candidate is 17,961,409 bytes with SHA-256
+`f320423979899ce160036db51e4e774724b1da39f95f28940229df27584ac1f2`; its SBOM SHA-256 is
+`a4ab66f7ae529ea4bbf31341e8115c0c0c20bd65b691639a9ef03402368c5b42` and its exact
 runtime-license manifest SHA-256 is
 `7be5797e2f261e75bf40b8ff184680d5cb0306cd94718b3bb234e28e3996d857`.
 The extracted executable passed encrypted-feedback, MCP-send, create-only initialization,
@@ -82,7 +83,7 @@ audit-doctor, direct zero-argument lifecycle, and command-launcher lifecycle che
 encrypted-feedback check emits a create-only receipt bound to the executable SHA-256,
 product version, frozen runtime kind, and test identity; the verifier rejects a missing,
 malformed, non-PASS, or mismatched receipt. Its passing receipt SHA-256 is
-`75d26ff2378db7bcc5545935f077fea50e6eb9a290fd26b42e88c12af5196fb7`.
+`4ed9750078bb1547a5a64e53574f5c87d4a4591279e17d169c6cb79b79a373b4`.
 The first tagged local candidate was rejected by this check because Windows Git line-ending
 conversion changed the public PEM from 625 to 636 bytes while its raw-byte SHA-256 pin still
 described the pre-conversion file. The two public-key paths are now Git byte-stable (`-text`),
@@ -135,8 +136,11 @@ provider receipt SHA-256 is
 The resulting fixes bind wheel/sdist payloads byte-for-byte to their source, reject plaintext
 credential-shaped JSON/log/text Feedback attachments, and preserve a committed Cloudflare D1
 intake after an ambiguous acknowledgement instead of deleting its R2 object or refunding its
-quota. The focused Python security set and all 14 Cloudflare edge tests pass. Update checking
-remains read-only and pinned to this repository's HTTPS GitHub release page. The optional
+  quota. The focused Python security set, all 37 Cloudflare edge tests, and all 15 private
+mail-receiver tests pass. A live non-secret synthetic submission also verified D1 commit,
+private R2 storage, maintainer notification, and exact bundle re-download SHA without exposing
+administrative secrets. Update checking remains read-only and pinned to this repository's HTTPS
+GitHub release page. The optional
 announcement feed is disabled unless configured, accepts bounded plain text and HTTPS links
 only, and cannot invoke an Agent or execute update content; signed automatic installation is
 explicitly outside this Alpha.

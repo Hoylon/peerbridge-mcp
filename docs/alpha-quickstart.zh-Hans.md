@@ -13,7 +13,7 @@ PeerBridge 是本地优先、可审计的多 Agent 协作层。这个 Alpha 使�
 ### Windows 便携版（推荐）
 
 从 GitHub Alpha pre-release 下载
-`PeerBridgeControlRoom-0.1.0a2-windows-x64-portable.zip`，完整解压到可写入的文件夹，
+`PeerBridgeControlRoom-0.1.0a3-windows-x64-portable.zip`，完整解压到可写入的文件夹，
 再双击 `Launch PeerBridge.cmd`。程序会把本地工作区放在
 `%LOCALAPPDATA%\PeerBridge\workspace`；压缩包不包含 provider 凭据或私人运行数据。
 

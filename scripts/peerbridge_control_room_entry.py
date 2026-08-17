@@ -45,6 +45,10 @@ def _portable_workspace() -> Path:
 
 
 def _runtime_path() -> Path:
+    if not getattr(sys, "frozen", False):
+        # A Windows Store-backed venv can report the base interpreter through
+        # GetModuleFileNameW. Source children must stay inside the active venv.
+        return Path(sys.executable).resolve()
     if sys.platform == "win32":
         from ctypes import wintypes
 
@@ -78,7 +82,17 @@ def _runtime_sha256(path: Path | None = None) -> str:
 def _runtime_command() -> list[str]:
     if getattr(sys, "frozen", False):
         return [str(_runtime_path())]
-    return [str(_runtime_path()), str(Path(__file__).resolve())]
+    executable = Path(sys.executable).resolve()
+    if sys.platform == "win32":
+        executable = Path(getattr(sys, "_base_executable", executable)).resolve()
+    return [str(executable), str(Path(__file__).resolve())]
+
+
+def _runtime_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    if not getattr(sys, "frozen", False) and sys.platform == "win32":
+        environment["__PYVENV_LAUNCHER__"] = str(Path(sys.executable).resolve())
+    return environment
 
 
 def _write_json_create_only(path: Path, payload: dict[str, Any]) -> None:
@@ -263,6 +277,7 @@ def _start_managed_supervisor(
         cwd=project_root,
         close_fds=True,
         creationflags=creation_flags,
+        env=_runtime_environment(),
     )
     try:
         payload = _wait_for_supervisor_ready(
@@ -416,6 +431,16 @@ def _source_launch(args: list[str]) -> int:
     )
 
 
+def _workspace_launch(args: list[str]) -> int:
+    """Launch a frozen desktop build against an explicit local workspace."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--project-root", type=Path, required=True)
+    parser.add_argument("--db", type=Path, required=True)
+    parser.add_argument("--scope", required=True)
+    parsed = parser.parse_args(args)
+    return _run_managed_launcher(parsed.project_root, parsed.db, parsed.scope)
+
+
 def _show_startup_error(message: str) -> None:
     rendered = f"PeerBridge Control Room could not start.\n\n{message}"
     print(rendered, file=sys.stderr)
@@ -443,6 +468,13 @@ def dispatch(argv: list[str] | None = None) -> int:
     if args[:1] == ["--source-launch"]:
         try:
             return _source_launch(args[1:])
+        except Exception as exc:
+            _show_startup_error(str(exc))
+            return 1
+
+    if args[:1] == ["--workspace-launch"]:
+        try:
+            return _workspace_launch(args[1:])
         except Exception as exc:
             _show_startup_error(str(exc))
             return 1

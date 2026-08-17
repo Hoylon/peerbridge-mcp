@@ -20,10 +20,11 @@ import zipfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 from . import __version__
 from .attachments import AttachmentError, read_stable_attachment_source
+from .image_validation import image_payload_is_valid
 from .secret_scan import contains_secret, decode_text_bytes, redact_secrets
 
 
@@ -35,10 +36,7 @@ FEEDBACK_UPLOAD_SCHEMA = "peerbridge.feedback-upload.v1"
 
 RAW_ZIP_TRANSPORT = "raw-zip-v1"
 JSON_BASE64_TRANSPORT = "json-base64-v1"
-GOOGLE_APPS_SCRIPT_TRANSPORT = "google-apps-script-v1"
-SUPPORTED_ENDPOINT_TRANSPORTS = frozenset(
-    {RAW_ZIP_TRANSPORT, JSON_BASE64_TRANSPORT, GOOGLE_APPS_SCRIPT_TRANSPORT}
-)
+SUPPORTED_ENDPOINT_TRANSPORTS = frozenset({RAW_ZIP_TRANSPORT, JSON_BASE64_TRANSPORT})
 
 MAX_SUMMARY_CHARS = 240
 MAX_MESSAGE_CHARS = 20_000
@@ -78,14 +76,6 @@ class FeedbackConfig:
             raise FeedbackError("feedback endpoint transport is not supported")
         if endpoint_transport != RAW_ZIP_TRANSPORT and not endpoint:
             raise FeedbackError("feedback endpoint transport requires an endpoint")
-        if endpoint_transport == GOOGLE_APPS_SCRIPT_TRANSPORT:
-            parsed_endpoint = urllib.parse.urlsplit(endpoint or "")
-            if parsed_endpoint.hostname != "script.google.com" or not re.fullmatch(
-                r"/macros/s/[A-Za-z0-9_-]+/exec", parsed_endpoint.path
-            ):
-                raise FeedbackError(
-                    "Google Apps Script feedback transport requires a deployed /exec URL"
-                )
         privacy_url = _optional_https_url(self.privacy_url, "privacy URL")
         support_email = _optional_email(self.support_email)
         recipient = str(self.recipient_label or "").strip() or None
@@ -201,7 +191,9 @@ def _optional_https_url(value: Any, label: str) -> str | None:
     if parsed.username or parsed.password or parsed.fragment or parsed.query:
         raise FeedbackError(f"{label} must not contain credentials, a query, or a fragment")
     hostname = parsed.hostname.lower()
-    if hostname in {"localhost", "localhost.localdomain"} or hostname.endswith(
+    if hostname.endswith("."):
+        raise FeedbackError(f"{label} must not use a trailing-dot hostname")
+    if hostname in {"internal", "local", "localhost", "localhost.localdomain"} or hostname.endswith(
         (".local", ".internal", ".localhost")
     ):
         raise FeedbackError(f"{label} must not target a local hostname")
@@ -312,14 +304,8 @@ def _decode_text_attachment(extension: str, payload: bytes) -> str | None:
 
 
 def _attachment_payload_is_valid(extension: str, payload: bytes) -> bool:
-    if extension == ".png":
-        return payload.startswith(b"\x89PNG\r\n\x1a\n")
-    if extension in {".jpg", ".jpeg"}:
-        return payload.startswith(b"\xff\xd8\xff")
-    if extension == ".gif":
-        return payload.startswith((b"GIF87a", b"GIF89a"))
-    if extension == ".webp":
-        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
+    if extension in {".gif", ".jpeg", ".jpg", ".png", ".webp"}:
+        return image_payload_is_valid(extension, payload)
     return extension in _TEXT_ATTACHMENT_SUFFIXES and _decode_text_attachment(
         extension, payload
     ) is not None
@@ -586,49 +572,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-class _GoogleAppsScriptRedirect(urllib.request.HTTPRedirectHandler):
-    """Allow only the one ContentService receipt redirect documented by Google."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._redirects = 0
-
-    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
-        source = urllib.parse.urlsplit(req.full_url)
-        target = urllib.parse.urlsplit(newurl)
-        if (
-            self._redirects != 0
-            or source.scheme != "https"
-            or source.hostname != "script.google.com"
-            or target.scheme != "https"
-            or target.hostname != "script.googleusercontent.com"
-            or target.username
-            or target.password
-            or target.fragment
-        ):
-            return None
-        self._redirects += 1
-        return urllib.request.Request(
-            newurl,
-            method="GET",
-            headers={"User-Agent": f"PeerBridge/{__version__}"},
-        )
-
-
 def _json_base64_payload(bundle: FeedbackBundle) -> bytes:
-    contact = str(bundle.report.get("contact") or "").strip()
-    try:
-        reply_email = _optional_email(contact) or ""
-    except FeedbackError:
-        reply_email = ""
     payload = {
         "schema": FEEDBACK_UPLOAD_SCHEMA,
         "case_id": bundle.case_id,
         "bundle_sha256": bundle.sha256,
         "bundle_base64": base64.b64encode(bundle.path.read_bytes()).decode("ascii"),
-        "summary": str(bundle.report.get("summary") or "")[:MAX_SUMMARY_CHARS],
-        "reply_email": reply_email,
-        "app_version": __version__,
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
@@ -652,17 +601,10 @@ def deliver_feedback_bundle(
     observed_sha256 = hashlib.sha256(bundle_payload).hexdigest()
     if not secrets.compare_digest(observed_sha256, bundle.sha256):
         raise FeedbackError("feedback bundle changed after it was sealed")
-    if config.endpoint_transport in {
-        JSON_BASE64_TRANSPORT,
-        GOOGLE_APPS_SCRIPT_TRANSPORT,
-    }:
+    if config.endpoint_transport == JSON_BASE64_TRANSPORT:
         payload = _json_base64_payload(bundle)
         content_type = "application/json; charset=utf-8"
-        redirect_handler: urllib.request.BaseHandler = (
-            _GoogleAppsScriptRedirect()
-            if config.endpoint_transport == GOOGLE_APPS_SCRIPT_TRANSPORT
-            else _NoRedirect()
-        )
+        redirect_handler: urllib.request.BaseHandler = _NoRedirect()
     else:
         payload = bundle_payload
         content_type = "application/zip"
@@ -702,12 +644,17 @@ def deliver_feedback_bundle(
     received_sha256 = str(response_payload.get("bundle_sha256") or "")
     if not secrets.compare_digest(received_sha256, bundle.sha256):
         raise FeedbackError("private feedback endpoint returned a mismatched bundle SHA-256")
+    notification_value = response_payload.get("notification_sent")
+    notification_sent = (
+        notification_value if isinstance(notification_value, bool) else None
+    )
     return {
         "schema": FEEDBACK_RESULT_SCHEMA,
         "delivered": True,
         "case_id": bundle.case_id,
         "bundle_sha256": bundle.sha256,
         "receipt": redact_feedback_text(response_payload.get("receipt") or "")[:240],
+        "notification_sent": notification_sent,
     }
 
 

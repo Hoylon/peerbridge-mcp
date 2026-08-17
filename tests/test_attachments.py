@@ -12,9 +12,7 @@ from peerbridge_mcp.attachments import (
     AttachmentError,
     stage_chat_attachments,
 )
-
-
-PNG = b"\x89PNG\r\n\x1a\npeerbridge-test"
+from tests._image_fixtures import PNG
 
 
 def test_safe_attachments_are_content_addressed_and_idempotent(tmp_path: Path) -> None:

@@ -39,6 +39,44 @@ def test_shared_redactor_preserves_diagnostic_structure_without_secret() -> None
     assert "stage=parse" in redacted
 
 
+def test_runtime_redactor_removes_short_sensitive_assignments() -> None:
+    source = _join("pass", "word=", "abc123xyz", "&stage=parse")
+
+    redacted = redact_secrets(source)
+
+    assert "abc123xyz" not in redacted
+    assert redacted == "password=[REDACTED]&stage=parse"
+
+
+def test_runtime_redactor_removes_complete_private_key_block() -> None:
+    opening = _join("-----BE", "GIN PRIVATE KEY-----")
+    closing = _join("-----E", "ND PRIVATE KEY-----")
+    body = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+    source = f"before\n{opening}\n{body}\n{closing}\nafter"
+
+    redacted = redact_secrets(source)
+
+    assert opening not in redacted
+    assert body not in redacted
+    assert closing not in redacted
+    assert redacted == "before\n[REDACTED]\nafter"
+
+
+def test_assignment_scanner_does_not_cross_line_after_prose_label() -> None:
+    source = "Deploy without an admin or Worker secret:\n\n```powershell\nnpm run deploy\n```"
+
+    assert contains_secret(source) is False
+    assert redact_secrets(source) == source
+
+
+def test_assignment_scanner_still_detects_same_line_credentials() -> None:
+    secret = _join("same-line-", "credential-", "0123456789")
+    source = f"provider_api_key = {secret}"
+
+    assert contains_secret(source) is True
+    assert redact_secrets(source) == "provider_api_key = [REDACTED]"
+
+
 def test_source_references_are_not_credentials() -> None:
     assert contains_secret("api_key=api_key") is False
 
@@ -87,4 +125,18 @@ def test_python_test_source_allows_named_fixture_but_not_real_token_shape() -> N
     ) is False
     assert source_text_contains_secret(
         token, ".py", allow_test_fixtures=True
+    ) is True
+
+
+def test_test_source_exemption_is_exact_not_substring_based() -> None:
+    exact = "api_key = 'unit-test-provider-secret'\n"
+    disguised = "api_key = 'live-example-credential-0123456789'\n"
+    near_match = "api_key = 'unit-test-provider-secret-extra'\n"
+
+    assert source_text_contains_secret(exact, ".py", allow_test_fixtures=True) is False
+    assert source_text_contains_secret(
+        disguised, ".py", allow_test_fixtures=True
+    ) is True
+    assert source_text_contains_secret(
+        near_match, ".py", allow_test_fixtures=True
     ) is True

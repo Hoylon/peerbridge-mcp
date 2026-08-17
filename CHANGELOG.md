@@ -5,6 +5,31 @@ project uses Semantic Versioning after the initial alpha series.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] - 2026-08-18
+
+### Added
+
+- Provider-reported input, output, cached-input, and reasoning-token accounting with a
+  local-only usage dashboard, four-series trend chart, provider/model horizontal bars,
+  and explicit partial/unavailable coverage instead of text-length estimates.
+- Provider-independent private feedback through an authenticated HTTPS edge, private R2
+  bundles, D1 metadata, fixed-maintainer notifications, bounded retry, retention, and
+  exact bundle re-download verification.
+- Complete Traditional Chinese, Simplified Chinese, and English normal-use UI catalogs.
+
+### Changed
+
+- Hardened provider child lifecycle and crash recovery with bounded descendant cleanup,
+  stale-lease reconciliation, and resource guards.
+- Hardened MCP request replay and room dispatch recovery without reply fanout loops.
+- Refined the Windows control-room layout, refresh behavior, usage charts, feedback flow,
+  and native bridge branding for the portable build.
+
+### Security
+
+- Tightened feedback ZIP validation, distributed rate limits, retention cleanup,
+  notification retries, credential redaction, and release-source secret scanning.
+
 ## [0.1.0-alpha.2] - 2026-08-16
 
 ### Added
@@ -85,6 +110,7 @@ project uses Semantic Versioning after the initial alpha series.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/oscarho200407-hue/peerbridge-mcp/compare/v0.1.0-alpha.2...HEAD
+[Unreleased]: https://github.com/oscarho200407-hue/peerbridge-mcp/compare/v0.1.0-alpha.3...HEAD
+[0.1.0-alpha.3]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.3
 [0.1.0-alpha.2]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.0]: https://github.com/oscarho200407-hue/peerbridge-mcp/releases/tag/v0.1.0-alpha.0

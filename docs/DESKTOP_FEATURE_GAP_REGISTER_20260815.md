@@ -51,10 +51,10 @@ unfinished feature into a completed claim.
 | D-17 | Any authorized human or Agent room post wakes all routed room Agents | VERIFIED | Human-root receipt `room-wakeup-e2e-20260815-v1.json` records one terminal outcome per routed seat and no reply cascade. Agent-root receipt `agent-root-wakeup-e2e-20260815-v1.json` records a Grok-originated post, exactly one Claude reply and one Kimi reply, and zero reply dispatches. Both receipts re-verify with zero writes. | Preserve this invariant in regression and repeat only when fanout or dispatch semantics change. | P0 |
 | D-18 | Agents discuss in parallel until consensus or a bounded stop | VERIFIED | Off/once/discussion modes, parallel rounds, consensus/blocker/stagnation/round/message limits, pause/resume/continue/stop, and no reply cascade are implemented in tests. Live task `mcp-capability-consensus-20260815123714` woke Grok 4.6 and Kimi in parallel; both completed exactly once and reached first-round consensus in about 35 seconds. Receipt `mcp-capability-discussion-e2e-20260815-v1.json` binds all four messages and exact route receipts and re-verifies with zero writes. Final physical QA applied bounded discussion, showed all termination controls, and restored automation off without dispatch. | Failure, crash-recovery, and no-hang behavior remain deterministic tests rather than a deliberately failed paid-provider run. | P0 |
 | D-19 | Shared memory and context fusion across Agents | PARTIAL | Durable room/project/private memories and human-approved promotion exist. | Automatic bounded summarization/compaction, provenance-preserving retrieval, image/Skill-aware context, token budgeting, conflict handling, and cross-provider E2E. | P1 |
-| D-20 | Keep desktop memory bounded during long multi-Agent work | VERIFIED | Bounded room history, supervisor parallelism, singleton locks, resource guard, operator-visible diagnostics, and the SHA-bound 1,200-message `local-alpha-soak-20260816-final-v7` receipt passed with 131,072 bytes of private-memory plateau growth in its final four samples, below the 24 MiB limit; verify-only performed zero writes. | Repeat a longer optional live-provider soak after public Alpha; the Codex desktop application's own memory remains outside PeerBridge control. | P0 |
-| D-21 | Crash/recovery lifecycle gate | VERIFIED | Lifecycle, child-process terminal detection, crash/recovery, stale lease, singleton, and duplicate-runtime rejection tests pass in the full 509-test regression run (508 pass, 1 intentionally skipped). | Preserve the gate in every release run. | P0 |
+| D-20 | Keep desktop memory bounded during long multi-Agent work | VERIFIED | Bounded room history, supervisor parallelism, singleton locks, resource guard, operator-visible diagnostics, and a fresh SHA-bound 1,200-message soak passed with 409,600 bytes of private-memory plateau growth in its final eight samples, below the 24 MiB limit; verify-only performed zero writes. | Repeat a longer optional live-provider soak after public Alpha; the Codex desktop application's own memory remains outside PeerBridge control. | P0 |
+| D-21 | Crash/recovery lifecycle gate | VERIFIED | Lifecycle, child-process terminal detection, crash/recovery, stale lease, singleton, duplicate-runtime rejection, and terminal dispatch reconciliation pass in the full 590-test regression run (589 pass, 1 intentionally skipped). | Preserve the gate in every release run. | P0 |
 | D-22 | Publish-ready desktop visual polish | IMPLEMENTED / REVERIFY | Pixel monitor, room tabs, seats, cards, workboard, reviews, audit views, and safe-connections screen exist. Refresh now skips unchanged redraws, appends only new chat bubbles, preserves scroll position, and shows a quiet localized `Refreshed` timestamp. The locale selector has a permanent English `Language` label. The operator physically accepted the no-flicker refresh behavior on 2026-08-15, and the running candidate visibly rendered both additions without overlap; focused tests and UI self-test pass. | Complete final frozen-build visual QA at common Windows scaling levels, including keyboard navigation, overflow/text fit, empty/loading/error states, and information hierarchy. | P1 |
-| D-23 | One-click private feedback that still works when provider/API-key onboarding is broken | VERIFIED FOR LOCAL ALPHA | A provider-independent Feedback page captures bounded diagnostics, opens a private draft to the configured maintainer support email, supports explicit local encryption of a complete credential to the packaged release-bound public key, clears plaintext after use, and can save an encrypted case bundle when delivery is unavailable. | Automatic maintainer-owned HTTPS intake is not deployed and is not claimed by this local Alpha. | P0 |
+| D-23 | One-click private feedback that still works when provider/API-key onboarding is broken | VERIFIED FOR LOCAL ALPHA | A provider-independent Feedback page captures bounded diagnostics, supports explicit local encryption of a complete credential to the packaged release-bound public key, clears plaintext after use, and submits a sealed bundle through the maintainer-controlled HTTPS intake. A live synthetic case verified D1 metadata, private R2 storage, maintainer notification, exact download SHA, and local fallback behavior. | Preserve the 30-day retention job, administrative authentication, and live synthetic check before each release. | P0 |
 
 ## Remote, release, and business-preparation gaps
 
@@ -73,16 +73,16 @@ unfinished feature into a completed claim.
 
 ## Current release blockers and explicit Alpha limitations
 
-1. R-07: the full 509-test regression, 1,200-message soak, focused adversarial fixes,
+1. R-07: the full 590-test regression, 1,200-message soak, focused adversarial fixes,
    Cloudflare edge tests, and pre-freeze strict package checks pass. The final source-bound
    package/manifest scan and independent frozen-source review remain release gates.
 2. D-16: the real Grok/Kimi discussion receipt is sealed. A later four-provider acceptance
    remains an explicit Alpha limitation rather than a fabricated pass.
 3. R-06: wheel/sdist and a Windows x64 portable candidate are validated; a signed native
    Windows installer remains an explicit post-Alpha limitation rather than a fabricated gate.
-4. D-23: private email-draft delivery, local public-key encryption, and encrypted local bundle
-   fallback are configured for this Alpha. Automatic HTTPS intake is not deployed and is an
-   explicit future service, not a local Alpha blocker.
+4. D-23: local public-key encryption, the HTTPS/D1/private-R2 intake, maintainer notification,
+   exact bundle re-download verification, and encrypted local fallback are all verified for
+   this Alpha.
 
 Remote/mobile D-01 and R-01 are deliberately outside the **local Alpha** release profile.
 Their existing evidence is preserved and is not deleted or presented as local Alpha evidence.

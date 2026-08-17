@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
+from .image_validation import image_payload_is_valid
 from .secret_scan import contains_secret_bytes
 
 
@@ -111,14 +112,8 @@ def read_stable_attachment_source(
 
 
 def _payload_is_valid(suffix: str, payload: bytes) -> bool:
-    if suffix == ".png":
-        return payload.startswith(b"\x89PNG\r\n\x1a\n")
-    if suffix in {".jpg", ".jpeg"}:
-        return payload.startswith(b"\xff\xd8\xff")
-    if suffix == ".gif":
-        return payload.startswith((b"GIF87a", b"GIF89a"))
-    if suffix == ".webp":
-        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WEBP"
+    if suffix in {".gif", ".jpeg", ".jpg", ".png", ".webp"}:
+        return image_payload_is_valid(suffix, payload)
     if suffix not in _TEXT_SUFFIXES or b"\x00" in payload:
         return False
     try:

@@ -501,7 +501,10 @@ def test_javascript_scan_distinguishes_bindings_fixtures_and_literal_secrets(
     source = edge / "index.js"
     source.write_text(
         'const observed = String(env.ADMIN_TOKEN || "");\n'
-        'if (!env.DIGEST_SHARED_SECRET) throw new Error("missing binding");\n',
+        'if (!env.DIGEST_SHARED_SECRET) throw new Error("missing binding");\n'
+        "const emailPattern = /^[A-Z_`]+$/u;\n"
+        'const endpoint = String(env.GOOGLE_APPS_SCRIPT_URL || "").trim();\n'
+        'const secret = String(env.GOOGLE_APPS_SCRIPT_SECRET || "");\n',
         encoding="utf-8",
     )
     (tests / "index.test.mjs").write_text(
@@ -517,6 +520,16 @@ def test_javascript_scan_distinguishes_bindings_fixtures_and_literal_secrets(
     unsafe = release_check.run_dev_checks(root)
     assert "credential-like value in support/cloudflare-edge/index.js" in unsafe.errors
     assert all(secret not in error for error in unsafe.errors)
+
+    (tests / "index.test.mjs").write_text(
+        'const env = { ADMIN_TOKEN: "live-example-credential-0123456789" };\n',
+        encoding="utf-8",
+    )
+    disguised = release_check.run_dev_checks(root)
+    assert (
+        "credential-like value in support/cloudflare-edge/tests/index.test.mjs"
+        in disguised.errors
+    )
 
 
 def test_dev_check_ignores_named_pytest_runtime_directories(tmp_path: Path) -> None:
@@ -926,6 +939,45 @@ def test_source_tree_hash_ignores_numbered_pytest_scratch_directories(tmp_path: 
     assert scratch / "captured.txt" not in release_check.iter_text_files(root)
 
 
+def test_source_tree_hash_ignores_underscore_pytest_scratch_directories(
+    tmp_path: Path,
+) -> None:
+    root = make_project(tmp_path)
+    before = release_check.release_source_tree_sha256(root)
+    scratch = root / ".pytest_usage_full_20260817" / "fixture"
+    scratch.mkdir(parents=True)
+    (scratch / "operator.txt").write_text(
+        "C:\\Users\\operator\\private\n" + "sk-" + "Z" * 24,
+        encoding="utf-8",
+    )
+
+    result = release_check.run_dev_checks(root)
+
+    assert not any(".pytest_usage_full" in error for error in result.errors)
+    assert scratch / "operator.txt" not in release_check.iter_text_files(root)
+    assert release_check.release_source_tree_sha256(root) == before
+
+
+def test_dev_check_ignores_peerbridge_attachment_test_scratch(
+    tmp_path: Path,
+) -> None:
+    root = make_project(tmp_path)
+    before = release_check.release_source_tree_sha256(root)
+    scratch = root / ".peerbridge-test-tmp" / "image-boundary"
+    scratch.mkdir(parents=True)
+    oversized = scratch / "large.txt"
+    oversized.write_text(
+        "C:\\Users\\operator\\private\n" + "sk-" + "Z" * 24,
+        encoding="utf-8",
+    )
+
+    result = release_check.run_dev_checks(root)
+
+    assert not any(".peerbridge-test-tmp" in error for error in result.errors)
+    assert oversized not in release_check.iter_text_files(root)
+    assert release_check.release_source_tree_sha256(root) == before
+
+
 def test_source_tree_hash_binds_license_and_binary_public_key(tmp_path: Path) -> None:
     root = make_project(tmp_path)
     support = root / "support"
@@ -977,6 +1029,43 @@ def test_git_inventory_uses_tracked_and_nonignored_files_and_new_text_suffixes(
     assert not (snapshot / "ignored-private").exists()
 
 
+def test_git_inventory_scans_tracked_dot_pytest_path_but_ignores_runtime_scratch(
+    tmp_path: Path,
+) -> None:
+    root = make_project(tmp_path)
+    tracked = root / "src" / ".pytest_feature" / "module.py"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text("TRACKED_MARKER = True\n", encoding="utf-8")
+    init_git_project(root)
+    scratch = root / ".pytest_runtime" / "capture.txt"
+    scratch.parent.mkdir(parents=True)
+    scratch.write_text("runtime scratch\n", encoding="utf-8")
+
+    text_files = release_check.iter_text_files(root)
+    release_files = release_check.iter_release_source_files(root)
+
+    assert tracked in text_files
+    assert tracked in release_files
+    assert scratch not in text_files
+    assert scratch not in release_files
+
+
+def test_apps_script_source_is_in_javascript_secret_and_path_scan(
+    tmp_path: Path,
+) -> None:
+    root = make_project(tmp_path)
+    apps_script = root / "support" / "google-apps-script" / "Code.gs"
+    apps_script.parent.mkdir(parents=True)
+    apps_script.write_text(
+        'const api_key = "sk-' + "X" * 24 + '";\n',
+        encoding="utf-8",
+    )
+
+    assert apps_script in release_check.iter_text_files(root)
+    result = release_check.run_dev_checks(root)
+    assert any("Code.gs" in error for error in result.errors)
+
+
 def test_strict_git_preflight_requires_committed_clean_tree(tmp_path: Path) -> None:
     root = make_project(tmp_path)
     init_git_project(root)
@@ -1009,7 +1098,7 @@ def test_pep440_alpha_version_maps_to_public_release_tag() -> None:
 def test_python_and_edge_build_inputs_are_pinned_and_lockfile_bound() -> None:
     root = SCRIPT.parents[1]
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
-    assert project["build-system"]["requires"] == ["setuptools==83.0.0"]
+    assert project["build-system"]["requires"] == ["setuptools==84.0.0"]
     assert all("==" in requirement for requirement in project["project"]["optional-dependencies"]["dev"])
     assert all("==" in requirement for requirement in project["project"]["optional-dependencies"]["windows"])
 
@@ -1079,6 +1168,23 @@ def test_dev_check_ignores_project_local_pytest_runtime(tmp_path: Path) -> None:
 
     assert not any(".test-runtime" in error for error in result.errors)
     assert scratch / "operator.txt" not in release_check.iter_text_files(root)
+
+
+def test_dev_check_ignores_project_local_test_runs(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    before = release_check.release_source_tree_sha256(root)
+    scratch = root / ".test-runs" / "full" / "fixture"
+    scratch.mkdir(parents=True)
+    (scratch / "operator.txt").write_text(
+        "C:\\Users\\operator\\private\n" + "sk-" + "R" * 24,
+        encoding="utf-8",
+    )
+
+    result = release_check.run_dev_checks(root)
+
+    assert not any(".test-runs" in error for error in result.errors)
+    assert scratch / "operator.txt" not in release_check.iter_text_files(root)
+    assert release_check.release_source_tree_sha256(root) == before
 
 
 def test_dev_check_ignores_project_local_pytest_runs(tmp_path: Path) -> None:

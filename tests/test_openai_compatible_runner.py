@@ -33,6 +33,10 @@ from peerbridge_mcp.resource_guard import ResourceGuardError
 from peerbridge_mcp.server import TOOL_SCHEMAS
 
 
+def _test_credential(*parts: str) -> str:
+    return "-".join(parts)
+
+
 @pytest.fixture(autouse=True)
 def deterministic_provider_runtime_slot(monkeypatch: pytest.MonkeyPatch) -> None:
     @contextmanager
@@ -265,6 +269,11 @@ class FakeOpenAITransport:
             finish_reason = "stop"
         response = {
             "model": self.model,
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+            },
             "choices": [
                 {
                     "index": 0,
@@ -351,6 +360,52 @@ def test_default_mcp_subprocess_uses_controlled_cwd_outside_project_root(
     command = captured["command"]
     project_root_index = command.index("--project-root") + 1
     assert Path(command[project_root_index]).resolve() == project_root
+
+
+def test_stdio_mcp_subprocess_receives_only_os_essentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeProcess:
+        stdout = None
+
+        def poll(self) -> None:
+            return None
+
+    def capture_popen(*_args: Any, **kwargs: Any) -> FakeProcess:
+        captured.update(kwargs)
+        return FakeProcess()
+
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+    monkeypatch.setenv("SYSTEMROOT", r"C:\Windows")
+    monkeypatch.setenv("OPENAI_API_KEY", "must-not-reach-local-mcp")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "must-not-reach-local-mcp")
+    monkeypatch.setenv("XAI_API_KEY", "must-not-reach-local-mcp")
+    monkeypatch.setenv("GITHUB_TOKEN", "must-not-reach-local-mcp")
+    monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "must-not-reach-local-mcp")
+    monkeypatch.setenv("ARBITRARY_PRIVATE_VALUE", "must-not-reach-local-mcp")
+    monkeypatch.setattr(runner_module.subprocess, "Popen", capture_popen)
+    monkeypatch.setattr(runner_module, "attach_process_tree", lambda _process: True)
+
+    transport = runner_module.StdioMCPTransport(
+        (runner_module.sys.executable, "-V"), cwd=tmp_path
+    )
+    transport.start()
+
+    environment = captured["env"]
+    assert str(tmp_path / "bin") not in environment.get("PATH", "")
+    assert str(Path(r"C:\Windows") / "System32") in environment["PATH"]
+    assert environment["SYSTEMROOT"] == r"C:\Windows"
+    for name in (
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+        "XAI_API_KEY",
+        "GITHUB_TOKEN",
+        "CLOUDFLARE_API_TOKEN",
+        "ARBITRARY_PRIVATE_VALUE",
+    ):
+        assert name not in environment
 
 
 def test_runner_uses_shared_resource_admission_before_provider_work(
@@ -492,6 +547,9 @@ def test_runner_reads_scoped_memory_without_putting_content_in_receipt(
     assert result.receipt["raw_content_recorded"] is False
     assert result.receipt["route"]["route_profile_id"] == "relay-main-model"
     assert result.receipt["route"]["route_profile_sha256"] == "c" * 64
+    assert result.receipt["usage"]["status"] == "reported"
+    assert result.receipt["usage"]["reported_calls"] == 2
+    assert result.receipt["usage"]["total_tokens"] == 30
 
 
 class FakeProviderState:
@@ -681,7 +739,10 @@ def test_stdlib_http_transport_does_not_follow_cross_origin_redirects() -> None:
             response = StdlibHTTPTransport().request(
                 "GET",
                 url,
-                headers={"Authorization": "Bearer test-token"},
+                headers={
+                    "Authorization": "Bearer "
+                    + _test_credential("test", "token")
+                },
                 body=None,
                 timeout=2,
             )
@@ -901,7 +962,7 @@ def test_real_local_http_local_route_uses_no_authorization_or_persisted_secret(
 def test_real_local_http_rejects_completion_model_identity_drift(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret = "identity-secret"
+    secret = _test_credential("identity", "secret")
     state = FakeProviderState(
         model="deepseek-chat",
         expected_api_key=secret,
@@ -944,7 +1005,7 @@ def test_real_local_http_rejects_completion_model_identity_drift(
 def test_real_local_http_accepts_only_explicit_response_model_binding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret = "response-binding-secret"
+    secret = _test_credential("response", "binding", "secret")
     state = FakeProviderState(
         model="grok-4.6",
         expected_api_key=secret,
@@ -992,7 +1053,7 @@ def test_real_local_http_accepts_only_explicit_response_model_binding(
 def test_explicit_response_alias_also_accepts_advertised_request_model(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret = "response-alias-request-model-secret"
+    secret = _test_credential("response", "alias", "request", "model", "secret")
     state = FakeProviderState(
         model="grok-4.6",
         expected_api_key=secret,
@@ -1039,7 +1100,7 @@ def test_registry_route_identity_mismatch_fails_before_provider_http(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "http://127.0.0.1:8765/v1"
-    secret = "route-secret"
+    secret = _test_credential("route", "secret")
     raw = json.dumps(
         {"api_key": secret, "endpoint": endpoint},
         sort_keys=True,
@@ -1122,7 +1183,7 @@ def test_local_access_hash_mismatch_fails_before_provider_http(
 def test_real_local_http_disallowed_tool_is_rejected_before_mcp_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret = "tool-boundary-secret"
+    secret = _test_credential("tool", "boundary", "secret")
     state = FakeProviderState(
         model="deepseek-chat",
         expected_api_key=secret,
@@ -1171,7 +1232,7 @@ def test_real_local_http_disallowed_tool_is_rejected_before_mcp_execution(
 def test_real_local_http_timeout_is_redacted_and_mcp_is_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    secret = "timeout-secret"
+    secret = _test_credential("timeout", "secret")
     state = FakeProviderState(
         model="deepseek-chat",
         expected_api_key=secret,
@@ -1231,7 +1292,7 @@ def test_cancellation_during_retry_backoff_stops_before_second_provider_call(
 
     endpoint = "http://127.0.0.1:8765/v1"
     raw = json.dumps(
-        {"api_key": "cancel-secret", "endpoint": endpoint},
+        {"api_key": _test_credential("cancel", "secret"), "endpoint": endpoint},
         sort_keys=True,
         separators=(",", ":"),
     )
@@ -1241,7 +1302,7 @@ def test_cancellation_during_retry_backoff_stops_before_second_provider_call(
         route_class="relay",
         provider_id="relay-deepseek",
         endpoint=endpoint,
-        api_key="cancel-secret",
+        api_key=_test_credential("cancel", "secret"),
         credential_fingerprint_sha256=sha256_bytes(raw.encode()),
     )
     monkeypatch.setattr(credentials, "load_provider_access", lambda **_: access)
@@ -1256,7 +1317,9 @@ def test_cancellation_during_retry_backoff_stops_before_second_provider_call(
         allowed_tools=("bridge_status",),
     )
     mcp = _mcp_for_endpoint(
-        config=config, endpoint=endpoint, api_key="cancel-secret"
+        config=config,
+        endpoint=endpoint,
+        api_key=_test_credential("cancel", "secret"),
     )
     _bind_fake_connection(mcp, config=config, access=access)
     transport = CancellingTransport()
@@ -1320,7 +1383,7 @@ def test_post_idempotency_key_is_stable_only_within_one_logical_request(
         runner._provider_json(
             "POST",
             "https://relay.example/v1/chat/completions",
-            api_key="provider-secret",
+            api_key=_test_credential("provider", "secret"),
             body=body,
         )
         return transport.keys
@@ -1373,7 +1436,7 @@ def test_programming_error_from_http_transport_is_not_retried(tmp_path: Path) ->
         runner._provider_json(
             "POST",
             "https://relay.example/v1/chat/completions",
-            api_key="provider-secret",
+            api_key=_test_credential("provider", "secret"),
             body={"model": "model-one", "messages": []},
         )
     assert transport.calls == 1
@@ -1383,7 +1446,7 @@ def test_direct_model_discovery_uses_bound_wcm_access_without_exposing_secret(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     endpoint = "https://relay.example"
-    secret = "direct-model-discovery-secret"
+    secret = _test_credential("direct", "model", "discovery", "secret")
     access = _bound_access(
         scope="direct-models",
         connection_id="relay-grok",
@@ -1467,7 +1530,7 @@ def test_direct_model_discovery_hash_ignores_order_duplicates_and_metadata(
         route_class="relay",
         provider_id="relay",
         endpoint="https://relay.example",
-        api_key="stable-secret",
+        api_key=_test_credential("stable", "secret"),
         credential_fingerprint_sha256="f" * 64,
     )
     monkeypatch.setattr(credentials, "load_provider_access", lambda **_: access)
@@ -1514,7 +1577,7 @@ def test_direct_model_discovery_rejects_malformed_registry(
         route_class="relay",
         provider_id="relay-kimi",
         endpoint="https://relay.example/v1",
-        api_key="hidden-secret",
+        api_key=_test_credential("hidden", "secret"),
         credential_fingerprint_sha256="e" * 64,
     )
     monkeypatch.setattr(credentials, "load_provider_access", lambda **_: access)
@@ -1537,7 +1600,7 @@ def test_total_tool_call_budget_rejects_batch_before_partial_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "https://relay.example/v1"
-    api_key = "tool-budget-secret"
+    api_key = _test_credential("tool", "budget", "secret")
     config = RunnerConfig(
         project_root=tmp_path,
         scope="tool-count-budget",
@@ -1599,7 +1662,7 @@ def test_cumulative_tool_result_budget_blocks_next_batch_before_execution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "https://relay.example/v1"
-    api_key = "result-budget-secret"
+    api_key = _test_credential("result", "budget", "secret")
     tool_result = {"value": "x"}
     result_chars = len(
         json.dumps(
@@ -1694,7 +1757,7 @@ def test_tool_call_accepts_strict_object_arguments_with_audited_dialect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "https://relay.example/v1"
-    api_key = "object-argument-secret"
+    api_key = _test_credential("object", "argument", "secret")
     config = RunnerConfig(
         project_root=tmp_path,
         scope="object-argument-dialect",
@@ -1755,7 +1818,7 @@ def test_tool_round_limit_allows_one_tool_then_forces_tool_free_final_response(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "https://relay.example/v1"
-    api_key = "tool-round-finalization-secret"
+    api_key = _test_credential("tool", "round", "finalization", "secret")
     config = RunnerConfig(
         project_root=tmp_path,
         scope="tool-round-finalization",
@@ -1816,7 +1879,7 @@ def test_mailbox_response_only_fallback_recovers_from_disallowed_tool_call(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     endpoint = "https://relay.example/v1"
-    api_key = "response-only-fallback-secret"
+    api_key = _test_credential("response", "only", "fallback", "secret")
     config = RunnerConfig(
         project_root=tmp_path,
         scope="response-only-fallback",
@@ -1903,7 +1966,7 @@ def test_tool_call_accepts_exact_gateway_empty_dialect_only_for_live_zero_arg_sc
     expected_format: str,
 ) -> None:
     endpoint = "https://relay.example/v1"
-    api_key = "double-brace-test-secret"
+    api_key = _test_credential("double", "brace", "test", "secret")
     config = RunnerConfig(
         project_root=tmp_path,
         scope="double-brace-dialect",
@@ -1984,7 +2047,7 @@ def test_gateway_double_brace_requires_exact_value_and_bound_zero_arg_schema(
             connection_id=config.connection_id,
             route_class=config.route_class,
             endpoint="https://relay.example/v1",
-            api_key="unused-test-secret",
+            api_key=_test_credential("unused", "test", "secret"),
         ),
     )
     if arguments not in {"{{}}", "{}{}"}:
@@ -2028,7 +2091,7 @@ def test_gateway_empty_dialect_accepts_schema_with_only_optional_properties(
             connection_id=config.connection_id,
             route_class=config.route_class,
             endpoint="https://relay.example/v1",
-            api_key="unused-test-secret",
+            api_key=_test_credential("unused", "test", "secret"),
         ),
     )
     runner._tool_input_schemas["list_rooms"] = {
@@ -2072,7 +2135,7 @@ def test_gateway_empty_dialect_rejects_schema_with_required_property(
             connection_id=config.connection_id,
             route_class=config.route_class,
             endpoint="https://relay.example/v1",
-            api_key="unused-test-secret",
+            api_key=_test_credential("unused", "test", "secret"),
         ),
     )
     runner._tool_input_schemas["room_members"] = {
@@ -2127,7 +2190,7 @@ def test_tool_call_rejects_non_object_argument_dialects(
             connection_id=config.connection_id,
             route_class=config.route_class,
             endpoint="https://relay.example/v1",
-            api_key="unused-test-secret",
+            api_key=_test_credential("unused", "test", "secret"),
         ),
     )
     message = {

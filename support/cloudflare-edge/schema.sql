@@ -8,15 +8,31 @@ CREATE TABLE IF NOT EXISTS feedback_cases (
     app_version TEXT,
     created_utc TEXT NOT NULL,
     received_utc TEXT NOT NULL,
+    expires_utc TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'new',
     digested_utc TEXT,
-    replied_utc TEXT
+    replied_utc TEXT,
+    notification_status TEXT NOT NULL DEFAULT 'legacy_unknown'
+        CHECK (notification_status IN ('legacy_unknown', 'pending', 'failed', 'sent')),
+    notification_attempt_count INTEGER NOT NULL DEFAULT 0
+        CHECK (notification_attempt_count >= 0),
+    notification_last_attempt_utc TEXT,
+    notification_sent_utc TEXT,
+    notification_claim_token_sha256 TEXT
+        CHECK (notification_claim_token_sha256 IS NULL OR length(notification_claim_token_sha256) = 64),
+    notification_claim_expires_utc TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_feedback_cases_received
     ON feedback_cases(received_utc DESC);
 CREATE INDEX IF NOT EXISTS idx_feedback_cases_status
     ON feedback_cases(status, received_utc DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_cases_expiry
+    ON feedback_cases(expires_utc ASC);
+CREATE INDEX IF NOT EXISTS idx_feedback_cases_notification_retry
+    ON feedback_cases(notification_status, notification_last_attempt_utc, received_utc ASC);
+CREATE INDEX IF NOT EXISTS idx_feedback_cases_notification_claim
+    ON feedback_cases(notification_status, notification_claim_expires_utc, received_utc ASC);
 
 CREATE TABLE IF NOT EXISTS rate_limits (
     rate_key TEXT NOT NULL,
@@ -28,32 +44,60 @@ CREATE TABLE IF NOT EXISTS rate_limits (
 
 -- D1 executes batched statements transactionally. These triggers make both the
 -- per-source and global increments fail closed under concurrent submissions.
-CREATE TRIGGER IF NOT EXISTS rate_limits_source_cap_insert
+CREATE TRIGGER IF NOT EXISTS rate_limits_attempt_source_cap_insert
 BEFORE INSERT ON rate_limits
-WHEN NEW.rate_key LIKE 'source:%' AND NEW.request_count > 50
+WHEN NEW.rate_key LIKE 'attempt-source:%' AND NEW.request_count > 20
 BEGIN
-    SELECT RAISE(ABORT, 'source rate limit exceeded');
+    SELECT RAISE(ABORT, 'source attempt rate limit exceeded');
 END;
 
-CREATE TRIGGER IF NOT EXISTS rate_limits_source_cap_update
+CREATE TRIGGER IF NOT EXISTS rate_limits_attempt_source_cap_update
 BEFORE UPDATE OF request_count ON rate_limits
-WHEN NEW.rate_key LIKE 'source:%' AND NEW.request_count > 50
+WHEN NEW.rate_key LIKE 'attempt-source:%' AND NEW.request_count > 20
 BEGIN
-    SELECT RAISE(ABORT, 'source rate limit exceeded');
+    SELECT RAISE(ABORT, 'source attempt rate limit exceeded');
 END;
 
-CREATE TRIGGER IF NOT EXISTS rate_limits_global_cap_insert
+CREATE TRIGGER IF NOT EXISTS rate_limits_attempt_global_cap_insert
 BEFORE INSERT ON rate_limits
-WHEN NEW.rate_key = 'global' AND NEW.request_count > 5000
+WHEN NEW.rate_key = 'attempt-global' AND NEW.request_count > 500
 BEGIN
-    SELECT RAISE(ABORT, 'global rate limit exceeded');
+    SELECT RAISE(ABORT, 'global attempt rate limit exceeded');
 END;
 
-CREATE TRIGGER IF NOT EXISTS rate_limits_global_cap_update
+CREATE TRIGGER IF NOT EXISTS rate_limits_attempt_global_cap_update
 BEFORE UPDATE OF request_count ON rate_limits
-WHEN NEW.rate_key = 'global' AND NEW.request_count > 5000
+WHEN NEW.rate_key = 'attempt-global' AND NEW.request_count > 500
 BEGIN
-    SELECT RAISE(ABORT, 'global rate limit exceeded');
+    SELECT RAISE(ABORT, 'global attempt rate limit exceeded');
+END;
+
+CREATE TRIGGER IF NOT EXISTS rate_limits_accepted_source_cap_insert
+BEFORE INSERT ON rate_limits
+WHEN NEW.rate_key LIKE 'accepted-source:%' AND NEW.request_count > 5
+BEGIN
+    SELECT RAISE(ABORT, 'accepted source rate limit exceeded');
+END;
+
+CREATE TRIGGER IF NOT EXISTS rate_limits_accepted_source_cap_update
+BEFORE UPDATE OF request_count ON rate_limits
+WHEN NEW.rate_key LIKE 'accepted-source:%' AND NEW.request_count > 5
+BEGIN
+    SELECT RAISE(ABORT, 'accepted source rate limit exceeded');
+END;
+
+CREATE TRIGGER IF NOT EXISTS rate_limits_accepted_global_cap_insert
+BEFORE INSERT ON rate_limits
+WHEN NEW.rate_key = 'accepted-global' AND NEW.request_count > 100
+BEGIN
+    SELECT RAISE(ABORT, 'accepted global rate limit exceeded');
+END;
+
+CREATE TRIGGER IF NOT EXISTS rate_limits_accepted_global_cap_update
+BEFORE UPDATE OF request_count ON rate_limits
+WHEN NEW.rate_key = 'accepted-global' AND NEW.request_count > 100
+BEGIN
+    SELECT RAISE(ABORT, 'accepted global rate limit exceeded');
 END;
 
 CREATE TABLE IF NOT EXISTS announcements (

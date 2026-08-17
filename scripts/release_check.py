@@ -30,7 +30,8 @@ SOURCE_ROOT = ROOT / "src"
 if str(SOURCE_ROOT) not in sys.path:
     sys.path.insert(0, str(SOURCE_ROOT))
 
-from peerbridge_mcp.secret_scan import (
+from peerbridge_mcp.secret_scan import (  # noqa: E402
+    SAFE_TEST_CREDENTIAL_LITERALS,
     contains_secret,
     contains_secret_bytes,
     source_text_contains_secret,
@@ -55,11 +56,13 @@ IGNORED_PARTS = {
     ".mypy_cache",
     ".peerbridge",
     ".peerbridge-artifacts",
+    ".peerbridge-test-tmp",
     ".pytest-tmp",
     ".pytest_runs",
     ".pytest_cache",
     ".test-tmp",
     ".test-runtime",
+    ".test-runs",
     ".ruff_cache",
     ".tools",
     ".venv",
@@ -89,6 +92,7 @@ TEXT_SUFFIXES = {
     ".css",
     ".csv",
     ".example",
+    ".gs",
     ".html",
     ".htm",
     ".in",
@@ -117,11 +121,13 @@ TEXT_SUFFIXES = {
     ".yaml",
     ".yml",
 }
-JAVASCRIPT_SUFFIXES = {".cjs", ".js", ".jsx", ".mjs", ".ts", ".tsx"}
+JAVASCRIPT_SUFFIXES = {".cjs", ".gs", ".js", ".jsx", ".mjs", ".ts", ".tsx"}
 JAVASCRIPT_FRAGMENT_PATTERN = re.compile(
     r"(?P<line>//[^\r\n]*)|"
     r"(?P<block>/\*.*?\*/)|"
-    r"(?P<string>'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\")|"
+    r"(?P<regex>/(?!(?:/|\*))(?:(?:\\.)|\[(?:\\.|[^\]\\\r\n])*\]|"
+    r"[^/\\\[\r\n])+/[dgimsuvy]*)|"
+    r"(?P<string>'(?:\\.|[^'\\\r\n])*'|\"(?:\\.|[^\"\\\r\n])*\")|"
     r"(?P<template>`(?:\\.|[^`\\])*`)",
     re.DOTALL,
 )
@@ -129,15 +135,6 @@ JAVASCRIPT_SENSITIVE_ASSIGNMENT = re.compile(
     r"(?i)(?:[A-Za-z_$][\w$.-]*(?:api[_-]?key|access[_-]?token|authorization|"
     r"password|secret|token)|['\"](?:api[_-]?key|access[_-]?token|authorization|"
     r"password|secret|token)['\"])\s*[:=]\s*$"
-)
-TEST_SOURCE_MARKERS = (
-    "dummy",
-    "example",
-    "fake",
-    "fixture",
-    "not-for-production",
-    "placeholder",
-    "test",
 )
 REMOTE_RECEIPT_SCHEMA = "peerbridge.remote-mobile-e2e-receipt.v2"
 REMOTE_RECEIPT_DEFAULT = Path(".peerbridge/receipts/remote-mobile-e2e-v2.json")
@@ -271,10 +268,12 @@ def _git_file_inventory(
     if git_root != root:
         return None
     files: set[Path] = set()
-    inventories = [["ls-files", "--cached", "-z"]]
+    inventories = [(["ls-files", "--cached", "-z"], False)]
     if include_untracked:
-        inventories.append(["ls-files", "--others", "--exclude-standard", "-z"])
-    for arguments in inventories:
+        inventories.append(
+            (["ls-files", "--others", "--exclude-standard", "-z"], True)
+        )
+    for arguments, filter_runtime_scratch in inventories:
         try:
             completed = subprocess.run(
                 ["git", "-C", str(root), *arguments],
@@ -292,6 +291,10 @@ def _git_file_inventory(
             if not raw_name:
                 continue
             relative = Path(os.fsdecode(raw_name))
+            if filter_runtime_scratch and any(
+                _ignored_part(part) for part in relative.parts
+            ):
+                continue
             candidate = (root / relative).resolve()
             try:
                 candidate.relative_to(root)
@@ -406,7 +409,7 @@ def iter_text_files(root: Path = ROOT) -> list[Path]:
         ):
             continue
         parts = path.relative_to(root).parts
-        if any(_ignored_part(part) for part in parts):
+        if inventory is None and any(_ignored_part(part) for part in parts):
             continue
         files.append(path)
     return sorted(files)
@@ -455,6 +458,7 @@ def _ignored_part(part: str) -> bool:
         part in IGNORED_PARTS
         or part.startswith(".test-tmp-")
         or part.startswith(".pytest-")
+        or part.startswith(".pytest_")
         or part.endswith(".egg-info")
         or part.endswith(".pyc")
     )
@@ -1184,14 +1188,15 @@ def _javascript_source_contains_secret(
             if contains_secret(fragment):
                 return True
             continue
+        if match.lastgroup == "regex":
+            continue
         literal = fragment[1:-1]
         if contains_secret(literal):
             return True
         prefix = text[max(0, match.start() - 192) : match.start()]
         if not JAVASCRIPT_SENSITIVE_ASSIGNMENT.search(prefix):
             continue
-        lowered = literal.lower()
-        if allow_test_fixtures and any(marker in lowered for marker in TEST_SOURCE_MARKERS):
+        if allow_test_fixtures and literal in SAFE_TEST_CREDENTIAL_LITERALS:
             continue
         if contains_secret(f"token={literal}"):
             return True
@@ -1494,7 +1499,6 @@ def _sdist_errors(path: Path, info: ProjectInfo, root: Path) -> list[str]:
                     "sdist contains links or special members: " + ", ".join(unsupported)
                 )
             members = [member for member in all_members if member.isfile()]
-            names = [member.name for member in members]
             errors.extend(
                 _archive_size_errors(
                     [(member.name, member.size) for member in members], "sdist"

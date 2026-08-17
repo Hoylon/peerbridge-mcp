@@ -2,6 +2,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.pytest_*/
 .pytest-tmp/
 .pytest-tmp*/
 .pytest-*/
@@ -9,6 +10,7 @@ __pycache__/
 .test-tmp/
 .test-tmp-*/
 .test-runtime/
+.test-runs/
 .coverage
 htmlcov/
 dist/
@@ -18,6 +20,7 @@ build/
 venv/
 .env
 .env.*
+.clasp.json
 *.pem
 *.key
 *.p12
@@ -31,6 +34,7 @@ venv/
 *.db-shm
 .peerbridge/
 .peerbridge-artifacts/
+.peerbridge-test-tmp/
 drafts/
 logs/
 *.log
@@ -38,5 +42,7 @@ demo-workspace/
 .ruff_cache/
 .mypy_cache/
 node_modules/
+.wrangler/
 .dev.vars
 support/cloudflare-edge/wrangler.jsonc
+/.qa_*.png

@@ -17,9 +17,43 @@ def test_all_top_level_strings_exist_in_all_three_locales() -> None:
     keys = (
         "nav.chat",
         "nav.feedback",
+        "nav.usage",
         "nav.announcement",
         "page.connect",
+        "page.usage",
+        "usage.total_tokens",
+        "usage.coverage",
+        "usage.platforms",
+        "sidebar.agent_library",
+        "sidebar.version",
+        "sidebar.library_none",
+        "sidebar.library_selected",
+        "sidebar.library_empty",
+        "sidebar.online",
+        "sidebar.rooms",
+        "sidebar.messages",
+        "sidebar.memory",
+        "sidebar.dispatch",
+        "sidebar.open_calls",
+        "sidebar.active",
+        "sidebar.audit",
+        "sidebar.sync",
+        "sidebar.dispatch_running",
+        "sidebar.dispatch_retry",
+        "sidebar.dispatch_failed",
+        "sidebar.dispatch_completed",
+        "sidebar.database_error",
+        "usage.today",
+        "usage.cached_input",
+        "usage.reasoning",
+        "usage.calls_no_tokens",
+        "usage.provider_reported_tokens",
+        "usage.unavailable",
+        "usage.partial",
+        "usage.derived_total",
+        "usage.note",
         "toolbar.search",
+        "toolbar.language",
         "toolbar.updates",
         "toolbar.announcements",
         "announcement.popup",
@@ -34,6 +68,13 @@ def test_all_top_level_strings_exist_in_all_three_locales() -> None:
         "chat.no_attachments",
         "chat.attachments_selected",
         "chat.attachment_note",
+        "chat.to",
+        "chat.priority",
+        "chat.task",
+        "chat.provider",
+        "chat.model",
+        "chat.reasoning",
+        "chat.subject",
         "chat.new_room",
         "chat.join_control",
         "chat.older",
@@ -73,12 +114,103 @@ def test_all_top_level_strings_exist_in_all_three_locales() -> None:
         "provider.endpoint_required",
         "provider.local_loopback_only",
         "provider.api_key_required",
+        "provider.show_api_key",
+        "provider.hide_api_key",
         "provider.saving",
         "provider.save_failed",
     )
     for locale in SUPPORTED_LOCALES:
         for key in keys:
             assert translate(locale, key)
+
+
+def test_chinese_usage_labels_use_token_but_no_other_english_chart_terms() -> None:
+    for locale in ("zh-Hant", "zh-Hans"):
+        labels = " ".join(
+            translate(locale, key)
+            for key in (
+                "page.usage",
+                "usage.total_tokens",
+                "usage.input_tokens",
+                "usage.output_tokens",
+                "usage.coverage",
+                "usage.daily",
+                "usage.today",
+                "usage.cached_input",
+                "usage.reasoning",
+                "usage.agent",
+                "usage.calls_no_tokens",
+                "usage.provider_reported_tokens",
+                "usage.unavailable",
+                "usage.partial",
+                "usage.derived_total",
+                "usage.no_data",
+                "usage.note",
+                "chat.to",
+                "chat.priority",
+                "chat.task",
+                "chat.provider",
+                "chat.model",
+                "chat.reasoning",
+                "chat.model.default",
+                "chat.reasoning.default",
+                "chat.subject",
+            )
+        ).lower()
+        assert "token" in labels
+        assert "詞元" not in labels
+        assert "词元" not in labels
+        assert "cache" not in labels
+        assert "reason" not in labels
+        assert "agent" not in labels
+        assert "unavailable" not in labels
+        assert "partial" not in labels
+        assert "provider" not in labels
+        assert "agent" not in translate(locale, "sidebar.agent_library").lower()
+
+
+def test_chinese_usage_shell_has_no_english_status_labels() -> None:
+    keys = (
+        "sidebar.version",
+        "sidebar.library_none",
+        "sidebar.library_empty",
+        "sidebar.online",
+        "sidebar.rooms",
+        "sidebar.messages",
+        "sidebar.memory",
+        "sidebar.dispatch",
+        "sidebar.open_calls",
+        "sidebar.active",
+        "sidebar.audit",
+        "sidebar.sync",
+        "sidebar.dispatch_running",
+        "sidebar.dispatch_retry",
+        "sidebar.dispatch_failed",
+        "sidebar.dispatch_completed",
+        "sidebar.database_error",
+        "toolbar.language",
+    )
+    forbidden = (
+        "global",
+        "online",
+        "rooms",
+        "messages",
+        "memory",
+        "dispatch",
+        "open call",
+        "active",
+        "audit",
+        "sync",
+        "run",
+        "retry",
+        "fail",
+        "done",
+        "language",
+        "database error",
+    )
+    for locale in ("zh-Hant", "zh-Hans"):
+        labels = " ".join(translate(locale, key) for key in keys).lower()
+        assert not any(word in labels for word in forbidden)
 
 
 def test_tutorial_describes_local_provider_security_without_claiming_a_key() -> None:

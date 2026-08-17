@@ -478,8 +478,10 @@ def release_source_tree_sha256(root: Path) -> str:
     for path in iter_release_text_files(root.resolve()):
         relative = path.relative_to(root.resolve()).as_posix().encode("utf-8")
         payload = path.read_bytes()
-        digest.update(len(relative).to_bytes(8, "big")); digest.update(relative)
-        digest.update(len(payload).to_bytes(8, "big")); digest.update(payload)
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
     return digest.hexdigest()
 
 
@@ -568,7 +570,8 @@ def finalize_receipt(
     if serve_code or funnel_code:
         raise EvidenceError("Tailscale Serve or Funnel status capture failed")
     try:
-        json.loads(serve_payload.decode("utf-8-sig")); json.loads(funnel_payload.decode("utf-8-sig"))
+        json.loads(serve_payload.decode("utf-8-sig"))
+        json.loads(funnel_payload.decode("utf-8-sig"))
     except (UnicodeError, json.JSONDecodeError) as exc:
         raise EvidenceError("Tailscale status capture was not UTF-8 JSON") from exc
     network, network_command = _network_observation(parsed.port)

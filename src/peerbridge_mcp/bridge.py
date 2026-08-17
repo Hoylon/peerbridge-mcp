@@ -20,6 +20,7 @@ from .attachments import (
     MAX_CHAT_ATTACHMENT_BYTES,
 )
 from .secret_scan import contains_secret, contains_secret_bytes
+from .usage import UsageError, unavailable_usage, validate_usage
 
 
 ZERO_SHA256 = "0" * 64
@@ -31,11 +32,11 @@ MAX_DISPATCH_ATTEMPTS = 5
 DEFAULT_DISPATCH_RETRY_SECONDS = 15
 MAX_DISPATCH_RETRY_SECONDS = 86_400
 MAX_TEXT_CHARS = 50_000
-SCHEMA_VERSION = "15"
+SCHEMA_VERSION = "17"
 DEFAULT_ROOM_ID = "lobby"
 HUMAN_OPERATOR_ID = "human-operator"
 ROUTE_CLASSES = {"official", "relay", "local"}
-SECRET_BACKENDS = {"windows-credential-manager", "cc-switch"}
+SECRET_BACKENDS = {"windows-credential-manager", "cc-switch", "native-acp"}
 MEMORY_VISIBILITIES = {"private", "room", "project"}
 ROOM_AUTOMATION_MODES = {"off", "once", "discussion"}
 DISCUSSION_STATUSES = {"active", "paused", "waiting_human", "completed", "stopped"}
@@ -357,6 +358,42 @@ class Bridge:
                     ON message_dispatches(scope, agent_id, status, lease_expires_epoch);
                 CREATE INDEX IF NOT EXISTS idx_message_dispatches_scope_updated
                     ON message_dispatches(scope, updated_utc DESC, message_id);
+                CREATE TABLE IF NOT EXISTS inference_usage (
+                    scope TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    reply_message_id TEXT NOT NULL,
+                    route_profile_id TEXT,
+                    provider_id TEXT,
+                    model_id TEXT,
+                    reasoning_mode TEXT,
+                    route_class TEXT,
+                    usage_status TEXT NOT NULL,
+                    usage_source TEXT NOT NULL,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    total_tokens INTEGER,
+                    cached_input_tokens INTEGER,
+                    reasoning_tokens INTEGER,
+                    input_tokens_reported_calls INTEGER NOT NULL DEFAULT 0,
+                    output_tokens_reported_calls INTEGER NOT NULL DEFAULT 0,
+                    total_tokens_reported_calls INTEGER NOT NULL DEFAULT 0,
+                    cached_input_tokens_reported_calls INTEGER NOT NULL DEFAULT 0,
+                    reasoning_tokens_reported_calls INTEGER NOT NULL DEFAULT 0,
+                    reported_calls INTEGER NOT NULL,
+                    total_calls INTEGER NOT NULL,
+                    total_tokens_derived INTEGER NOT NULL,
+                    recorded_utc TEXT NOT NULL,
+                    inference_receipt_sha256 TEXT NOT NULL,
+                    usage_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, message_id, agent_id),
+                    FOREIGN KEY(message_id) REFERENCES messages(message_id),
+                    FOREIGN KEY(reply_message_id) REFERENCES messages(message_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_inference_usage_scope_time
+                    ON inference_usage(scope, recorded_utc DESC, message_id);
+                CREATE INDEX IF NOT EXISTS idx_inference_usage_scope_model
+                    ON inference_usage(scope, provider_id, model_id, recorded_utc DESC);
                 CREATE TABLE IF NOT EXISTS message_dispatch_retry_schedules (
                     scope TEXT NOT NULL,
                     message_id TEXT NOT NULL,
@@ -641,6 +678,19 @@ class Bridge:
                     prev_chain_sha256 TEXT NOT NULL,
                     chain_sha256 TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS mcp_mutation_receipts (
+                    call_sha256 TEXT PRIMARY KEY,
+                    scope TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    tool TEXT NOT NULL,
+                    arguments_sha256 TEXT NOT NULL,
+                    result_json TEXT NOT NULL,
+                    result_sha256 TEXT NOT NULL,
+                    created_utc TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE INDEX IF NOT EXISTS idx_mcp_mutation_receipts_scope_actor
+                    ON mcp_mutation_receipts(scope, actor, created_utc DESC);
                 CREATE INDEX IF NOT EXISTS idx_events_scope_time
                     ON events(scope, sequence);
                 CREATE INDEX IF NOT EXISTS idx_events_scope_created
@@ -665,6 +715,8 @@ class Bridge:
                 "12",
                 "13",
                 "14",
+                "15",
+                "16",
                 SCHEMA_VERSION,
             }:
                 raise BridgeError(
@@ -759,6 +811,27 @@ class Bridge:
                 connection.execute(
                     "ALTER TABLE route_profiles ADD COLUMN response_model_id TEXT"
                 )
+            usage_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(inference_usage)")
+            }
+            for token_field in (
+                "input_tokens",
+                "output_tokens",
+                "total_tokens",
+                "cached_input_tokens",
+                "reasoning_tokens",
+            ):
+                coverage_column = f"{token_field}_reported_calls"
+                if coverage_column not in usage_columns:
+                    connection.execute(
+                        f"ALTER TABLE inference_usage ADD COLUMN {coverage_column} "
+                        "INTEGER NOT NULL DEFAULT 0"
+                    )
+                    connection.execute(
+                        f"UPDATE inference_usage SET {coverage_column}=reported_calls "
+                        f"WHERE {token_field} IS NOT NULL"
+                    )
             discussion_columns = {
                 item["name"]
                 for item in connection.execute("PRAGMA table_info(room_discussions)")
@@ -983,6 +1056,91 @@ class Bridge:
             ),
         )
         return {"event_id": event_id, "chain_sha256": chain_sha}
+
+    def _mcp_receipt_metadata(
+        self, args: dict[str, Any], expected_tool: str
+    ) -> dict[str, str] | None:
+        raw = args.get("__mcp_receipt")
+        if raw is None:
+            return None
+        if not isinstance(raw, dict) or set(raw) != {
+            "call_sha256",
+            "arguments_sha256",
+            "session_id",
+            "tool",
+        }:
+            raise BridgeError("invalid internal MCP mutation receipt metadata")
+        tool = _require_identifier(raw.get("tool"), "receipt tool")
+        session_id = _require_identifier(raw.get("session_id"), "receipt session_id")
+        if tool != expected_tool or session_id != self.session_id:
+            raise BridgeError("MCP mutation receipt identity mismatch")
+        return {
+            "call_sha256": _require_sha256(
+                raw.get("call_sha256"), "receipt call_sha256"
+            ),
+            "arguments_sha256": _require_sha256(
+                raw.get("arguments_sha256"), "receipt arguments_sha256"
+            ),
+            "session_id": session_id,
+            "tool": tool,
+        }
+
+    def _load_mcp_mutation_receipt_locked(
+        self,
+        connection: sqlite3.Connection,
+        metadata: dict[str, str] | None,
+    ) -> dict[str, Any] | None:
+        if metadata is None:
+            return None
+        row = connection.execute(
+            """SELECT actor, tool, arguments_sha256, result_json, result_sha256
+                 FROM mcp_mutation_receipts
+                WHERE call_sha256=? AND scope=?""",
+            (metadata["call_sha256"], self.scope),
+        ).fetchone()
+        if row is None:
+            return None
+        if (
+            str(row["actor"]) != self.agent_id
+            or str(row["tool"]) != metadata["tool"]
+            or str(row["arguments_sha256"]) != metadata["arguments_sha256"]
+        ):
+            raise BridgeError("MCP idempotency key was reused with different arguments")
+        try:
+            result = json.loads(str(row["result_json"]))
+        except json.JSONDecodeError as exc:
+            raise sqlite3.DatabaseError("invalid MCP mutation receipt JSON") from exc
+        if not isinstance(result, dict) or stable_sha256(result) != row["result_sha256"]:
+            raise sqlite3.DatabaseError("MCP mutation receipt integrity check failed")
+        return result
+
+    def _store_mcp_mutation_receipt_locked(
+        self,
+        connection: sqlite3.Connection,
+        metadata: dict[str, str] | None,
+        result: dict[str, Any],
+    ) -> None:
+        if metadata is None:
+            return
+        result_json = json.dumps(
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        connection.execute(
+            """INSERT INTO mcp_mutation_receipts(
+                   call_sha256, scope, actor, session_id, tool,
+                   arguments_sha256, result_json, result_sha256
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                metadata["call_sha256"],
+                self.scope,
+                self.agent_id,
+                metadata["session_id"],
+                metadata["tool"],
+                metadata["arguments_sha256"],
+                result_json,
+                stable_sha256(result),
+            ),
+        )
 
     def _normalize_path(self, value: Any) -> str:
         text = str(value or "").strip().replace("\\", "/")
@@ -1290,18 +1448,20 @@ class Bridge:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                """SELECT profile_sha256, updated_utc FROM route_profiles
+                """SELECT * FROM route_profiles
                    WHERE scope=? AND route_id=?""",
                 (self.scope, route_id),
             ).fetchone()
             if existing is not None:
-                if existing["profile_sha256"] != profile_sha:
+                existing_identity = self._route_profile_identity_payload(existing)
+                existing_profile_sha = self._verified_route_profile_sha256(existing)
+                if existing_identity != profile:
                     raise BridgeError(
                         "route profiles are immutable; create a new route_id"
                     )
                 return {
                     **profile,
-                    "profile_sha256": profile_sha,
+                    "profile_sha256": existing_profile_sha,
                     "updated_utc": existing["updated_utc"],
                 }
             connection.execute(
@@ -1354,7 +1514,7 @@ class Bridge:
         secret_backend = str(args.get("secret_backend") or "").strip().lower()
         if secret_backend not in SECRET_BACKENDS:
             raise BridgeError(
-                "secret_backend must be windows-credential-manager or cc-switch"
+                "secret_backend must be windows-credential-manager, cc-switch or native-acp"
             )
         stored_credential_target = _require_identifier(
             args.get("credential_target"), "credential_target"
@@ -2408,14 +2568,23 @@ class Bridge:
         cls, row: sqlite3.Row | dict[str, Any]
     ) -> str:
         stored = row["profile_sha256"]
-        expected = stable_sha256(cls._route_profile_identity_payload(row))
-        if (
-            not isinstance(stored, str)
-            or re.fullmatch(r"[0-9a-f]{64}", stored) is None
-            or not secrets.compare_digest(stored, expected)
-        ):
+        if not isinstance(stored, str) or re.fullmatch(r"[0-9a-f]{64}", stored) is None:
             raise BridgeError("route profile identity SHA mismatch")
-        return stored
+        identity = cls._route_profile_identity_payload(row)
+        expected = stable_sha256(identity)
+        if secrets.compare_digest(stored, expected):
+            return stored
+
+        # Schema v17 added an optional response_model_id to the immutable identity.
+        # Profiles created before that column existed bind the same semantic identity
+        # when the new value is NULL, so accept only their exact legacy hash.
+        if identity["response_model_id"] is None:
+            legacy_identity = dict(identity)
+            legacy_identity.pop("response_model_id")
+            legacy_expected = stable_sha256(legacy_identity)
+            if secrets.compare_digest(stored, legacy_expected):
+                return stored
+        raise BridgeError("route profile identity SHA mismatch")
 
     def _resolve_route_request(
         self,
@@ -2618,6 +2787,7 @@ class Bridge:
         }
 
     def send_message(self, args: dict[str, Any]) -> dict[str, Any]:
+        receipt_metadata = self._mcp_receipt_metadata(args, "send_message")
         room_id = _require_identifier(
             args.get("room_id", DEFAULT_ROOM_ID), "room_id"
         )
@@ -2633,6 +2803,11 @@ class Bridge:
         artifacts = self._clean_artifacts(args.get("artifact_paths", []))
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            replay = self._load_mcp_mutation_receipt_locked(
+                connection, receipt_metadata
+            )
+            if replay is not None:
+                return replay
             self._require_room_member(connection, room_id, self.agent_id)
             if room_id != DEFAULT_ROOM_ID and recipient != "*":
                 if self._active_room_member(connection, room_id, recipient) is None:
@@ -2714,15 +2889,19 @@ class Bridge:
                 },
                 task_id,
             )
-        return {
-            "message_id": message_id,
-            "room_id": room_id,
-            "sequence": cursor.lastrowid,
-            "content_sha256": content_sha,
-            "route_request": route_request,
-            "route_status": "requested" if route_request else "not_requested",
-            "created_utc": created,
-        }
+            result = {
+                "message_id": message_id,
+                "room_id": room_id,
+                "sequence": cursor.lastrowid,
+                "content_sha256": content_sha,
+                "route_request": route_request,
+                "route_status": "requested" if route_request else "not_requested",
+                "created_utc": created,
+            }
+            self._store_mcp_mutation_receipt_locked(
+                connection, receipt_metadata, result
+            )
+        return result
 
     def _send_room_fanout_locked(
         self,
@@ -2869,6 +3048,7 @@ class Bridge:
 
     def send_room_fanout(self, args: dict[str, Any]) -> dict[str, Any]:
         """Atomically route one room member message under the room's once policy."""
+        receipt_metadata = self._mcp_receipt_metadata(args, "send_room_fanout")
         room_id = _require_identifier(args.get("room_id"), "room_id")
         task_id = _require_identifier(args.get("task_id"), "task_id")
         subject = _require_text(args.get("subject"), "subject", limit=500)
@@ -2879,7 +3059,12 @@ class Bridge:
         artifacts = self._clean_artifacts(args.get("artifact_paths", []))
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            return self._send_room_fanout_locked(
+            replay = self._load_mcp_mutation_receipt_locked(
+                connection, receipt_metadata
+            )
+            if replay is not None:
+                return replay
+            result = self._send_room_fanout_locked(
                 connection,
                 room_id=room_id,
                 task_id=task_id,
@@ -2888,6 +3073,10 @@ class Bridge:
                 priority=priority,
                 artifacts=artifacts,
             )
+            self._store_mcp_mutation_receipt_locked(
+                connection, receipt_metadata, result
+            )
+            return result
 
     def _routed_room_seats(
         self,
@@ -3177,6 +3366,7 @@ class Bridge:
 
     def post_room_message(self, args: dict[str, Any]) -> dict[str, Any]:
         """Post once according to the room policy and optionally open a discussion."""
+        receipt_metadata = self._mcp_receipt_metadata(args, "post_room_message")
         room_id = _require_identifier(args.get("room_id"), "room_id")
         task_id = _require_identifier(args.get("task_id"), "task_id")
         subject = _require_text(args.get("subject"), "subject", limit=500)
@@ -3188,6 +3378,11 @@ class Bridge:
         now = utc_now()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            replay = self._load_mcp_mutation_receipt_locked(
+                connection, receipt_metadata
+            )
+            if replay is not None:
+                return replay
             self._require_room_member(connection, room_id, self.agent_id)
             policy = self._room_policy(connection, room_id)
             mode = str(policy["mode"])
@@ -3246,7 +3441,7 @@ class Bridge:
                     },
                     task_id,
                 )
-                return {
+                result = {
                     "message_id": message_id,
                     "room_id": room_id,
                     "sequence": int(cursor.lastrowid),
@@ -3258,6 +3453,10 @@ class Bridge:
                     "fanout_count": 0,
                     "audit_chain_sha256": event["chain_sha256"],
                 }
+                self._store_mcp_mutation_receipt_locked(
+                    connection, receipt_metadata, result
+                )
+                return result
             if mode == "once":
                 receipt = self._send_room_fanout_locked(
                     connection,
@@ -3269,7 +3468,11 @@ class Bridge:
                     artifacts=artifacts,
                     enforce_once_policy=False,
                 )
-                return {**receipt, "automation_mode": mode}
+                result = {**receipt, "automation_mode": mode}
+                self._store_mcp_mutation_receipt_locked(
+                    connection, receipt_metadata, result
+                )
+                return result
 
             if mode != "discussion":
                 raise BridgeError("unsupported room automation mode")
@@ -3390,19 +3593,23 @@ class Bridge:
                 },
                 task_id,
             )
-        return {
-            "automation_mode": "discussion",
-            "discussion_id": discussion_id,
-            "room_id": room_id,
-            "task_id": task_id,
-            "round": 1,
-            "fanout_count": len(messages),
-            "recipients": messages,
-            "discussion_sha256": discussion_sha,
-            "content_sha256": discussion_sha,
-            "created_utc": now,
-            "audit_chain_sha256": event["chain_sha256"],
-        }
+            result = {
+                "automation_mode": "discussion",
+                "discussion_id": discussion_id,
+                "room_id": room_id,
+                "task_id": task_id,
+                "round": 1,
+                "fanout_count": len(messages),
+                "recipients": messages,
+                "discussion_sha256": discussion_sha,
+                "content_sha256": discussion_sha,
+                "created_utc": now,
+                "audit_chain_sha256": event["chain_sha256"],
+            }
+            self._store_mcp_mutation_receipt_locked(
+                connection, receipt_metadata, result
+            )
+        return result
 
     def _consumer_cursor(
         self, connection: sqlite3.Connection, channel: str, consumer: str
@@ -3895,6 +4102,12 @@ class Bridge:
         inference_receipt_sha = _require_sha256(
             args.get("inference_receipt_sha256"), "inference_receipt_sha256"
         )
+        try:
+            inference_usage = validate_usage(
+                args.get("inference_usage") or unavailable_usage()
+            )
+        except UsageError as exc:
+            raise BridgeError(str(exc)) from None
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             dispatch_row = self._require_dispatch_lease(
@@ -4091,6 +4304,77 @@ class Bridge:
                     self.agent_id,
                 ),
             )
+            usage_content = {
+                "scope": self.scope,
+                "message_id": message_id,
+                "agent_id": self.agent_id,
+                "reply_message_id": reply_id,
+                "route_profile_id": source["route_profile_id"],
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "reasoning_mode": self.reasoning_mode,
+                "route_class": self.route_class,
+                "usage_status": inference_usage["status"],
+                "usage_source": inference_usage["source"],
+                "input_tokens": inference_usage["input_tokens"],
+                "output_tokens": inference_usage["output_tokens"],
+                "total_tokens": inference_usage["total_tokens"],
+                "cached_input_tokens": inference_usage["cached_input_tokens"],
+                "reasoning_tokens": inference_usage["reasoning_tokens"],
+                "field_reported_calls": inference_usage["field_reported_calls"],
+                "reported_calls": inference_usage["reported_calls"],
+                "total_calls": inference_usage["total_calls"],
+                "total_tokens_derived": bool(
+                    inference_usage["total_tokens_derived"]
+                ),
+                "recorded_utc": created,
+                "inference_receipt_sha256": inference_receipt_sha,
+            }
+            usage_sha = stable_sha256(usage_content)
+            connection.execute(
+                """INSERT INTO inference_usage(
+                       scope, message_id, agent_id, reply_message_id,
+                       route_profile_id, provider_id, model_id, reasoning_mode,
+                       route_class, usage_status, usage_source, input_tokens,
+                       output_tokens, total_tokens, cached_input_tokens,
+                       reasoning_tokens, input_tokens_reported_calls,
+                       output_tokens_reported_calls, total_tokens_reported_calls,
+                       cached_input_tokens_reported_calls,
+                       reasoning_tokens_reported_calls, reported_calls, total_calls,
+                       total_tokens_derived, recorded_utc,
+                       inference_receipt_sha256, usage_sha256
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.scope,
+                    message_id,
+                    self.agent_id,
+                    reply_id,
+                    source["route_profile_id"],
+                    self.provider_id,
+                    self.model_id,
+                    self.reasoning_mode,
+                    self.route_class,
+                    inference_usage["status"],
+                    inference_usage["source"],
+                    inference_usage["input_tokens"],
+                    inference_usage["output_tokens"],
+                    inference_usage["total_tokens"],
+                    inference_usage["cached_input_tokens"],
+                    inference_usage["reasoning_tokens"],
+                    inference_usage["field_reported_calls"]["input_tokens"],
+                    inference_usage["field_reported_calls"]["output_tokens"],
+                    inference_usage["field_reported_calls"]["total_tokens"],
+                    inference_usage["field_reported_calls"]["cached_input_tokens"],
+                    inference_usage["field_reported_calls"]["reasoning_tokens"],
+                    inference_usage["reported_calls"],
+                    inference_usage["total_calls"],
+                    int(bool(inference_usage["total_tokens_derived"])),
+                    created,
+                    inference_receipt_sha,
+                    usage_sha,
+                ),
+            )
             self._event(
                 connection,
                 "message.sent",
@@ -4112,6 +4396,8 @@ class Bridge:
                     "dispatch_sha256": dispatch_sha,
                     "inference_receipt_sha256": inference_receipt_sha,
                     "route_receipt_sha256": route_receipt_sha,
+                    "inference_usage_sha256": usage_sha,
+                    "inference_usage_status": inference_usage["status"],
                 },
                 source["task_id"],
             )
@@ -4121,6 +4407,7 @@ class Bridge:
             "reply_message_id": reply_id,
             "reply_content_sha256": content_sha,
             "cursor": advanced,
+            "inference_usage": {**inference_usage, "usage_sha256": usage_sha},
             "dispatch": {
                 **self._public_dispatch({**completed, "dispatch_sha256": dispatch_sha}),
                 "audit_chain_sha256": event["chain_sha256"],
@@ -4268,6 +4555,18 @@ class Bridge:
                 ).fetchall()
                 if not prompts:
                     continue
+                responses = connection.execute(
+                    """SELECT reply.* FROM messages prompt
+                       JOIN message_dispatches d
+                         ON d.scope=prompt.scope AND d.message_id=prompt.message_id
+                        AND d.status='completed'
+                       JOIN messages reply
+                         ON reply.scope=d.scope AND reply.message_id=d.reply_message_id
+                      WHERE prompt.scope=? AND prompt.discussion_id=?
+                        AND prompt.discussion_round=? AND prompt.discussion_role='prompt'
+                      ORDER BY reply.sender""",
+                    (self.scope, discussion_id, current_round),
+                ).fetchall()
                 try:
                     participants = self._discussion_participants(
                         connection, discussion_id
@@ -4286,6 +4585,8 @@ class Bridge:
                         now=now,
                         status="waiting_human",
                         processed_round=current_round,
+                        message_count=int(discussion["message_count"])
+                        + len(responses),
                         stop_reason="participant_unavailable",
                     )
                     event = self._event(
@@ -4297,6 +4598,7 @@ class Bridge:
                             "status": "waiting_human",
                             "stop_reason": "participant_unavailable",
                             "detail": str(exc),
+                            "response_count": len(responses),
                             "cancelled_dispatch_count": cancelled,
                             "discussion_sha256": updated_sha,
                         },
@@ -4318,18 +4620,6 @@ class Bridge:
                     continue
                 if len(prompts) != len(participants):
                     raise BridgeError("discussion prompt participant set drifted")
-                responses = connection.execute(
-                    """SELECT reply.* FROM messages prompt
-                       JOIN message_dispatches d
-                         ON d.scope=prompt.scope AND d.message_id=prompt.message_id
-                        AND d.status='completed'
-                       JOIN messages reply
-                         ON reply.scope=d.scope AND reply.message_id=d.reply_message_id
-                      WHERE prompt.scope=? AND prompt.discussion_id=?
-                        AND prompt.discussion_round=? AND prompt.discussion_role='prompt'
-                      ORDER BY reply.sender""",
-                    (self.scope, discussion_id, current_round),
-                ).fetchall()
                 terminal = connection.execute(
                     """SELECT COUNT(*) FROM message_dispatches d
                        JOIN messages prompt
@@ -4614,9 +4904,45 @@ class Bridge:
             minimum=1,
             maximum=100,
         )
+        raw_observations = args.get("route_runtime_observations", [])
+        if not isinstance(raw_observations, list):
+            raise BridgeError("route_runtime_observations must be a list")
+        route_runtime_observations: dict[str, dict[str, Any]] = {}
+        for raw_observation in raw_observations:
+            if not isinstance(raw_observation, dict):
+                raise BridgeError("route runtime observation must be an object")
+            message_id = _require_identifier(
+                raw_observation.get("message_id"), "message_id"
+            )
+            route_request_sha256 = _require_sha256(
+                raw_observation.get("route_request_sha256"),
+                "route_request_sha256",
+            )
+            match_count = self._bounded_integer(
+                raw_observation.get("match_count"),
+                "match_count",
+                minimum=0,
+                maximum=1000,
+            )
+            if match_count == 1:
+                raise BridgeError(
+                    "route runtime observations only describe terminal match counts"
+                )
+            if message_id in route_runtime_observations:
+                raise BridgeError("route runtime observation is duplicated")
+            observation = {
+                "message_id": message_id,
+                "route_request_sha256": route_request_sha256,
+                "match_count": match_count,
+            }
+            route_runtime_observations[message_id] = {
+                **observation,
+                "observation_sha256": stable_sha256(observation),
+            }
         now = utc_now()
         now_epoch = time.time()
         reconciled: list[dict[str, Any]] = []
+        observed_message_ids: set[str] = set()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
@@ -4647,6 +4973,18 @@ class Bridge:
                 (self.scope, limit),
             ).fetchall()
             for row in rows:
+                message_id = str(row["message_id"])
+                runtime_observation = route_runtime_observations.get(message_id)
+                if runtime_observation is not None:
+                    observed_message_ids.add(message_id)
+                    stored_route_sha256 = str(row["route_request_sha256"] or "")
+                    if not secrets.compare_digest(
+                        stored_route_sha256,
+                        runtime_observation["route_request_sha256"],
+                    ):
+                        raise BridgeError(
+                            "route runtime observation does not match the message route SHA"
+                        )
                 error_code: str | None = None
                 membership = None
                 if str(row["room_id"]) != DEFAULT_ROOM_ID:
@@ -4695,6 +5033,16 @@ class Bridge:
                     and not lease_active
                 ):
                     error_code = "dispatch_attempts_exhausted"
+                if (
+                    error_code is None
+                    and runtime_observation is not None
+                    and not lease_active
+                ):
+                    error_code = (
+                        "route_runtime_unavailable"
+                        if runtime_observation["match_count"] == 0
+                        else "route_runtime_ambiguous"
+                    )
                 if error_code is None:
                     continue
 
@@ -4750,8 +5098,18 @@ class Bridge:
                         "discussion_id": row["discussion_id"],
                         "agent_id": row["recipient"],
                         "error_code": error_code,
+                        "route_runtime_observation_sha256": (
+                            runtime_observation["observation_sha256"]
+                            if runtime_observation is not None
+                            else None
+                        ),
                         "dispatch_sha256": dispatch_sha,
                     }
+                )
+            missing_observations = set(route_runtime_observations) - observed_message_ids
+            if missing_observations:
+                raise BridgeError(
+                    "route runtime observation does not identify a pending routed message"
                 )
             event = (
                 self._event(

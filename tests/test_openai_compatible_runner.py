@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -395,8 +396,14 @@ def test_stdio_mcp_subprocess_receives_only_os_essentials(
 
     environment = captured["env"]
     assert str(tmp_path / "bin") not in environment.get("PATH", "")
-    assert str(Path(r"C:\Windows") / "System32") in environment["PATH"]
-    assert environment["SYSTEMROOT"] == r"C:\Windows"
+    if os.name == "nt":
+        assert str(Path(r"C:\Windows") / "System32") in environment["PATH"]
+        assert environment["SYSTEMROOT"] == r"C:\Windows"
+    else:
+        assert any(
+            path in environment["PATH"].split(os.pathsep)
+            for path in ("/bin", "/usr/bin", "/usr/local/bin")
+        )
     for name in (
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",

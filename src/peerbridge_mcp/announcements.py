@@ -17,7 +17,8 @@ from typing import Any, Mapping
 ANNOUNCEMENT_CONFIG_SCHEMA = "peerbridge.announcement-config.v1"
 ANNOUNCEMENT_FEED_SCHEMA = "peerbridge.announcement-feed.v1"
 ANNOUNCEMENT_CACHE_SCHEMA = "peerbridge.announcement-cache.v1"
-ANNOUNCEMENT_PREFERENCES_SCHEMA = "peerbridge.announcement-preferences.v1"
+ANNOUNCEMENT_PREFERENCES_SCHEMA = "peerbridge.announcement-preferences.v2"
+LEGACY_ANNOUNCEMENT_PREFERENCES_SCHEMA = "peerbridge.announcement-preferences.v1"
 SUPPORTED_LOCALES = frozenset({"en", "zh-Hans", "zh-Hant"})
 SUPPORTED_SEVERITIES = frozenset({"info", "important", "critical"})
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -467,12 +468,22 @@ def _preferences_path(project_root: Path) -> Path:
 def default_announcement_preferences() -> dict[str, Any]:
     return {
         "schema": ANNOUNCEMENT_PREFERENCES_SCHEMA,
+        "network_enabled": True,
         "popup_enabled": True,
         "read_ids": [],
         "cursors": {
             locale: "1970-01-01T00:00:00Z" for locale in sorted(SUPPORTED_LOCALES)
         },
     }
+
+
+def fail_closed_announcement_preferences() -> dict[str, Any]:
+    """Return a non-networking fallback when saved preferences are unreadable."""
+
+    preferences = default_announcement_preferences()
+    preferences["network_enabled"] = False
+    preferences["popup_enabled"] = False
+    return preferences
 
 
 def load_announcement_preferences(project_root: Path) -> dict[str, Any]:
@@ -483,10 +494,20 @@ def load_announcement_preferences(project_root: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise AnnouncementError("announcement preferences are not valid JSON") from exc
-    if not isinstance(payload, dict) or payload.get("schema") != ANNOUNCEMENT_PREFERENCES_SCHEMA:
+    if not isinstance(payload, dict) or payload.get("schema") not in {
+        ANNOUNCEMENT_PREFERENCES_SCHEMA,
+        LEGACY_ANNOUNCEMENT_PREFERENCES_SCHEMA,
+    }:
         raise AnnouncementError("announcement preferences schema is unsupported")
-    if set(payload) != {"schema", "popup_enabled", "read_ids", "cursors"}:
+    legacy = payload.get("schema") == LEGACY_ANNOUNCEMENT_PREFERENCES_SCHEMA
+    expected_fields = {"schema", "popup_enabled", "read_ids", "cursors"}
+    if not legacy:
+        expected_fields.add("network_enabled")
+    if set(payload) != expected_fields:
         raise AnnouncementError("announcement preferences contain unsupported fields")
+    network_enabled = payload.get("network_enabled", True)
+    if not isinstance(network_enabled, bool):
+        raise AnnouncementError("announcement network preference is invalid")
     if not isinstance(payload.get("popup_enabled"), bool):
         raise AnnouncementError("announcement popup preference is invalid")
     read_ids = payload.get("read_ids")
@@ -503,12 +524,19 @@ def load_announcement_preferences(project_root: Path) -> dict[str, Any]:
         raise AnnouncementError("announcement locale cursors are invalid")
     for locale, value in cursors.items():
         _utc_iso(value, f"{locale} announcement cursor")
-    return dict(payload)
+    return {
+        "schema": ANNOUNCEMENT_PREFERENCES_SCHEMA,
+        "network_enabled": network_enabled,
+        "popup_enabled": payload["popup_enabled"],
+        "read_ids": normalized_ids,
+        "cursors": dict(cursors),
+    }
 
 
 def save_announcement_preferences(
     project_root: Path,
     *,
+    network_enabled: bool,
     popup_enabled: bool,
     read_ids: list[str] | tuple[str, ...] | set[str],
     cursors: Mapping[str, str],
@@ -524,6 +552,7 @@ def save_announcement_preferences(
     }
     payload = {
         "schema": ANNOUNCEMENT_PREFERENCES_SCHEMA,
+        "network_enabled": bool(network_enabled),
         "popup_enabled": bool(popup_enabled),
         "read_ids": normalized_ids,
         "cursors": normalized_cursors,

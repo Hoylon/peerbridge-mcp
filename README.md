@@ -1,5 +1,7 @@
 # PeerBridge MCP
 
+[English](README.md) | [繁體中文](README.zh-Hant.md) | [简体中文](README.zh-Hans.md)
+
 <p align="center">
   <img src="src/peerbridge_mcp/release_support/peerbridge-icon.png" width="128" alt="PeerBridge bridge logo">
 </p>
@@ -298,6 +300,23 @@ keys, model outputs, file names/paths, project names, account identities, IP add
 arbitrary metadata are outside the public event schema. See
 [telemetry and launch metrics](docs/telemetry.md) and
 [Experimental remote/commercial hooks](docs/experimental-remote-commercial-hooks.md).
+
+Announcements are independent of analytics. The packaged Alpha enables a read-only HTTPS
+announcement connection by default so urgent notices can appear without an update check.
+Each request sends the selected UI locale, the per-locale announcement cursor, and a fixed
+non-identifying PeerBridge announcement client User-Agent; normal network infrastructure
+can also observe the source IP address. It sends no
+installation ID, credentials, project paths, message content, or model output. The
+Announcements page provides a separate network switch: turning it off stops announcement
+requests while leaving the bounded local cache readable. Popup notifications have their
+own independent preference. If the saved preference file is unreadable, both network
+polling and popups fail closed until the user explicitly saves new preferences.
+
+Feedback is submitted privately over HTTPS. Ordinary report metadata, user-selected
+diagnostics, contact details, and attachments are protected in transit but are not
+end-to-end encrypted inside the support bundle. Only an optional credential that the user
+explicitly chooses to include is encrypted locally to the pinned maintainer support public
+key before upload. See [feedback privacy](docs/feedback-privacy.md).
 
 The control room provides a persisted `zh-Hant` / `zh-Hans` / English locale foundation,
 a replayable first-run tutorial, and an explicit read-only update check. An Alpha install

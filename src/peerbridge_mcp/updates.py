@@ -122,7 +122,8 @@ def check_for_updates(
             release_url = _validated_release_url(item.get("html_url"))
         except UpdateCheckError:
             continue
-        if bool(item.get("prerelease")) and not allow_prerelease:
+        semantic_prerelease = _is_prerelease(latest)
+        if (bool(item.get("prerelease")) or semantic_prerelease) and not allow_prerelease:
             continue
         candidates.append((latest_key, item, latest, release_url))
     if not candidates:
@@ -132,7 +133,7 @@ def check_for_updates(
         current_version=current,
         latest_version=latest,
         update_available=latest_key > current_key,
-        prerelease=bool(selected.get("prerelease")),
+        prerelease=bool(selected.get("prerelease")) or _is_prerelease(latest),
         release_url=release_url,
         release_name=str(selected.get("name") or selected.get("tag_name") or "")[:200],
         published_at=str(selected.get("published_at") or "")[:80],

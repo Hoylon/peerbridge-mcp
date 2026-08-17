@@ -29,6 +29,7 @@ from .announcements import (
     AnnouncementConfig,
     AnnouncementError,
     default_announcement_preferences,
+    fail_closed_announcement_preferences,
     fetch_announcements,
     load_announcement_preferences,
     save_announcement_preferences,
@@ -2232,7 +2233,7 @@ class PixelMonitor:
             announcement_preferences = load_announcement_preferences(self.project_root)
             self._announcement_preferences_load_error: str | None = None
         except AnnouncementError as exc:
-            announcement_preferences = default_announcement_preferences()
+            announcement_preferences = fail_closed_announcement_preferences()
             self._announcement_preferences_load_error = str(exc)
         configure_windows_app_identity()
         self.root = tk.Tk()
@@ -2273,6 +2274,9 @@ class PixelMonitor:
         self.tutorial_completed = bool(ui_preferences["tutorial_completed"])
         self.update_status = tk.StringVar(value="")
         self.update_in_progress = False
+        self.announcement_network_enabled = tk.BooleanVar(
+            value=bool(announcement_preferences["network_enabled"])
+        )
         self.announcement_popup_enabled = tk.BooleanVar(
             value=bool(announcement_preferences["popup_enabled"])
         )
@@ -2629,6 +2633,7 @@ class PixelMonitor:
     def _save_announcement_preferences(self) -> None:
         save_announcement_preferences(
             self.project_root,
+            network_enabled=self.announcement_network_enabled.get(),
             popup_enabled=self.announcement_popup_enabled.get(),
             read_ids=self._announcement_read_ids,
             cursors=self._announcement_cursors,
@@ -2640,7 +2645,8 @@ class PixelMonitor:
             return
         self.locale.set(selected)
         self._apply_locale(save=True)
-        self._schedule_announcement_check(250)
+        if self.announcement_network_enabled.get():
+            self._schedule_announcement_check(250)
 
     def _apply_locale(self, *, save: bool) -> None:
         locale = self.locale.get()
@@ -2834,6 +2840,7 @@ class PixelMonitor:
         self._sync_priority_choices()
         if self.snapshot is None:
             self.usage_note_label.configure(text=self._t("usage.note"))
+        self.announcement_network_toggle.configure(text=self._t("announcement.network"))
         self.announcement_popup_toggle.configure(text=self._t("announcement.popup"))
         self.announcement_sync_button.configure(text=self._t("announcement.sync"))
         for column, key in (
@@ -3367,6 +3374,24 @@ class PixelMonitor:
         controls = tk.Frame(page, bg=COLORS["panel_2"], bd=1, relief="ridge")
         controls.grid(row=0, column=0, padx=12, pady=12, sticky="ew")
         controls.grid_columnconfigure(1, weight=1)
+        self.announcement_network_toggle = tk.Checkbutton(
+            controls,
+            text=self._t("announcement.network"),
+            variable=self.announcement_network_enabled,
+            command=self._toggle_announcement_network,
+            bg=COLORS["panel_2"],
+            fg=COLORS["text"],
+            activebackground=COLORS["panel_2"],
+            activeforeground=COLORS["cyan"],
+            selectcolor=COLORS["black"],
+            anchor="w",
+            justify="left",
+            wraplength=520,
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        self.announcement_network_toggle.grid(
+            row=0, column=0, padx=10, pady=(8, 2), sticky="w"
+        )
         self.announcement_popup_toggle = tk.Checkbutton(
             controls,
             text=self._t("announcement.popup"),
@@ -3380,10 +3405,10 @@ class PixelMonitor:
             anchor="w",
             justify="left",
             wraplength=520,
-            font=("Cascadia Mono", 9, "bold"),
+            font=("Cascadia Mono", 9),
         )
         self.announcement_popup_toggle.grid(
-            row=0, column=0, padx=10, pady=8, sticky="w"
+            row=1, column=0, padx=10, pady=(2, 8), sticky="w"
         )
         self.announcement_status_label = tk.Label(
             controls,
@@ -3396,7 +3421,7 @@ class PixelMonitor:
             font=("Cascadia Mono", 8),
         )
         self.announcement_status_label.grid(
-            row=0, column=1, padx=8, pady=8, sticky="ew"
+            row=0, column=1, rowspan=2, padx=8, pady=8, sticky="ew"
         )
         self.announcement_sync_button = tk.Button(
             controls,
@@ -3412,8 +3437,10 @@ class PixelMonitor:
             font=("Cascadia Mono", 8, "bold"),
         )
         self.announcement_sync_button.grid(
-            row=0, column=2, padx=10, pady=8, sticky="e"
+            row=0, column=2, rowspan=2, padx=10, pady=8, sticky="e"
         )
+        if not self.announcement_network_enabled.get():
+            self.announcement_sync_button.configure(state="disabled")
         self.announcement_tree = DetailTree(
             page,
             [
@@ -3431,6 +3458,25 @@ class PixelMonitor:
             self.announcement_status.set(
                 self._t("announcement.error").format(error=clip(exc, 100))
             )
+
+    def _toggle_announcement_network(self) -> None:
+        try:
+            self._save_announcement_preferences()
+        except (OSError, AnnouncementError) as exc:
+            self.announcement_status.set(
+                self._t("announcement.error").format(error=clip(exc, 100))
+            )
+            return
+        if not self.announcement_network_enabled.get():
+            if self._announcement_after_id is not None:
+                with contextlib.suppress(tk.TclError):
+                    self.root.after_cancel(self._announcement_after_id)
+            self._announcement_after_id = None
+            self.announcement_sync_button.configure(state="disabled")
+            self.announcement_status.set(self._t("announcement.network_off"))
+            return
+        self.announcement_sync_button.configure(state="normal")
+        self._schedule_announcement_check(250)
 
     def _refresh_announcement_button(self) -> None:
         unread = sum(
@@ -3461,6 +3507,10 @@ class PixelMonitor:
     def check_announcements(self, force: bool = False) -> None:
         self._announcement_after_id = None
         if self.announcement_in_progress or self._closing:
+            return
+        if not self.announcement_network_enabled.get():
+            self.announcement_sync_button.configure(state="disabled")
+            self.announcement_status.set(self._t("announcement.network_off"))
             return
         try:
             config = AnnouncementConfig.load()
@@ -3509,6 +3559,10 @@ class PixelMonitor:
         error: Exception | None,
     ) -> None:
         self.announcement_in_progress = False
+        if not self.announcement_network_enabled.get():
+            self.announcement_sync_button.configure(state="disabled")
+            self.announcement_status.set(self._t("announcement.network_off"))
+            return
         self.announcement_sync_button.configure(state="normal")
         if error is not None:
             self.announcement_status.set(

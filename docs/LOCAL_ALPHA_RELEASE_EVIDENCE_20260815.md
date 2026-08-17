@@ -1,19 +1,21 @@
 # PeerBridge Local Alpha Release Evidence
 
-Date: 2026-08-17 (Asia/Taipei)
+Date: 2026-08-18 (Asia/Taipei)
 
 This report records the current **local Alpha candidate** gates. It does not authorize a
 GitHub publication, claim Stable status, or include the remote/mobile product profile.
 
 ## Regression and focused gates
 
-- Full suite: 590 collected, 589 passed, 1 intentionally skipped. The first attempt was
+- Full suite: 630 collected, 629 passed, 1 intentionally skipped. The first attempt was
   invalidated by a Windows permission error in the legacy global pytest temporary root;
   the authoritative run used a new project-local isolated `--basetemp` and completed
   without failures.
 - Optional encrypted-feedback coverage is included in that full run: all 44 direct Python
   Feedback/decryptor tests passed with locally installed, SHA-256-verified binary dependencies.
-- The Cloudflare HTTPS/D1/R2 intake passed 37 tests and the private mail receiver passed 15.
+- The Cloudflare HTTPS/D1/R2 intake passed 43 tests and the private mail receiver passed 15.
+- Release-blocker focused continuity, portable provenance, announcement, and Windows-branding
+  suite: 59 passed with no skips or failures.
 - Focused localization, attachment, and drag-interaction suite: 13 passed, 1 intentionally
   skipped.
 - Package UI self-test: every navigation page plus composer, credential plane, room
@@ -136,14 +138,16 @@ provider receipt SHA-256 is
 The resulting fixes bind wheel/sdist payloads byte-for-byte to their source, reject plaintext
 credential-shaped JSON/log/text Feedback attachments, and preserve a committed Cloudflare D1
 intake after an ambiguous acknowledgement instead of deleting its R2 object or refunding its
-  quota. The focused Python security set, all 37 Cloudflare edge tests, and all 15 private
+  quota. The focused Python security set, all 43 Cloudflare edge tests, and all 15 private
 mail-receiver tests pass. A live non-secret synthetic submission also verified D1 commit,
 private R2 storage, maintainer notification, and exact bundle re-download SHA without exposing
 administrative secrets. Update checking remains read-only and pinned to this repository's HTTPS
 GitHub release page. The optional
-announcement feed is disabled unless configured, accepts bounded plain text and HTTPS links
-only, and cannot invoke an Agent or execute update content; signed automatic installation is
-explicitly outside this Alpha.
+announcement feed is read-only and enabled by default in the packaged Alpha, with an independent
+network switch that can disable all announcement requests while preserving the bounded local
+cache. Corrupt preferences fail closed with networking and popups disabled. Feed content accepts
+bounded plain text and HTTPS links only, and cannot invoke an Agent or execute update content;
+signed automatic installation is explicitly outside this Alpha.
 
 ## Honest Alpha limitations
 
@@ -185,7 +189,7 @@ explicitly outside this Alpha.
 
 The detailed physical observation receipt is
 `docs/LOCAL_ALPHA_PHYSICAL_UI_ACCEPTANCE_20260815.md`.
-The operator-ready GitHub pre-release text is staged in
+The operator-ready GitHub Alpha release text is staged in
 `docs/GITHUB_ALPHA_RELEASE_DRAFT_20260815.md`; it remains conditional on the final fresh
 strict package/security run and current operator authorization.
 

@@ -60,6 +60,15 @@ class AnalyticsError(ValueError):
     """Telemetry configuration or event data is invalid."""
 
 
+def _home_directory() -> Path:
+    try:
+        return Path.home()
+    except (OSError, RuntimeError) as exc:
+        raise AnalyticsError(
+            "analytics state location is unavailable without a home directory"
+        ) from exc
+
+
 def _default_state_root(environ: Mapping[str, str]) -> Path:
     """Return one per-user analytics location without creating it."""
     override = str(environ.get("PEERBRIDGE_ANALYTICS_HOME", "")).strip()
@@ -69,21 +78,22 @@ def _default_state_root(environ: Mapping[str, str]) -> Path:
         base = str(environ.get("LOCALAPPDATA", "")).strip()
         if base:
             return (Path(base) / "PeerBridge" / "analytics").resolve()
-        try:
-            home = Path.home()
-        except RuntimeError as exc:
-            raise AnalyticsError(
-                "analytics state location is unavailable without LOCALAPPDATA or a home directory"
-            ) from exc
+        home = _home_directory()
         return (home / "AppData" / "Local" / "PeerBridge" / "analytics").resolve()
     if sys.platform == "darwin":
         return (
-            Path.home() / "Library" / "Application Support" / "PeerBridge" / "analytics"
+            _home_directory()
+            / "Library"
+            / "Application Support"
+            / "PeerBridge"
+            / "analytics"
         ).resolve()
     base = str(environ.get("XDG_STATE_HOME", "")).strip()
     if base:
         return (Path(base) / "peerbridge" / "analytics").resolve()
-    return (Path.home() / ".local" / "state" / "peerbridge" / "analytics").resolve()
+    return (
+        _home_directory() / ".local" / "state" / "peerbridge" / "analytics"
+    ).resolve()
 
 
 def _utc_now() -> datetime:

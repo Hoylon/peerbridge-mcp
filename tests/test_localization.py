@@ -56,6 +56,8 @@ def test_all_top_level_strings_exist_in_all_three_locales() -> None:
         "toolbar.language",
         "toolbar.updates",
         "toolbar.announcements",
+        "announcement.network",
+        "announcement.network_off",
         "announcement.popup",
         "announcement.updated",
         "feedback.include_key",

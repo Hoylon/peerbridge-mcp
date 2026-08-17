@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import zipfile
 from pathlib import Path
 
 import pytest
+
+
+pytestmark = pytest.mark.skipif(
+    os.name != "nt", reason="The maintainer decryptor is a Windows DPAPI contract"
+)
 
 
 PWSh = shutil.which("pwsh")

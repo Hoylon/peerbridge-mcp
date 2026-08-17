@@ -237,6 +237,7 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "--ui-self-test" in script
     assert "--send-self-test" in script
     assert "--announcement-self-test" in script
+    assert "SkipLiveAnnouncement" in script
     assert "'peerbridge_mcp', 'doctor'" in script
     assert "Portable create-only init did not create" in script
     assert "Portable localized quickstart differs from source" in script
@@ -283,8 +284,15 @@ def test_published_release_vm_workflow_verifies_the_downloaded_asset() -> None:
     assert "runs-on: windows-2025" in workflow
     assert "gh release download" in workflow
     assert "verify_windows_portable.ps1" in workflow
+    assert "verify_portable_provenance.py" in workflow
     assert "-ExpectedSha256 $env:EXPECTED_SHA256" in workflow
+    assert "--expected-archive-name $env:RELEASE_ASSET" in workflow
+    assert "--expected-archive-sha256 $env:EXPECTED_SHA256" in workflow
+    assert "release_ref=refs/tags/$($env:RELEASE_TAG)" in workflow
+    assert "tag = $env:RELEASE_TAG" in workflow
+    assert "tag = '${{ inputs.tag }}'" not in workflow
     assert "published-release-vm-acceptance.v1" in workflow
+    assert "source_commit = $env:SOURCE_COMMIT" in workflow
     assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
 
 
@@ -301,19 +309,27 @@ def test_windows_ci_runs_the_headless_portable_lifecycle_contract() -> None:
     assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
     assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in workflow
     assert "verify_portable_provenance.py" in workflow
+    assert "--expected-archive-name $archives[0].Name" in workflow
+    assert "--expected-archive-sha256 $env:EXPECTED_SHA256" in workflow
     assert "${{ steps.portable.outputs.licenses }}" in workflow
     assert "gh release create" in workflow
     assert "-Headless" in workflow
-    assert "needs: [test, edge-contract, windows-portable-contract]" in workflow
+    assert "-SkipLiveAnnouncement" in workflow
+    assert "clean-windows-release-gate:" in workflow
+    assert "peerbridge.clean-windows-release-gate.v1" in workflow
+    assert (
+        "needs: [test, edge-contract, windows-portable-contract, "
+        "clean-windows-release-gate]" in workflow
+    )
 
 
-def test_alpha_five_is_published_as_the_latest_normal_release() -> None:
+def test_alpha_five_is_published_as_a_normal_non_latest_release() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
 
     assert "Publish GitHub Alpha release" in workflow
-    assert "--latest" in workflow
+    assert "--latest=false" in workflow
     assert "--prerelease" not in workflow
 
 

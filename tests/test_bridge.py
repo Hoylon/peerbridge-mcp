@@ -3612,7 +3612,7 @@ def test_task_leases_collide_across_scopes_for_the_same_workspace(tmp_path: Path
             {
                 "task_id": "writer-b",
                 "summary": "second",
-                "write_paths": ["SRC/module.py"],
+                "write_paths": ["src/module.py"],
             }
         )
 

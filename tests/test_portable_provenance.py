@@ -68,12 +68,31 @@ def _fixture(root: Path) -> tuple[str, Path]:
 
 
 def test_portable_provenance_binds_retained_archive_and_source(tmp_path: Path) -> None:
-    commit, _archive = _fixture(tmp_path)
+    commit, archive = _fixture(tmp_path)
 
-    result = verify(tmp_path, PROJECT_ROOT, commit)
+    result = verify(
+        tmp_path,
+        PROJECT_ROOT,
+        commit,
+        archive.name,
+        hashlib.sha256(archive.read_bytes()).hexdigest(),
+    )
 
     assert result["status"] == "PASS"
     assert result["source_commit"] == commit
+
+
+def test_portable_provenance_rejects_different_expected_release_asset(
+    tmp_path: Path,
+) -> None:
+    commit, archive = _fixture(tmp_path)
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+
+    with pytest.raises(ProvenanceError, match="expected release asset"):
+        verify(tmp_path, PROJECT_ROOT, commit, "other.zip", digest)
+
+    with pytest.raises(ProvenanceError, match="expected release digest"):
+        verify(tmp_path, PROJECT_ROOT, commit, archive.name, "0" * 64)
 
 
 def test_portable_provenance_rejects_archive_tamper(tmp_path: Path) -> None:

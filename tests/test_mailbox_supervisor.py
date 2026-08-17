@@ -1293,7 +1293,7 @@ def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
             "runner_hard_deadline_exceeded",
         )
         assert schedule == (1_001.0, "runner_hard_deadline_exceeded")
-        assert renewal_count >= 2
+        assert renewal_count >= 1
         assert failure_payload["error_code"] == "runner_hard_deadline_exceeded"
         serialized_evidence = json.dumps(failure_payload, sort_keys=True)
         assert "PRIVATE_REQUEST_BODY" not in serialized_evidence

@@ -5,7 +5,8 @@ param(
     [ValidatePattern('^[0-9A-Fa-f]{64}$')]
     [string]$ExpectedSha256,
     [string]$OutputRoot,
-    [switch]$Headless
+    [switch]$Headless,
+    [switch]$SkipLiveAnnouncement
 )
 
 $ErrorActionPreference = 'Stop'
@@ -683,11 +684,13 @@ $checks += Invoke-PortableCheck `
     -Name 'feedback-encryption-self-test' `
     -Arguments @('--feedback-encryption-self-test') `
     -RequireReceipt
-$checks += Invoke-PortableCheck `
-    -Name 'announcement-self-test' `
-    -Arguments @('--announcement-self-test') `
-    -RequireReceipt `
-    -ExpectedReceiptTest 'announcement-feed'
+if (-not $SkipLiveAnnouncement) {
+    $checks += Invoke-PortableCheck `
+        -Name 'announcement-self-test' `
+        -Arguments @('--announcement-self-test') `
+        -RequireReceipt `
+        -ExpectedReceiptTest 'announcement-feed'
+}
 if (-not $Headless) {
     $checks += Invoke-PortableCheck -Name 'ui-self-test' -Arguments @('--ui-self-test')
 }

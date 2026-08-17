@@ -15,7 +15,8 @@ PeerBridge 將 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本機模
 - 討論按共識、阻塞、停滯、輪數或訊息上限停止，避免無限回覆。
 - SHA 串接的訊息、證據、評分、審查、決策及交接記錄。
 - 繁體中文、簡體中文及英文介面。
-- 公開 HTTPS 公告頻道，以及供應商無關的私密加密意見回饋。
+- 公開 HTTPS 公告頻道，以及透過 HTTPS 私密送出的供應商無關意見回饋；只有使用者
+  明確選擇附上的憑證會在本機先以維護者公鑰端對端加密。
 
 ### 安裝
 
@@ -23,7 +24,7 @@ PeerBridge 將 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本機模
 SHA-256，完整解壓後執行 `Launch PeerBridge.cmd`。本機資料位於
 `%LOCALAPPDATA%\PeerBridge\workspace`，發布包不包含供應商憑證。
 
-本版本是未簽署的 Alpha 預發佈。Windows SmartScreen 可能提示未知發布者。
+本版本是未簽署的公開 Alpha 版本（非 Stable）。Windows SmartScreen 可能提示未知發布者。
 
 ## English
 
@@ -45,7 +46,9 @@ provider.
   message limits.
 - SHA-linked messages, evidence, scores, reviews, decisions, and handoffs.
 - Traditional Chinese, Simplified Chinese, and English desktop interfaces.
-- A public HTTPS announcement channel and provider-independent private encrypted feedback.
+- A public HTTPS announcement channel and provider-independent private feedback over
+  HTTPS; only credentials explicitly included by the user are encrypted end-to-end to
+  the maintainer support public key before leaving the device.
 
 ### Install
 

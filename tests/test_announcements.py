@@ -15,6 +15,7 @@ from peerbridge_mcp.announcements import (
     AnnouncementError,
     announcement_read_key,
     default_announcement_preferences,
+    fail_closed_announcement_preferences,
     fetch_announcements,
     load_announcement_cache,
     load_announcement_preferences,
@@ -228,9 +229,12 @@ def test_untrusted_announcement_content_fails_closed(announcement) -> None:
 
 
 def test_preferences_are_local_atomic_and_bounded(tmp_path) -> None:
-    assert load_announcement_preferences(tmp_path) == default_announcement_preferences()
+    defaults = default_announcement_preferences()
+    assert defaults["network_enabled"] is True
+    assert load_announcement_preferences(tmp_path) == defaults
     saved = save_announcement_preferences(
         tmp_path,
+        network_enabled=False,
         popup_enabled=False,
         read_ids={"a", "b"},
         cursors={
@@ -239,8 +243,43 @@ def test_preferences_are_local_atomic_and_bounded(tmp_path) -> None:
             "zh-Hant": "2026-08-15T00:00:00Z",
         },
     )
+    assert saved["network_enabled"] is False
     assert load_announcement_preferences(tmp_path) == saved
     assert not list((tmp_path / ".peerbridge").glob("*.tmp"))
+
+
+def test_corrupt_preferences_fallback_disables_network_and_popups() -> None:
+    fallback = fail_closed_announcement_preferences()
+
+    assert fallback["network_enabled"] is False
+    assert fallback["popup_enabled"] is False
+    assert fallback["schema"] == "peerbridge.announcement-preferences.v2"
+
+
+def test_legacy_preferences_migrate_with_network_enabled(tmp_path) -> None:
+    target = tmp_path / ".peerbridge" / "announcement-preferences.json"
+    target.parent.mkdir()
+    target.write_text(
+        json.dumps(
+            {
+                "schema": "peerbridge.announcement-preferences.v1",
+                "popup_enabled": False,
+                "read_ids": [],
+                "cursors": {
+                    "en": "1970-01-01T00:00:00Z",
+                    "zh-Hans": "1970-01-01T00:00:00Z",
+                    "zh-Hant": "1970-01-01T00:00:00Z",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loaded = load_announcement_preferences(tmp_path)
+
+    assert loaded["schema"] == "peerbridge.announcement-preferences.v2"
+    assert loaded["network_enabled"] is True
+    assert loaded["popup_enabled"] is False
 
 
 def test_id_and_locale_qualified_read_key_share_consistent_boundaries(tmp_path) -> None:
@@ -257,6 +296,7 @@ def test_id_and_locale_qualified_read_key_share_consistent_boundaries(tmp_path) 
 
     saved = save_announcement_preferences(
         tmp_path,
+        network_enabled=True,
         popup_enabled=True,
         read_ids=[read_key],
         cursors=default_announcement_preferences()["cursors"],
@@ -277,6 +317,7 @@ def test_id_and_locale_qualified_read_key_share_consistent_boundaries(tmp_path) 
     with pytest.raises(AnnouncementError):
         save_announcement_preferences(
             tmp_path,
+            network_enabled=True,
             popup_enabled=True,
             read_ids=[f"zh-Hant:{identifier}a"],
             cursors=default_announcement_preferences()["cursors"],

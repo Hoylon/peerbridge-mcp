@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -18,6 +19,12 @@ from peerbridge_mcp.agent_install import (
     official_agent_spec,
     official_agent_specs,
 )
+
+
+def _npm_fixture() -> tuple[str, str]:
+    if os.name == "nt":
+        return r"C:\Program Files\nodejs\npm.cmd", "npm.cmd"
+    return "/usr/bin/npm", "npm"
 
 
 def test_catalog_is_fixed_to_publisher_https_sources() -> None:
@@ -42,10 +49,10 @@ def test_optional_runtime_is_separate_and_version_pinned(
     assert specs[-1].publisher == "OpenClaw community"
     assert specs[-1].package_identifier == "acpx@0.13.0"
 
-    npm = r"C:\Program Files\nodejs\npm.cmd"
+    npm, executable_name = _npm_fixture()
     monkeypatch.setattr(agent_install, "_path_is_within", lambda *_args: True)
     command = build_install_command(
-        "acpx-runtime", which=lambda name: npm if name == "npm.cmd" else None
+        "acpx-runtime", which=lambda name: npm if name == executable_name else None
     )
     assert command[1:4] == ("install", "--global", "acpx@0.13.0")
 
@@ -96,11 +103,11 @@ def test_detect_optional_runtime_uses_the_same_bounded_probe(
 def test_npm_commands_are_exact_allowlisted_packages(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    npm = r"C:\Program Files\nodejs\npm.cmd"
+    npm, executable_name = _npm_fixture()
     monkeypatch.setattr(agent_install, "_path_is_within", lambda *_args: True)
 
     def which(name: str) -> str | None:
-        return npm if name == "npm.cmd" else None
+        return npm if name == executable_name else None
 
     codex = build_official_install_command("codex", which=which)
     kimi = build_official_install_command("kimi-code", which=which)
@@ -108,11 +115,11 @@ def test_npm_commands_are_exact_allowlisted_packages(
     assert kimi[1:4] == ("install", "--global", "@moonshot-ai/kimi-code@latest")
 
 
+@pytest.mark.skipif(os.name != "nt", reason="Winget is a Windows-only contract")
 def test_claude_uses_publisher_winget_identifier(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     winget = r"C:\Windows\winget.exe"
-    monkeypatch.setattr(agent_install.os, "name", "nt")
     monkeypatch.setattr(agent_install, "_path_is_within", lambda *_args: True)
 
     def which(name: str) -> str | None:
@@ -139,11 +146,11 @@ def test_launcher_never_uses_a_shell(monkeypatch: pytest.MonkeyPatch) -> None:
         calls.append((tuple(command), kwargs))
         return Process()
 
-    npm = r"C:\Program Files\nodejs\npm.cmd"
+    npm, executable_name = _npm_fixture()
     monkeypatch.setattr(agent_install, "_path_is_within", lambda *_args: True)
     process = launch_official_agent_installer(
         "codex",
-        which=lambda name: npm if name == "npm.cmd" else None,
+        which=lambda name: npm if name == executable_name else None,
         popen=fake_popen,
     )
     assert isinstance(process, Process)
@@ -152,7 +159,7 @@ def test_launcher_never_uses_a_shell(monkeypatch: pytest.MonkeyPatch) -> None:
 
     runtime = launch_agent_installer(
         "acpx-runtime",
-        which=lambda name: npm if name == "npm.cmd" else None,
+        which=lambda name: npm if name == executable_name else None,
         popen=fake_popen,
     )
     assert isinstance(runtime, Process)

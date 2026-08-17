@@ -102,6 +102,46 @@ def test_stable_channel_does_not_offer_prerelease() -> None:
     assert result.latest_version == "0.1.0"
 
 
+def test_stable_channel_rejects_alpha_tag_even_when_github_marks_it_normal() -> None:
+    stable = _release(
+        tag_name="v0.1.0",
+        name="PeerBridge 0.1.0",
+        prerelease=False,
+        html_url="https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0",
+    )
+    mislabeled_alpha = _release(
+        tag_name="v0.2.0-alpha.1",
+        prerelease=False,
+        html_url=(
+            "https://github.com/hoylon/peerbridge-mcp/"
+            "releases/tag/v0.2.0-alpha.1"
+        ),
+    )
+
+    result = check_for_updates(
+        current_version="0.1.0", opener=_Opener([mislabeled_alpha, stable])
+    )
+
+    assert result.latest_version == "0.1.0"
+    assert result.update_available is False
+
+
+def test_alpha_channel_recognizes_semantic_alpha_on_normal_github_release() -> None:
+    payload = _release(
+        tag_name="v0.1.0-alpha.2",
+        prerelease=False,
+        html_url=(
+            "https://github.com/hoylon/peerbridge-mcp/"
+            "releases/tag/v0.1.0-alpha.2"
+        ),
+    )
+
+    result = check_for_updates(current_version="0.1.0a1", opener=_Opener([payload]))
+
+    assert result.update_available is True
+    assert result.prerelease is True
+
+
 @pytest.mark.parametrize(
     "payload",
     [

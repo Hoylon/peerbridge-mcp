@@ -2,8 +2,8 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Bundle,
-    [string]$PrivateStore = (Join-Path $env:LOCALAPPDATA "PeerBridge\maintainer"),
-    [string]$OutputDirectory = (Join-Path $env:LOCALAPPDATA "PeerBridge\maintainer\decrypted-feedback"),
+    [string]$PrivateStore = '',
+    [string]$OutputDirectory = '',
     [switch]$RevealCredential
 )
 
@@ -53,11 +53,17 @@ function Read-BoundedUtf8Json {
 if (-not $IsWindows) {
     throw "PeerBridge DPAPI feedback decryption requires Windows."
 }
-if (-not $env:LOCALAPPDATA -and (
-    -not $PSBoundParameters.ContainsKey("PrivateStore") -or
-    -not $PSBoundParameters.ContainsKey("OutputDirectory")
-)) {
-    throw "LOCALAPPDATA is unavailable; pass explicit private-store and output paths."
+if ([string]::IsNullOrWhiteSpace($PrivateStore)) {
+    if (-not $env:LOCALAPPDATA) {
+        throw "LOCALAPPDATA is unavailable; pass an explicit private-store path."
+    }
+    $PrivateStore = Join-Path $env:LOCALAPPDATA "PeerBridge\maintainer"
+}
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+    if (-not $env:LOCALAPPDATA) {
+        throw "LOCALAPPDATA is unavailable; pass an explicit output path."
+    }
+    $OutputDirectory = Join-Path $env:LOCALAPPDATA "PeerBridge\maintainer\decrypted-feedback"
 }
 
 $bundlePath = (Resolve-Path -LiteralPath $Bundle).Path

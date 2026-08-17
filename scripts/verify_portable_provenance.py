@@ -54,6 +54,8 @@ def verify(
     artifact_root: Path,
     project_root: Path,
     expected_commit: str,
+    expected_archive_name: str | None = None,
+    expected_archive_sha256: str | None = None,
 ) -> dict[str, Any]:
     root = artifact_root.resolve()
     source = project_root.resolve()
@@ -86,6 +88,18 @@ def verify(
     license_manifest_name = str(receipt.get("runtime_license_manifest_name") or "")
     if Path(archive_name).name != archive_name or not archive_name.endswith(".zip"):
         raise ProvenanceError("portable archive name is invalid")
+    if expected_archive_name is not None and archive_name != expected_archive_name:
+        raise ProvenanceError("portable archive name differs from the expected release asset")
+    if expected_archive_sha256 is not None:
+        normalized_expected_sha = expected_archive_sha256.strip().lower()
+        if len(normalized_expected_sha) != 64 or any(
+            character not in SHA256 for character in normalized_expected_sha
+        ):
+            raise ProvenanceError("expected portable archive SHA-256 is invalid")
+        if receipt.get("archive_sha256") != normalized_expected_sha:
+            raise ProvenanceError(
+                "portable archive SHA-256 differs from the expected release digest"
+            )
     if Path(sbom_name).name != sbom_name or sbom_name != "SBOM.spdx.json":
         raise ProvenanceError("portable SBOM name is invalid")
     if (
@@ -162,9 +176,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--artifact-root", type=Path, required=True)
     parser.add_argument("--project-root", type=Path, default=Path(__file__).parents[1])
     parser.add_argument("--expected-commit", required=True)
+    parser.add_argument("--expected-archive-name")
+    parser.add_argument("--expected-archive-sha256")
     args = parser.parse_args(argv)
     try:
-        result = verify(args.artifact_root, args.project_root, args.expected_commit)
+        if bool(args.expected_archive_name) != bool(args.expected_archive_sha256):
+            raise ProvenanceError(
+                "expected archive name and SHA-256 must be supplied together"
+            )
+        result = verify(
+            args.artifact_root,
+            args.project_root,
+            args.expected_commit,
+            args.expected_archive_name,
+            args.expected_archive_sha256,
+        )
     except ProvenanceError as exc:
         print(f"PORTABLE_PROVENANCE_FAIL {exc}", file=sys.stderr)
         return 1

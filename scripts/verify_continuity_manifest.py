@@ -3,10 +3,23 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Mapping
+
+
+TEST_EVIDENCE_SCHEMA = "peerbridge.test-evidence.v1"
+RELEASE_READY_CLAIMS = (
+    "automatic_provider_reply_ready",
+    "local_alpha_acceptance_ready",
+    "local_alpha_release_ready",
+    "strict_package_gate_ready",
+    "operator_physical_acceptance_ready",
+)
 
 
 class ContinuityManifestError(ValueError):
@@ -57,6 +70,169 @@ def _require_mapping(value: Any, label: str) -> dict[str, Any]:
     return value
 
 
+def _tracked_row(project_root: Path, relative_path: str) -> dict[str, Any]:
+    path = (project_root / relative_path).resolve()
+    try:
+        path.relative_to(project_root)
+    except ValueError as exc:
+        raise ContinuityManifestError(
+            f"tracked path escapes project root: {relative_path}"
+        ) from exc
+    if not path.is_file():
+        raise ContinuityManifestError(f"tracked file is missing: {relative_path}")
+    return {
+        "bytes": path.stat().st_size,
+        "path": relative_path,
+        "sha256": _sha256(path),
+    }
+
+
+def _normalize_test_evidence(
+    value: Mapping[str, Any], expected_payload_root: str
+) -> dict[str, Any]:
+    evidence = dict(value)
+    expected_fields = {
+        "schema",
+        "status",
+        "command",
+        "created_at_utc",
+        "tracked_payload_root_sha256",
+        "tests_collected",
+        "tests_failed",
+        "tests_passed",
+        "tests_skipped",
+    }
+    if set(evidence) != expected_fields:
+        raise ContinuityManifestError("test evidence fields are incomplete or unsupported")
+    if evidence.get("schema") != TEST_EVIDENCE_SCHEMA or evidence.get("status") != "PASS":
+        raise ContinuityManifestError("test evidence must be a PASS v1 receipt")
+    command = evidence.get("command")
+    if (
+        not isinstance(command, str)
+        or not command.strip()
+        or len(command) > 4096
+        or "\x00" in command
+    ):
+        raise ContinuityManifestError("test evidence command is invalid")
+    created_at = evidence.get("created_at_utc")
+    if not isinstance(created_at, str) or not created_at.endswith("Z"):
+        raise ContinuityManifestError("test evidence timestamp is invalid")
+    try:
+        datetime.fromisoformat(created_at[:-1] + "+00:00")
+    except ValueError as exc:
+        raise ContinuityManifestError("test evidence timestamp is invalid") from exc
+    if evidence.get("tracked_payload_root_sha256") != expected_payload_root:
+        raise ContinuityManifestError("test evidence payload root does not match live source")
+    for field in (
+        "tests_collected",
+        "tests_failed",
+        "tests_passed",
+        "tests_skipped",
+    ):
+        count = evidence.get(field)
+        if not isinstance(count, int) or isinstance(count, bool) or count < 0:
+            raise ContinuityManifestError(f"test evidence count is invalid: {field}")
+    if evidence["tests_failed"] != 0 or evidence["tests_passed"] <= 0:
+        raise ContinuityManifestError("test evidence must contain passing tests and zero failures")
+    if evidence["tests_collected"] != (
+        evidence["tests_passed"] + evidence["tests_skipped"]
+    ):
+        raise ContinuityManifestError("test evidence accounting is inconsistent")
+    return evidence
+
+
+def refresh_manifest(
+    manifest_path: Path,
+    project_root: Path,
+    *,
+    test_evidence: Mapping[str, Any],
+    certify_release_claims: bool = False,
+) -> dict[str, Any]:
+    """Refresh the tracked payload snapshot after a successful test run.
+
+    External authority bindings are intentionally left untouched. Updating those
+    hashes requires a separate, explicit provenance decision.
+    """
+
+    manifest_path = Path(manifest_path).resolve()
+    project_root = Path(project_root).resolve()
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ContinuityManifestError(f"manifest is unreadable: {exc}") from exc
+    manifest = _require_mapping(manifest, "manifest")
+    if manifest.get("schema") != "peerbridge-continuity-manifest/v1":
+        raise ContinuityManifestError("unsupported continuity manifest schema")
+    try:
+        manifest_relative = manifest_path.relative_to(project_root).as_posix()
+    except ValueError as exc:
+        raise ContinuityManifestError("manifest must be inside the project root") from exc
+
+    peerbridge = _require_mapping(manifest.get("peerbridge"), "peerbridge")
+    if peerbridge.get("manifest_excludes_self") != manifest_relative:
+        raise ContinuityManifestError(
+            "manifest_excludes_self must equal the continuity manifest Git path"
+        )
+    tracked_paths = _git_tracked_paths(project_root)
+    if manifest_relative not in tracked_paths:
+        raise ContinuityManifestError("continuity manifest must be Git tracked")
+    rows = [
+        _tracked_row(project_root, relative_path)
+        for relative_path in sorted(tracked_paths - {manifest_relative})
+    ]
+    source_rows = [row for row in rows if not row["path"].lower().endswith(".md")]
+    documentation_rows = [row for row in rows if row["path"].lower().endswith(".md")]
+    payload_root = _payload_root(rows)
+    normalized_evidence = _normalize_test_evidence(test_evidence, payload_root)
+
+    claims = _require_mapping(manifest.get("claims"), "claims")
+    for claim in RELEASE_READY_CLAIMS:
+        claims[claim] = bool(certify_release_claims)
+    claims["remote_mobile_e2e_ready"] = False
+    claims["release_certified_payload_root_sha256"] = (
+        payload_root if certify_release_claims else None
+    )
+    claims["test_evidence"] = normalized_evidence
+    for field in (
+        "tests_collected",
+        "tests_failed",
+        "tests_passed",
+        "tests_skipped",
+    ):
+        claims[field] = normalized_evidence[field]
+    peerbridge["source_files"] = source_rows
+    peerbridge["documentation"] = documentation_rows
+    peerbridge["tracked_payload_file_count"] = len(rows)
+    peerbridge["tracked_payload_root_sha256"] = payload_root
+    manifest["generated_at_utc"] = datetime.now(timezone.utc).replace(
+        microsecond=0
+    ).isoformat().replace("+00:00", "Z")
+
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            newline="\n",
+            dir=manifest_path.parent,
+            prefix=f".{manifest_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+            temporary_path = Path(handle.name)
+        os.replace(temporary_path, manifest_path)
+    except OSError as exc:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise ContinuityManifestError(f"manifest refresh failed: {exc}") from exc
+    return manifest
+
+
 def _entries(manifest: dict[str, Any]) -> Iterable[tuple[str, dict[str, Any]]]:
     peerbridge = _require_mapping(manifest.get("peerbridge"), "peerbridge")
     for section in ("source_files", "documentation"):
@@ -82,14 +258,7 @@ def _validate_release_profile(manifest: dict[str, Any], release_profile: str) ->
     if release_profile != "local-alpha":
         raise ContinuityManifestError(f"unsupported release profile: {release_profile}")
 
-    required_true = (
-        "automatic_provider_reply_ready",
-        "local_alpha_acceptance_ready",
-        "local_alpha_release_ready",
-        "strict_package_gate_ready",
-        "operator_physical_acceptance_ready",
-    )
-    for name in required_true:
+    for name in RELEASE_READY_CLAIMS:
         if claims.get(name) is not True:
             raise ContinuityManifestError(
                 f"release claim must be exactly true for {release_profile}: {name}"
@@ -108,6 +277,21 @@ def _validate_release_profile(manifest: dict[str, Any], release_profile: str) ->
         raise ContinuityManifestError("release must bind at least one passing test")
     if claims["tests_collected"] != claims["tests_passed"] + claims["tests_skipped"]:
         raise ContinuityManifestError("release test accounting is inconsistent")
+    payload_root = peerbridge.get("tracked_payload_root_sha256")
+    if claims.get("release_certified_payload_root_sha256") != payload_root:
+        raise ContinuityManifestError("release claims are not bound to the live payload root")
+    evidence = _normalize_test_evidence(
+        _require_mapping(claims.get("test_evidence"), "claims.test_evidence"),
+        str(payload_root),
+    )
+    for field in (
+        "tests_collected",
+        "tests_failed",
+        "tests_passed",
+        "tests_skipped",
+    ):
+        if claims[field] != evidence[field]:
+            raise ContinuityManifestError("release test claims differ from bound evidence")
 
 
 def verify_manifest(
@@ -236,6 +420,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--project-root", default=".", type=Path)
     parser.add_argument(
+        "--refresh",
+        action="store_true",
+        help="Atomically refresh tracked payload hashes before verification.",
+    )
+    parser.add_argument(
+        "--test-evidence",
+        type=Path,
+        help="Root-bound PASS test receipt required by --refresh.",
+    )
+    parser.add_argument(
+        "--certify-release-claims",
+        action="store_true",
+        help="Explicitly re-certify release claims for the refreshed payload root.",
+    )
+    parser.add_argument(
         "--release-profile",
         choices=("local-alpha",),
         help="Require the named release profile and its release-ready claims.",
@@ -246,11 +445,34 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if args.refresh:
+            if args.test_evidence is None:
+                raise ContinuityManifestError(
+                    "--refresh requires --test-evidence"
+                )
+            try:
+                test_evidence = json.loads(args.test_evidence.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ContinuityManifestError("test evidence is unreadable") from exc
+            if not isinstance(test_evidence, dict):
+                raise ContinuityManifestError("test evidence must be an object")
+            refresh_manifest(
+                args.manifest,
+                args.project_root,
+                test_evidence=test_evidence,
+                certify_release_claims=args.certify_release_claims,
+            )
+        elif args.test_evidence is not None or args.certify_release_claims:
+            raise ContinuityManifestError(
+                "test evidence and release certification require --refresh"
+            )
         result = verify_manifest(
             args.manifest,
             args.project_root,
             release_profile=args.release_profile,
         )
+        if args.refresh:
+            result["refresh"] = "APPLIED"
     except ContinuityManifestError as exc:
         print(json.dumps({"status": "FAIL", "error": str(exc)}, sort_keys=True))
         return 1

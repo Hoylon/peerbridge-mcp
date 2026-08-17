@@ -20,6 +20,7 @@ from peerbridge_mcp.remote import (
     IDENTITY_HEADER,
     PROXY_AUTH_HEADER,
     RemoteControlError,
+    RemoteControlServer,
     identity_agent_id,
     make_server,
     tailscale_self_login,
@@ -508,6 +509,7 @@ def test_remote_rejects_cross_origin_unknown_fields_and_credentials(tmp_path: Pa
 
 
 def test_remote_restarts_on_same_port_without_losing_messages(tmp_path: Path) -> None:
+    assert RemoteControlServer.allow_reuse_address is (os.name != "nt")
     db = tmp_path / "bridge.sqlite3"
     seed(tmp_path, db, "scope-a")
     with running_server(tmp_path, db, "scope-a") as first_port:

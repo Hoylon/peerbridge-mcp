@@ -261,10 +261,10 @@ class RemoteConfig:
 
 class RemoteControlServer(ThreadingHTTPServer):
     daemon_threads = True
-    # Reusing an active TCP listener lets two Python processes bind the same
-    # loopback port on Windows. A remote-control instance must own its port
-    # exclusively so PID/health attestation cannot bind to the wrong process.
-    allow_reuse_address = False
+    # Windows must keep exclusive ownership because SO_REUSEADDR can let two
+    # processes bind the same loopback port. POSIX needs SO_REUSEADDR to permit
+    # a clean restart while prior client connections remain in TIME_WAIT.
+    allow_reuse_address = os.name != "nt"
 
     def __init__(self, address: tuple[str, int], config: RemoteConfig) -> None:
         if not _is_loopback(address[0]):

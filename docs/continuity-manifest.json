@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-17T20:18:14Z",
+  "generated_at_utc": "2026-08-17T20:39:01Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -12,13 +12,13 @@
     "tests_failed": 0,
     "tests_passed": 629,
     "tests_skipped": 1,
-    "release_certified_payload_root_sha256": "39c7cf39485bbbd121358523fb4b700eaa7507e970969be0f5793ac1158a11a7",
+    "release_certified_payload_root_sha256": "d968c0597ca3f5e7436913b751cac0340ad89eaa4d76bd710df2b2c123a8a6e4",
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
-      "command": ".venv\\\\Scripts\\\\python.exe -m pytest -q --basetemp .pytest_release_final_20260818_041616",
-      "created_at_utc": "2026-08-17T20:18:14Z",
-      "tracked_payload_root_sha256": "39c7cf39485bbbd121358523fb4b700eaa7507e970969be0f5793ac1158a11a7",
+      "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp .pytest_release_alpha6_final_1786999023635",
+      "created_at_utc": "2026-08-17T20:38:54Z",
+      "tracked_payload_root_sha256": "d968c0597ca3f5e7436913b751cac0340ad89eaa4d76bd710df2b2c123a8a6e4",
       "tests_collected": 630,
       "tests_failed": 0,
       "tests_passed": 629,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "39c7cf39485bbbd121358523fb4b700eaa7507e970969be0f5793ac1158a11a7",
+    "tracked_payload_root_sha256": "d968c0597ca3f5e7436913b751cac0340ad89eaa4d76bd710df2b2c123a8a6e4",
     "tracked_payload_file_count": 181,
     "source_files": [
       {
@@ -103,7 +103,7 @@
       {
         "bytes": 3055,
         "path": "pyproject.toml",
-        "sha256": "8d13d0c507384ccf50418db53c8d3642424babde3879723a88ad1c011063c24f"
+        "sha256": "049fb6ffd3b8665f76a22247489096cb934b023d12d163935cecf22124596d54"
       },
       {
         "bytes": 4434,
@@ -208,7 +208,7 @@
       {
         "bytes": 139,
         "path": "src/peerbridge_mcp/__init__.py",
-        "sha256": "d071f648c53a2b073d8b3e41a7084ca5f79f63139a2c32f1005a4f62ee81fd92"
+        "sha256": "8e24737c814842572e5ad1cc2f546b5dbc1c125bf7dd7968df0320bd908db198"
       },
       {
         "bytes": 80,
@@ -393,12 +393,12 @@
       {
         "bytes": 498,
         "path": "src/peerbridge_mcp/release_support/support.json",
-        "sha256": "57b02bbdb6ce957fc0c5823a63d2c6d973177d96feb83bc7a88420aaae11343d"
+        "sha256": "c26d6700ccf7a27583d4bbf179cfc0a9626254266692c5b45cf6ca6acc5509de"
       },
       {
-        "bytes": 36102,
+        "bytes": 36112,
         "path": "src/peerbridge_mcp/remote.py",
-        "sha256": "2ca744e69795b505d89eee0094547b1314ded96b7b8ce5d694c459aa29b6ee85"
+        "sha256": "2d49e20096921ae4eccff886a4eec0e0d821ebf10140e5fb6417f33984bc06f9"
       },
       {
         "bytes": 28466,
@@ -478,12 +478,12 @@
       {
         "bytes": 50075,
         "path": "support/cloudflare-edge/package-lock.json",
-        "sha256": "0868329fb9f44866f25fe74bd8ddcc1aa326f4afd79a63aaf21a88bcccb9bd52"
+        "sha256": "2f9d886ef7e8110792d7b37c6feb709cb1f1ef120d511d5e3379ff45d91467d9"
       },
       {
         "bytes": 362,
         "path": "support/cloudflare-edge/package.json",
-        "sha256": "d2c0979cf59b521872d539c0ce7e1ee77f670bf024ae70d795568ad4c7a6cfbe"
+        "sha256": "6a0966af910031c9b97b038260ca9dca58e467e39617ad0a2390dd19d13b4eb5"
       },
       {
         "bytes": 4354,
@@ -706,9 +706,9 @@
         "sha256": "21ad7ef8cd9908ee0b2add61920a505c63e84f3db68dc39fd2b710313555e398"
       },
       {
-        "bytes": 21714,
+        "bytes": 21811,
         "path": "tests/test_remote.py",
-        "sha256": "3952efc30536ef914e7f7098eaa01bb741969af021f5bc2b7d875a3f8b21a14f"
+        "sha256": "3362731e2cca3dfd81efbd9be75dedceb94c699dcb46b7b246ab2bee4fe89a8e"
       },
       {
         "bytes": 30938,
@@ -768,9 +768,9 @@
         "sha256": "aec09fe7af6ea4c3d0f700cbd1b325dfc3ef6e7aac86be321ebb39fbeb003733"
       },
       {
-        "bytes": 7923,
+        "bytes": 8201,
         "path": "CHANGELOG.md",
-        "sha256": "fc0bca5773c67010dc7b7ed03675d6930a290f7c0e05b5f42c63c9f006670a11"
+        "sha256": "d7e67b457a560b0f12d4b29765cb18ccada25922beff6d34d80e5c65bae786b8"
       },
       {
         "bytes": 959,
@@ -785,17 +785,17 @@
       {
         "bytes": 23277,
         "path": "README.md",
-        "sha256": "0e70652f7990dd6ca21cb9bed0f603e5f1ffb108517b5d8079149ee43c47aa3d"
+        "sha256": "f02b427ae3152fce5b6f24b32bc55c07b2e277c0d9d58f1cd656f93c0adfe669"
       },
       {
         "bytes": 4581,
         "path": "README.zh-Hans.md",
-        "sha256": "3c8362cfdc5cb720d1cde36e46e8e3d1a693d4ac07d91dc512a95d866448a73f"
+        "sha256": "800c9cac5e38c81b7c57c2ebc321ae05a00576f004e8dec45ab22285a114c682"
       },
       {
         "bytes": 4578,
         "path": "README.zh-Hant.md",
-        "sha256": "76a4a52f6a9b0bd6b0abcee4801d99904e3ed82d3f04e387b8f2eb7f29c58a24"
+        "sha256": "0007294d968d0101423878eefbba0f145e8a2e8cbbcaf320780e4fde46310d8d"
       },
       {
         "bytes": 3906,
@@ -830,7 +830,7 @@
       {
         "bytes": 3078,
         "path": "docs/GITHUB_ALPHA_RELEASE_DRAFT_20260818.md",
-        "sha256": "b9a203db8b0a0f372294a267d79980e1580696c5b1160077332b385677f62963"
+        "sha256": "b8644b2b698bb2e9db8c63f876cc61e529d231c2c169e35a234a340167ddf581"
       },
       {
         "bytes": 1775,
@@ -855,17 +855,17 @@
       {
         "bytes": 4728,
         "path": "docs/alpha-quickstart.zh-Hans.md",
-        "sha256": "89eefaa6efae1b2d8175d0fb1f8c67ec4e295b3aa0d7573731ee7dd46c52a8c2"
+        "sha256": "2bfa8dda103c9e722737a98a3f3520ed233c92ee6fbed62079a48b1e0fecfa53"
       },
       {
         "bytes": 4731,
         "path": "docs/alpha-quickstart.zh-Hant.md",
-        "sha256": "6d63094db0c14465d8450acb472001f7451ea916c06211adb34f305fcf39da5e"
+        "sha256": "b37275a600eac89e8a475a0e066fbbc8bcd86134930cbe0fb9e92bf901428d8a"
       },
       {
         "bytes": 5682,
         "path": "docs/alpha-support-matrix.md",
-        "sha256": "581b4b307e3ac0ae99a46b332d3c890514dbe16fd01fbc5f002c748fede79538"
+        "sha256": "7480d07a244b5d8f3dd0f6aa6642735f287b76a2892326683893e89a3c7227b5"
       },
       {
         "bytes": 5282,

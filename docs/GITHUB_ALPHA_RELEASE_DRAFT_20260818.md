@@ -1,4 +1,4 @@
-# PeerBridge MCP v0.1.0-alpha.5
+# PeerBridge MCP v0.1.0-alpha.6
 
 ## 繁體中文
 
@@ -20,7 +20,7 @@ PeerBridge 將 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本機模
 
 ### 安裝
 
-下載 `PeerBridgeControlRoom-0.1.0a5-windows-x64-portable.zip`，核對同頁公布的
+下載 `PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip`，核對同頁公布的
 SHA-256，完整解壓後執行 `Launch PeerBridge.cmd`。本機資料位於
 `%LOCALAPPDATA%\PeerBridge\workspace`，發布包不包含供應商憑證。
 
@@ -52,7 +52,7 @@ provider.
 
 ### Install
 
-Download `PeerBridgeControlRoom-0.1.0a5-windows-x64-portable.zip`, verify the published
+Download `PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip`, verify the published
 SHA-256, extract the archive completely, and run `Launch PeerBridge.cmd`. Local state is
 stored under `%LOCALAPPDATA%\PeerBridge\workspace`; provider credentials are never
 included in the release archive.

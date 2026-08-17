@@ -7,6 +7,13 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-08-18
+
+### Fixed
+
+- Allow immediate POSIX loopback restart after prior client sockets enter `TIME_WAIT`,
+  while preserving exclusive listener ownership on Windows.
+
 ## [0.1.0-alpha.5] - 2026-08-18
 
 ### Added
@@ -139,7 +146,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.6
 [0.1.0-alpha.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.3

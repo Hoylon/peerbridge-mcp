@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-17T20:39:01Z",
+  "generated_at_utc": "2026-08-17T21:31:48Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -12,13 +12,13 @@
     "tests_failed": 0,
     "tests_passed": 629,
     "tests_skipped": 1,
-    "release_certified_payload_root_sha256": "d968c0597ca3f5e7436913b751cac0340ad89eaa4d76bd710df2b2c123a8a6e4",
+    "release_certified_payload_root_sha256": "6a8b649439d4066bfac3e942f7c0dfdca26b1a35815c64736fe04a46a1366356",
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
-      "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp .pytest_release_alpha6_final_1786999023635",
-      "created_at_utc": "2026-08-17T20:38:54Z",
-      "tracked_payload_root_sha256": "d968c0597ca3f5e7436913b751cac0340ad89eaa4d76bd710df2b2c123a8a6e4",
+      "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <unique-release-temp>",
+      "created_at_utc": "2026-08-17T21:31:48Z",
+      "tracked_payload_root_sha256": "6a8b649439d4066bfac3e942f7c0dfdca26b1a35815c64736fe04a46a1366356",
       "tests_collected": 630,
       "tests_failed": 0,
       "tests_passed": 629,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "d968c0597ca3f5e7436913b751cac0340ad89eaa4d76bd710df2b2c123a8a6e4",
+    "tracked_payload_root_sha256": "6a8b649439d4066bfac3e942f7c0dfdca26b1a35815c64736fe04a46a1366356",
     "tracked_payload_file_count": 181,
     "source_files": [
       {
@@ -146,9 +146,9 @@
         "sha256": "e26a2e19910714c5a40558fb474b469a0659ae092a8c92979c344f27cb00a26b"
       },
       {
-        "bytes": 38098,
+        "bytes": 45578,
         "path": "scripts/launch_remote_control.ps1",
-        "sha256": "0ecd746f721eae2e24bf096ac10ea26e62f02b54c6356faa219b36deb5123562"
+        "sha256": "ca2104ae0c5eefde5a5c99a84e82422f108ff6121218ccbcd0b040920d991de4"
       },
       {
         "bytes": 10897,
@@ -711,9 +711,9 @@
         "sha256": "3362731e2cca3dfd81efbd9be75dedceb94c699dcb46b7b246ab2bee4fe89a8e"
       },
       {
-        "bytes": 30938,
+        "bytes": 30991,
         "path": "tests/test_remote_launcher.py",
-        "sha256": "c61c4c6c5f0fd2c550ce79cd40df5bc42b4b6049f1d9bd9c7884afb63d413fd3"
+        "sha256": "febc12ee0093b8e18b4d7a20ce3c2ef7b0492296e91fad2dbe8525535796e86b"
       },
       {
         "bytes": 2370,

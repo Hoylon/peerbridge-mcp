@@ -779,6 +779,7 @@ def test_invalid_serve_status_never_writes_state_and_cleans_backend(
     result = launcher_harness.run(port=_free_port(), serve_status=serve_status)
     assert result.completed.returncode != 0
     assert expected_error in result.output
+    assert expected_error in result.completed.stderr
     assert not (launcher_harness.state / "remote-control-serve.json").exists()
     assert not (launcher_harness.state / "remote-control.pid").exists()
     assert [row["argv"] for row in _read_json_lines(result.tailscale_log)][-1] == [

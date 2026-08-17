@@ -159,6 +159,16 @@ public static class PeerBridgeNativeProcess {
         public string szExeFile;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PROCESS_BASIC_INFORMATION {
+        public IntPtr Reserved1;
+        public IntPtr PebBaseAddress;
+        public IntPtr Reserved2_0;
+        public IntPtr Reserved2_1;
+        public IntPtr UniqueProcessId;
+        public IntPtr InheritedFromUniqueProcessId;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
 
@@ -170,6 +180,15 @@ public static class PeerBridgeNativeProcess {
 
     [DllImport("kernel32.dll")]
     private static extern bool CloseHandle(IntPtr handle);
+
+    [DllImport("ntdll.dll")]
+    private static extern int NtQueryInformationProcess(
+        IntPtr processHandle,
+        int processInformationClass,
+        ref PROCESS_BASIC_INFORMATION processInformation,
+        uint processInformationLength,
+        out uint returnLength
+    );
 
     public static Dictionary<int, int> ParentMap() {
         IntPtr snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -191,6 +210,25 @@ public static class PeerBridgeNativeProcess {
         } finally {
             CloseHandle(snapshot);
         }
+    }
+
+    public static int ParentProcessId(IntPtr processHandle) {
+        var information = new PROCESS_BASIC_INFORMATION();
+        uint returnLength;
+        int status = NtQueryInformationProcess(
+            processHandle,
+            0,
+            ref information,
+            (uint)Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),
+            out returnLength
+        );
+        if (status != 0) {
+            throw new System.ComponentModel.Win32Exception(
+                "NtQueryInformationProcess failed with NTSTATUS 0x" +
+                status.ToString("X8")
+            );
+        }
+        return checked((int)information.InheritedFromUniqueProcessId.ToInt64());
     }
 }
 '@
@@ -258,14 +296,76 @@ function Test-OwnedProcessAlive {
     $Candidate = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $Candidate) { return $false }
     try {
+        if ($Candidate.HasExited) { return $false }
         return [int64]$Candidate.StartTime.ToUniversalTime().Ticks -eq $StartTicks
     } catch {
         return $false
+    } finally {
+        $Candidate.Dispose()
     }
 }
 
-function Get-OwnedDescendantIdentities {
+function Open-OwnedProcessHandle {
+    param([int]$ProcessId, [int64]$StartTicks)
+    $Candidate = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $Candidate) {
+        return [pscustomobject]@{ status = "missing"; process = $null }
+    }
+    try {
+        # Force one OS process handle to remain open from identity validation
+        # through termination. This prevents a recycled PID from being killed.
+        $null = $Candidate.Handle
+        if ($Candidate.HasExited) {
+            [void]$Candidate.Dispose()
+            return [pscustomobject]@{ status = "exited"; process = $null }
+        }
+        $ActualStartTicks = [int64]$Candidate.StartTime.ToUniversalTime().Ticks
+        if ($ActualStartTicks -ne $StartTicks) {
+            [void]$Candidate.Dispose()
+            return [pscustomobject]@{ status = "mismatch"; process = $null }
+        }
+        return [pscustomobject]@{ status = "owned"; process = $Candidate }
+    } catch {
+        [void]$Candidate.Dispose()
+        return [pscustomobject]@{ status = "inaccessible"; process = $null }
+    }
+}
+
+function Open-ProcessIdentityHandle {
     param([int]$ProcessId)
+    $Candidate = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+    if (-not $Candidate) {
+        return [pscustomobject]@{ status = "missing"; process = $null }
+    }
+    try {
+        $null = $Candidate.Handle
+        if ($Candidate.HasExited) {
+            [void]$Candidate.Dispose()
+            return [pscustomobject]@{ status = "exited"; process = $null }
+        }
+        return [pscustomobject]@{
+            status = "owned"
+            pid = $ProcessId
+            start_time_utc_ticks = [int64]$Candidate.StartTime.ToUniversalTime().Ticks
+            parent_pid = [PeerBridgeNativeProcess]::ParentProcessId($Candidate.Handle)
+            process = $Candidate
+        }
+    } catch {
+        [void]$Candidate.Dispose()
+        $Current = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
+        try {
+            if (-not $Current) {
+                return [pscustomobject]@{ status = "exited"; process = $null }
+            }
+        } finally {
+            if ($Current) { [void]$Current.Dispose() }
+        }
+        return [pscustomobject]@{ status = "inaccessible"; process = $null }
+    }
+}
+
+function Get-OwnedDescendantHandles {
+    param([int]$ProcessId, [int64]$RootStartTicks)
     $ParentMap = [PeerBridgeNativeProcess]::ParentMap()
     $Depths = @{}
     $Depths[$ProcessId] = 0
@@ -281,20 +381,80 @@ function Get-OwnedDescendantIdentities {
             $Pending.Enqueue($ChildId)
         }
     }
-    $Identities = @()
-    foreach ($ChildId in $Depths.Keys) {
-        if ([int]$ChildId -eq $ProcessId) { continue }
-        $Child = Get-Process -Id ([int]$ChildId) -ErrorAction SilentlyContinue
-        if (-not $Child) { continue }
-        try {
-            $Identities += [pscustomobject]@{
-                pid = [int]$ChildId
-                start_time_utc_ticks = [int64]$Child.StartTime.ToUniversalTime().Ticks
-                depth = [int]$Depths[$ChildId]
+    $Opened = @()
+    try {
+        foreach ($ChildId in $Depths.Keys) {
+            if ([int]$ChildId -eq $ProcessId) { continue }
+            $Identity = Open-ProcessIdentityHandle -ProcessId ([int]$ChildId)
+            if ($Identity.status -eq "owned") {
+                $Opened += $Identity
+            } elseif ($Identity.status -eq "inaccessible") {
+                throw "PeerBridge could not verify a discovered descendant process."
             }
-        } catch {}
+        }
+
+        # The Toolhelp snapshot is only a candidate list. Parent linkage is
+        # accepted from each exact, held process handle so PID reuse between
+        # snapshot and inspection cannot turn an unrelated process into an
+        # owned descendant.
+        $AcceptedIdentity = @{}
+        $AcceptedIdentity[$ProcessId] = [pscustomobject]@{
+            depth = 0
+            start_time_utc_ticks = $RootStartTicks
+        }
+        $Pending = @($Opened)
+        $Accepted = @()
+        while ($Pending.Count -gt 0) {
+            $Next = @()
+            $Progress = $false
+            foreach ($Identity in $Pending) {
+                $ParentId = [int]$Identity.parent_pid
+                $ParentIdentity = if ($AcceptedIdentity.ContainsKey($ParentId)) {
+                    $AcceptedIdentity[$ParentId]
+                } else {
+                    $null
+                }
+                # Windows preserves only the numeric inherited parent PID. An
+                # orphan from an older process incarnation can therefore name
+                # a PID now reused by PeerBridge. Creation-time ordering binds
+                # the child to the held parent incarnation rather than merely
+                # to its recycled PID number.
+                if ($ParentIdentity -and
+                    [int64]$Identity.start_time_utc_ticks -ge
+                        [int64]$ParentIdentity.start_time_utc_ticks) {
+                    $Depth = [int]$ParentIdentity.depth + 1
+                    $AcceptedIdentity[[int]$Identity.pid] = [pscustomobject]@{
+                        depth = $Depth
+                        start_time_utc_ticks = [int64]$Identity.start_time_utc_ticks
+                    }
+                    $Accepted += [pscustomobject]@{
+                        pid = [int]$Identity.pid
+                        start_time_utc_ticks = [int64]$Identity.start_time_utc_ticks
+                        depth = $Depth
+                        process = $Identity.process
+                    }
+                    $Progress = $true
+                } else {
+                    $Next += $Identity
+                }
+            }
+            if (-not $Progress) {
+                foreach ($Identity in $Next) {
+                    [void]$Identity.process.Dispose()
+                }
+                break
+            }
+            $Pending = @($Next)
+        }
+        return @($Accepted | Sort-Object depth -Descending)
+    } catch {
+        foreach ($Identity in $Opened) {
+            if ($Identity.process) {
+                [void]$Identity.process.Dispose()
+            }
+        }
+        throw
     }
-    return @($Identities | Sort-Object depth -Descending)
 }
 
 function Stop-OwnedProcess {
@@ -303,38 +463,70 @@ function Stop-OwnedProcess {
         [int64]$StartTicks,
         [switch]$IgnoreTestFailure
     )
-    if (-not (Test-OwnedProcessAlive -ProcessId $ProcessId -StartTicks $StartTicks)) {
-        $Candidate = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
-        return -not [bool]$Candidate
-    }
-    if (-not $IgnoreTestFailure -and $TestMode -and $TestFailStopProcessId -eq $ProcessId) {
-        return $false
-    }
+    $Held = @()
     try {
-        $Descendants = @(Get-OwnedDescendantIdentities -ProcessId $ProcessId)
-    } catch {
-        return $false
-    }
-    $Known = @($Descendants) + @([pscustomobject]@{
-        pid = $ProcessId
-        start_time_utc_ticks = $StartTicks
-        depth = 0
-    })
-    foreach ($Identity in @($Known | Sort-Object depth -Descending)) {
-        if (Test-OwnedProcessAlive -ProcessId $Identity.pid -StartTicks $Identity.start_time_utc_ticks) {
-            Stop-Process -Id $Identity.pid -Force -ErrorAction SilentlyContinue
+        $Root = Open-OwnedProcessHandle -ProcessId $ProcessId -StartTicks $StartTicks
+        if ($Root.status -in @("missing", "exited", "mismatch")) {
+            return $true
+        }
+        if ($Root.status -ne "owned") {
+            return $false
+        }
+        $Held += [pscustomobject]@{
+            pid = $ProcessId
+            depth = 0
+            process = $Root.process
+        }
+        if (-not $IgnoreTestFailure -and $TestMode -and $TestFailStopProcessId -eq $ProcessId) {
+            return $false
+        }
+        try {
+            $Descendants = @(
+                Get-OwnedDescendantHandles `
+                    -ProcessId $ProcessId `
+                    -RootStartTicks $StartTicks
+            )
+        } catch {
+            return $false
+        }
+        $Held += $Descendants
+
+        $TerminationFailed = $false
+        foreach ($Identity in @($Held | Sort-Object depth -Descending)) {
+            try {
+                if (-not $Identity.process.HasExited) {
+                    $Identity.process.Kill()
+                }
+            } catch {
+                $TerminationFailed = $true
+            }
+        }
+
+        $Remaining = @()
+        foreach ($Identity in $Held) {
+            try {
+                if (-not $Identity.process.WaitForExit(10000)) {
+                    $Remaining += $Identity
+                }
+            } catch {
+                $Remaining += $Identity
+            }
+        }
+        if ($Remaining.Count -gt 0) {
+            $RemainingIds = (($Remaining | ForEach-Object { [string]$_.pid }) -join ",")
+            [Console]::Error.WriteLine(
+                "PeerBridge cleanup could not confirm termination for owned process IDs: $RemainingIds"
+            )
+            [Console]::Error.Flush()
+        }
+        return (-not $TerminationFailed -and $Remaining.Count -eq 0)
+    } finally {
+        foreach ($Identity in $Held) {
+            if ($Identity.process) {
+                [void]$Identity.process.Dispose()
+            }
         }
     }
-    for ($Attempt = 0; $Attempt -lt 100; $Attempt++) {
-        $Alive = @(
-            $Known | Where-Object {
-                Test-OwnedProcessAlive -ProcessId $_.pid -StartTicks $_.start_time_utc_ticks
-            }
-        )
-        if ($Alive.Count -eq 0) { return $true }
-        Start-Sleep -Milliseconds 100
-    }
-    return $false
 }
 
 function Stop-OwnedBackendTree {
@@ -810,6 +1002,8 @@ try {
         $InitialOwnershipDocument.evidence_run_id = $RequestedEvidenceRunId
     }
     $InitialOwnershipDocument | ConvertTo-Json -Compress | Set-Content -LiteralPath $PidFile -Encoding ascii
+    $Process.Dispose()
+    $Process = $null
 } catch {
     if ($LauncherPid -gt 0 -and $LauncherStartTicks -gt 0 -and
         -not (Stop-OwnedProcess -ProcessId $LauncherPid -StartTicks $LauncherStartTicks)) {
@@ -869,6 +1063,8 @@ if (-not $Listener -or -not $ListenerPidMatches) {
     throw "PeerBridge health passed but its process identity could not be resolved"
 }
 $ListenerStart = $Listener.StartTime.ToUniversalTime().Ticks
+$Listener.Dispose()
+$Listener = $null
 $FinalOwnershipDocument = @{
     pid = $ListenerPid
     start_time_utc_ticks = $ListenerStart
@@ -907,11 +1103,17 @@ try {
     if ($StatusOutput) { Write-Output $StatusOutput }
 } catch {
     $ServeFailed = $true
+    $ServeFailureMessage = "Tailscale Serve configuration failed: $($_.Exception.Message)"
+    # Emit the original validation failure before process cleanup. Under heavy
+    # Windows load, cleanup can terminate descendants before PowerShell flushes
+    # an unhandled terminating error, which would otherwise hide the cause.
+    [Console]::Error.WriteLine($ServeFailureMessage)
+    [Console]::Error.Flush()
     if (-not (Stop-OwnedBackendTree -Ownership $Ownership)) {
         throw "Tailscale Serve failed and PeerBridge cleanup was not confirmed; ownership was retained. Original error: $($_.Exception.Message)"
     }
     Remove-OwnedLock -ProcessId $ListenerPid -StartTicks $ListenerStart
-    throw "Tailscale Serve configuration failed: $($_.Exception.Message)"
+    throw $ServeFailureMessage
 }
 } finally {
     if ($Process) {

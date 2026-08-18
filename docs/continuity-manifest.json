@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-17T21:50:32Z",
+  "generated_at_utc": "2026-08-17T22:04:54Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -12,13 +12,13 @@
     "tests_failed": 0,
     "tests_passed": 629,
     "tests_skipped": 1,
-    "release_certified_payload_root_sha256": "d0af711d3154c0b8ff00c361f480963a5cd3e8e01d78831e081b5a4453c1a273",
+    "release_certified_payload_root_sha256": "20c4af48ea89a5637fae530815cfd8af8d931648d9a7619dc2045ead2f81488a",
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <unique-release-temp>",
-      "created_at_utc": "2026-08-17T21:50:31Z",
-      "tracked_payload_root_sha256": "d0af711d3154c0b8ff00c361f480963a5cd3e8e01d78831e081b5a4453c1a273",
+      "created_at_utc": "2026-08-17T22:04:36Z",
+      "tracked_payload_root_sha256": "20c4af48ea89a5637fae530815cfd8af8d931648d9a7619dc2045ead2f81488a",
       "tests_collected": 630,
       "tests_failed": 0,
       "tests_passed": 629,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "d0af711d3154c0b8ff00c361f480963a5cd3e8e01d78831e081b5a4453c1a273",
+    "tracked_payload_root_sha256": "20c4af48ea89a5637fae530815cfd8af8d931648d9a7619dc2045ead2f81488a",
     "tracked_payload_file_count": 181,
     "source_files": [
       {
@@ -661,9 +661,9 @@
         "sha256": "03edb2be526a79b096e79ff679474b03d9746f439921cfefcf3976efe776942e"
       },
       {
-        "bytes": 61124,
+        "bytes": 61523,
         "path": "tests/test_mailbox_supervisor.py",
-        "sha256": "3962e3d311dcce52a015642d8ba26fa8d123db241365a11af72d0a93d388e606"
+        "sha256": "72153881c6c52239c7470b16eb7707fb3c30d2bfa5cd2af6f176d0ffe39e9596"
       },
       {
         "bytes": 9865,

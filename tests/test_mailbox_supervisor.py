@@ -1036,6 +1036,7 @@ class NeverReturningRunner(SuccessfulRunner):
     attempts: dict[str, int] = {}
     hang_agents: set[str] = set()
     recover_on_retry = False
+    completed_before_release: set[str] = set()
     started = threading.Event()
     release = threading.Event()
     returned = threading.Event()
@@ -1045,6 +1046,7 @@ class NeverReturningRunner(SuccessfulRunner):
         cls.attempts = {}
         cls.hang_agents = set(hang_agents)
         cls.recover_on_retry = recover_on_retry
+        cls.completed_before_release = set()
         cls.started = threading.Event()
         cls.release = threading.Event()
         cls.returned = threading.Event()
@@ -1067,7 +1069,10 @@ class NeverReturningRunner(SuccessfulRunner):
                 },
                 receipt={"receipt_sha256": HEX_A},
             )
-        return super().run(messages, message_id=message_id)
+        result = super().run(messages, message_id=message_id)
+        if not self.__class__.release.is_set():
+            self.__class__.completed_before_release.add(agent_id)
+        return result
 
     def cancel(self) -> None:
         self.__class__.release.set()
@@ -1575,16 +1580,17 @@ def test_runner_hard_deadline_does_not_block_other_routes(tmp_path: Path) -> Non
         runner_factory=NeverReturningRunner,
         credential_probe=lambda _route: True,
         lease_renew_interval_seconds=0.03,
-        runner_hard_deadline_seconds=0.15,
+        # Give a loaded Windows runner enough scheduling headroom. The ordering
+        # assertion below proves route isolation without relying on wall time.
+        runner_hard_deadline_seconds=5.0,
+        runner_cancel_grace_seconds=0.5,
     )
 
     try:
-        started = time.monotonic()
         result = supervisor.run_cycle()
-        elapsed = time.monotonic() - started
 
         assert NeverReturningRunner.started.is_set()
-        assert elapsed < 1.0
+        assert "healthy-peer" in NeverReturningRunner.completed_before_release
         assert (
             result.claimed,
             result.completed,

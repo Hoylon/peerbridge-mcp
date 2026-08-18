@@ -1,6 +1,13 @@
-# PeerBridge MCP v0.1.0-alpha.6
+# PeerBridge MCP v0.1.0-alpha.5.1
+
+This maintenance release restores the visible chat attachment picker, keeps every Windows
+entry point on the native PeerBridge-branded executable, focuses an existing control room
+on repeated launch, and fixes Alpha 5.1 update discovery.
 
 ## 繁體中文
+
+這個維護版本修復聊天附件視窗不可見、確保所有 Windows 入口均使用帶有 PeerBridge
+Logo 的原生執行檔、重複啟動時聚焦既有控制室，並修正 Alpha 5.1 更新辨識。
 
 PeerBridge 將 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本機模型及其他
 相容 Agent 組成一個平等、可稽核的 AI 團隊。它支援官方客戶端、中轉站、相容 API
@@ -20,7 +27,7 @@ PeerBridge 將 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本機模
 
 ### 安裝
 
-下載 `PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip`，核對同頁公布的
+下載 `PeerBridgeControlRoom-0.1.0a5.post1-windows-x64-portable.zip`，核對同頁公布的
 SHA-256，完整解壓後執行 `Launch PeerBridge.cmd`。本機資料位於
 `%LOCALAPPDATA%\PeerBridge\workspace`，發布包不包含供應商憑證。
 
@@ -52,7 +59,7 @@ provider.
 
 ### Install
 
-Download `PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip`, verify the published
+Download `PeerBridgeControlRoom-0.1.0a5.post1-windows-x64-portable.zip`, verify the published
 SHA-256, extract the archive completely, and run `Launch PeerBridge.cmd`. Local state is
 stored under `%LOCALAPPDATA%\PeerBridge\workspace`; provider credentials are never
 included in the release archive.

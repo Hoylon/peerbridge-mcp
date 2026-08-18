@@ -17,8 +17,10 @@ RELEASE_API = "https://api.github.com/repos/hoylon/peerbridge-mcp/releases?per_p
 MAX_RELEASE_RESPONSE_BYTES = 256 * 1024
 _VERSION = re.compile(
     r"^v?(?P<major>0|[1-9]\d*)\.(?P<minor>0|[1-9]\d*)\.(?P<patch>0|[1-9]\d*)"
-    r"(?:(?:-(?P<sem_label>alpha|beta|rc)(?:[.-]?(?P<sem_number>\d+))?)|"
-    r"(?P<pep_label>a|b|rc)(?P<pep_number>\d+))?$",
+    r"(?:(?:-(?P<sem_label>alpha|beta|rc)(?:[.-]?(?P<sem_number>\d+))?"
+    r"(?:[.-](?P<sem_maintenance>\d+))?)|"
+    r"(?P<pep_label>a|b|rc)(?P<pep_number>\d+)"
+    r"(?:\.post(?P<pep_maintenance>\d+))?)?$",
     re.IGNORECASE,
 )
 
@@ -46,12 +48,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _version_key(value: str) -> tuple[int, int, int, int, int]:
+def _version_key(value: str) -> tuple[int, int, int, int, int, int]:
     match = _VERSION.fullmatch(str(value).strip())
     if not match:
         raise UpdateCheckError("release version is not valid semantic version metadata")
     label = (match.group("sem_label") or match.group("pep_label") or "").lower()
     number_text = match.group("sem_number") or match.group("pep_number") or "0"
+    maintenance_text = (
+        match.group("sem_maintenance") or match.group("pep_maintenance") or "0"
+    )
     stage = {"alpha": 0, "a": 0, "beta": 1, "b": 1, "rc": 2, "": 3}[label]
     return (
         int(match.group("major")),
@@ -59,6 +64,7 @@ def _version_key(value: str) -> tuple[int, int, int, int, int]:
         int(match.group("patch")),
         stage,
         int(number_text),
+        int(maintenance_text),
     )
 
 
@@ -74,7 +80,11 @@ def _validated_release_url(value: Any) -> str:
     if parsed.port is not None or parsed.query or parsed.fragment:
         raise UpdateCheckError("release URL must not contain a port, query, or fragment")
     expected_prefix = "/hoylon/peerbridge-mcp/releases/"
-    if not parsed.path.startswith(expected_prefix) or parsed.username or parsed.password:
+    if (
+        not parsed.path.casefold().startswith(expected_prefix)
+        or parsed.username
+        or parsed.password
+    ):
         raise UpdateCheckError("release URL does not belong to the PeerBridge repository")
     return url
 

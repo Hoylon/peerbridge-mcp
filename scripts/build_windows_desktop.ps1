@@ -42,15 +42,24 @@ $packageVersion = (& $PythonPath $pyInstallerRunner --peerbridge-project-version
 if ($LASTEXITCODE -ne 0) {
     throw 'Unable to read the package version from pyproject.toml.'
 }
-$versionMatch = [regex]::Match($packageVersion, '^(\d+)\.(\d+)\.(\d+)(?:(?:a|b|rc)(\d+))?$')
+$versionMatch = [regex]::Match(
+    $packageVersion,
+    '^(\d+)\.(\d+)\.(\d+)(?:(?:a|b|rc)(\d+)(?:\.post(\d+))?)?$'
+)
 if (-not $versionMatch.Success) {
     throw "Unsupported package version for Windows metadata: $packageVersion"
 }
+$preRelease = if ($versionMatch.Groups[4].Success) { [int]$versionMatch.Groups[4].Value } else { 0 }
+$maintenance = if ($versionMatch.Groups[5].Success) { [int]$versionMatch.Groups[5].Value } else { 0 }
+if ($maintenance -gt 999 -or ($maintenance -gt 0 -and $preRelease -gt 65)) {
+    throw "Package maintenance version cannot be mapped to Windows metadata: $packageVersion"
+}
+$revision = if ($maintenance -gt 0) { ($preRelease * 1000) + $maintenance } else { $preRelease }
 $versionParts = @(
     [int]$versionMatch.Groups[1].Value,
     [int]$versionMatch.Groups[2].Value,
     [int]$versionMatch.Groups[3].Value,
-    $(if ($versionMatch.Groups[4].Success) { [int]$versionMatch.Groups[4].Value } else { 0 })
+    $revision
 )
 if (($versionParts | Where-Object { $_ -gt 65535 }).Count -ne 0) {
     throw "Windows version components must be no greater than 65535: $packageVersion"

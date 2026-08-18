@@ -6,6 +6,7 @@ import contextlib
 import ctypes
 import hashlib
 import json
+import os
 import queue
 import re
 import sqlite3
@@ -95,7 +96,8 @@ from .updates import UpdateCheckResult, check_for_updates
 APP_VERSION = __version__
 WINDOW_TITLE = "PeerBridge MCP Control Room"
 WINDOW_TITLE_LIVE = f"{WINDOW_TITLE} // LIVE"
-INSTANCE_MUTEX = r"Local\PeerBridgeMcpControlRoomV1"
+DEFAULT_INSTANCE_MUTEX = r"Local\PeerBridgeMcpControlRoomV1"
+SAFE_INSTANCE_ID = re.compile(r"[A-Za-z0-9_-]{8,64}\Z")
 WINDOWS_APP_USER_MODEL_ID = "PeerBridge.MCP.ControlRoom"
 _INSTANCE_HANDLE: int | None = None
 BROADCAST_LABEL = "chat.recipient.all"
@@ -167,6 +169,23 @@ COLORS = {
     "blue": "#68a7ff",
     "black": "#080b0f",
 }
+
+
+def windows_instance_mutex_name(instance_id: str | None = None) -> str:
+    """Return the default mutex or a bounded verifier-only instance mutex."""
+    selected = (
+        os.environ.get("PEERBRIDGE_INSTANCE_ID", "")
+        if instance_id is None
+        else instance_id
+    ).strip()
+    if not selected:
+        return DEFAULT_INSTANCE_MUTEX
+    if SAFE_INSTANCE_ID.fullmatch(selected) is None:
+        raise ValueError("PEERBRIDGE_INSTANCE_ID has an invalid format")
+    return f"{DEFAULT_INSTANCE_MUTEX}-{selected}"
+
+
+INSTANCE_MUTEX = windows_instance_mutex_name()
 
 
 def configure_windows_app_identity() -> bool:
@@ -8174,6 +8193,7 @@ class PixelMonitor:
 
     def _choose_chat_attachments(self) -> None:
         selected = filedialog.askopenfilenames(
+            parent=self.root,
             title=self._t("chat.attach"),
             filetypes=(
                 ("Safe images and text", "*.png *.jpg *.jpeg *.gif *.webp *.txt *.md *.csv *.json *.log"),

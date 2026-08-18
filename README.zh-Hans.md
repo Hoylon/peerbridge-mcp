@@ -32,7 +32,7 @@ API 和本地模型，不把用户锁定在单一供应商。
 ## Windows 便携版
 
 从 GitHub Release 下载
-`PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip`，核对同页 SHA-256，
+`PeerBridgeControlRoom-0.1.0a5.post1-windows-x64-portable.zip`，核对同页 SHA-256，
 完整解压后运行 `Launch PeerBridge.cmd`。本地数据位于
 `%LOCALAPPDATA%\PeerBridge\workspace`，发布包不包含供应商凭据。
 

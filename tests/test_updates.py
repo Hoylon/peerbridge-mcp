@@ -81,6 +81,23 @@ def test_alpha_channel_reads_newer_prerelease_from_release_list() -> None:
     assert result.latest_version == "0.1.0-alpha.2"
 
 
+def test_alpha_maintenance_release_orders_after_its_base_alpha() -> None:
+    payload = _release(
+        tag_name="v0.1.0-alpha.5.1",
+        name="PeerBridge Alpha 0.1.0-alpha.5.1",
+        prerelease=False,
+        html_url=(
+            "https://github.com/hoylon/peerbridge-mcp/"
+            "releases/tag/v0.1.0-alpha.5.1"
+        ),
+    )
+
+    result = check_for_updates(current_version="0.1.0a5", opener=_Opener([payload]))
+
+    assert result.update_available is True
+    assert result.latest_version == "0.1.0-alpha.5.1"
+
+
 def test_stable_channel_does_not_offer_prerelease() -> None:
     stable = _release(
         tag_name="v0.1.0",
@@ -140,6 +157,21 @@ def test_alpha_channel_recognizes_semantic_alpha_on_normal_github_release() -> N
 
     assert result.update_available is True
     assert result.prerelease is True
+
+
+def test_official_release_url_accepts_github_owner_display_case() -> None:
+    payload = _release(
+        tag_name="v0.1.0-alpha.4",
+        html_url=(
+            "https://github.com/Hoylon/peerbridge-mcp/"
+            "releases/tag/v0.1.0-alpha.4"
+        ),
+    )
+
+    result = check_for_updates(current_version="0.1.0a3", opener=_Opener([payload]))
+
+    assert result.update_available is True
+    assert result.release_url == payload["html_url"]
 
 
 @pytest.mark.parametrize(

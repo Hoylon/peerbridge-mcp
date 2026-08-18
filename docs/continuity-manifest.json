@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-17T22:04:54Z",
+  "generated_at_utc": "2026-08-18T07:52:26Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -8,20 +8,20 @@
     "strict_package_gate_ready": true,
     "operator_physical_acceptance_ready": true,
     "remote_mobile_e2e_ready": false,
-    "tests_collected": 630,
+    "tests_collected": 634,
     "tests_failed": 0,
-    "tests_passed": 629,
+    "tests_passed": 633,
     "tests_skipped": 1,
-    "release_certified_payload_root_sha256": "20c4af48ea89a5637fae530815cfd8af8d931648d9a7619dc2045ead2f81488a",
+    "release_certified_payload_root_sha256": "0d8eca7c5b68cd8fdd3bd952753280c6449595cc5d3c3eda57bde5bfd79c16c1",
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
-      "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <unique-release-temp>",
-      "created_at_utc": "2026-08-17T22:04:36Z",
-      "tracked_payload_root_sha256": "20c4af48ea89a5637fae530815cfd8af8d931648d9a7619dc2045ead2f81488a",
-      "tests_collected": 630,
+      "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <unique-release-temp> --junitxml <unique-release-temp>\\junit.xml",
+      "created_at_utc": "2026-08-18T07:52:01Z",
+      "tracked_payload_root_sha256": "0d8eca7c5b68cd8fdd3bd952753280c6449595cc5d3c3eda57bde5bfd79c16c1",
+      "tests_collected": 634,
       "tests_failed": 0,
-      "tests_passed": 629,
+      "tests_passed": 633,
       "tests_skipped": 1
     }
   },
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "20c4af48ea89a5637fae530815cfd8af8d931648d9a7619dc2045ead2f81488a",
+    "tracked_payload_root_sha256": "0d8eca7c5b68cd8fdd3bd952753280c6449595cc5d3c3eda57bde5bfd79c16c1",
     "tracked_payload_file_count": 181,
     "source_files": [
       {
@@ -61,9 +61,9 @@
         "sha256": "eeeaf0d169b542b66a063e962e1b438145db282326c63912834584fbc026b01e"
       },
       {
-        "bytes": 6291,
+        "bytes": 6321,
         "path": ".github/workflows/release-vm-acceptance.yml",
-        "sha256": "b82c3202567c7edfd03e4a277ae3e06070335663dff08d57b36564f0c104dec1"
+        "sha256": "545f593e15efb26cf3a66c960ee0677f56f404bdc0271ff7f242f94c8fe87ec9"
       },
       {
         "bytes": 540,
@@ -101,14 +101,14 @@
         "sha256": "ef57571cf8a146c21ef66be02003116c23ba2d84aa32955670c6323ad36fa588"
       },
       {
-        "bytes": 3055,
+        "bytes": 3061,
         "path": "pyproject.toml",
-        "sha256": "049fb6ffd3b8665f76a22247489096cb934b023d12d163935cecf22124596d54"
+        "sha256": "5cb703b129affb9839a9cf1ae30190d541add0468cc196b8e121e7b7a4050905"
       },
       {
-        "bytes": 4434,
+        "bytes": 4853,
         "path": "scripts/build_windows_desktop.ps1",
-        "sha256": "e3e234480152f263120246b1b22f0c597a775e2724bfbe5a855df7902d8243b1"
+        "sha256": "11441574c4f3cf082fd76524d71c87f9a98a6e535814ff1629b4bcd265407e87"
       },
       {
         "bytes": 7222,
@@ -136,9 +136,9 @@
         "sha256": "c180e983f900c7c9191fec626747ccaea77f59e74af1ee2e89cb56bd9a359d1d"
       },
       {
-        "bytes": 5184,
+        "bytes": 5539,
         "path": "scripts/launch_control_room.ps1",
-        "sha256": "ba9dcf99724674a4b845009844b654d9d40ab0bb9b8d1615cc725005e86a4791"
+        "sha256": "91398d77784349c4911ac1d41cf7ea1d7923a7a2599a53e329f8d678b150ff93"
       },
       {
         "bytes": 136,
@@ -156,9 +156,9 @@
         "sha256": "b0400257e4da843f45a7a01a88fae18c8b84983a1eb0c79d1911a94234ac0564"
       },
       {
-        "bytes": 20112,
+        "bytes": 22425,
         "path": "scripts/peerbridge_control_room_entry.py",
-        "sha256": "1dc2291d5707ffb7e7a81980128ed15a2b37755d7d7bdd1e084878d1c4d0145e"
+        "sha256": "b03119a6b35b2f54380ace35fd8c253b6e4a26fbfd3ff3c7f6bf3a644e4eb679"
       },
       {
         "bytes": 902,
@@ -171,9 +171,9 @@
         "sha256": "a4967f85b6c6bcb060c67a15f84d59c7cdcce9953556b59085656c4372f81ca9"
       },
       {
-        "bytes": 83582,
+        "bytes": 83925,
         "path": "scripts/release_check.py",
-        "sha256": "13ba0a503e14d001e80da2f12abbae1de07b5f732b1be8b5b2d940eaddee5c9c"
+        "sha256": "4350b04c9150683b2e473bf8d80e678aef7ff164e39cdbce3ae39447569cac8d"
       },
       {
         "bytes": 4887,
@@ -201,14 +201,14 @@
         "sha256": "02093d284169d65cde8c166902aff1581d9865cb1781b5f8a011df2b47ab696a"
       },
       {
-        "bytes": 30423,
+        "bytes": 31236,
         "path": "scripts/verify_windows_portable.ps1",
-        "sha256": "883e9d6a2041d261f966a34e444c0c0bb2ea3ff8d013b52686ed91d69dee7c20"
+        "sha256": "601ddf7551f02c7112ee34fabcff490e902829cca7858830494b3d9293b937c1"
       },
       {
-        "bytes": 139,
+        "bytes": 145,
         "path": "src/peerbridge_mcp/__init__.py",
-        "sha256": "8e24737c814842572e5ad1cc2f546b5dbc1c125bf7dd7968df0320bd908db198"
+        "sha256": "78d3c7af18cee7c96243f18cccdd05bc8bf4cb5df039a8a2bff62baec8eadb69"
       },
       {
         "bytes": 80,
@@ -336,9 +336,9 @@
         "sha256": "d83448830c09a936916437304ef6a4fa0cff17b0f1020405bcdb90bbecf51d95"
       },
       {
-        "bytes": 378873,
+        "bytes": 379553,
         "path": "src/peerbridge_mcp/monitor.py",
-        "sha256": "1f230a8f2d89bf3aa792e5e5f2213389ee26e22f7183d685217793b5d996b616"
+        "sha256": "052d92b5460636622b19af1e39c581560f934d9917a7513ae9b22c8fa4a206be"
       },
       {
         "bytes": 62602,
@@ -391,9 +391,9 @@
         "sha256": "6c99aa67bf12d01cd8c231b67533f311a98de710ee4263d72358b9b97010ef53"
       },
       {
-        "bytes": 498,
+        "bytes": 500,
         "path": "src/peerbridge_mcp/release_support/support.json",
-        "sha256": "c26d6700ccf7a27583d4bbf179cfc0a9626254266692c5b45cf6ca6acc5509de"
+        "sha256": "43d1893e103337962eee0e111a2dd886af63677df7ce452e1d9a35c597367f0e"
       },
       {
         "bytes": 36112,
@@ -426,9 +426,9 @@
         "sha256": "72d35494f80ad00f8bb11df7570d392b2e58ced8032ce54b28cfcfef26a2c301"
       },
       {
-        "bytes": 5465,
+        "bytes": 5739,
         "path": "src/peerbridge_mcp/updates.py",
-        "sha256": "d406e9824ef830db877d371d368cd0a55f204b070d750f570d797e29732d774b"
+        "sha256": "09161a912d65ce2f500e327e906943cb7f4cf6dcaee25dfd0ff2178ee2347203"
       },
       {
         "bytes": 11723,
@@ -476,14 +476,14 @@
         "sha256": "1eb6ab2c235f61138aa3f0c10773d5d6122f30af5fa26b11ff103ebd7b87161f"
       },
       {
-        "bytes": 50075,
+        "bytes": 50079,
         "path": "support/cloudflare-edge/package-lock.json",
-        "sha256": "2f9d886ef7e8110792d7b37c6feb709cb1f1ef120d511d5e3379ff45d91467d9"
+        "sha256": "f1846a54fe8ab01a9c0625a6b33983c520e1139ff1e88fe1a31523c0b7fbca4c"
       },
       {
-        "bytes": 362,
+        "bytes": 364,
         "path": "support/cloudflare-edge/package.json",
-        "sha256": "6a0966af910031c9b97b038260ca9dca58e467e39617ad0a2390dd19d13b4eb5"
+        "sha256": "75c9214dbb0b0ef81746044aef3f0f4932f340531e7b4e1f7a173636d2fcea34"
       },
       {
         "bytes": 4354,
@@ -496,9 +496,9 @@
         "sha256": "ec15e0d5b4035094e47ced5ceede52f857abaf3d75d4a8222de208bd4cdae1f8"
       },
       {
-        "bytes": 53163,
+        "bytes": 53194,
         "path": "support/cloudflare-edge/tests/index.test.mjs",
-        "sha256": "c6e29f401cc838b56b599d71c22cbd36ddb9cb1447360b2391078f5f81b12f77"
+        "sha256": "f6ce11ab406f5a87851125225604776b32db78969ea92ed63e33ed83e017c8e6"
       },
       {
         "bytes": 574,
@@ -671,9 +671,9 @@
         "sha256": "8a69c65761bfecaad235730aa9155d7bfbe61cca69c2bdbdbc1bb5f5a84965bf"
       },
       {
-        "bytes": 35455,
+        "bytes": 36345,
         "path": "tests/test_monitor_drag.py",
-        "sha256": "5bc10af5de1011283cecf1dd6f18b15d9832fecdaeafe927eb3820854e5caeda"
+        "sha256": "7128098dcedeb8ebb926b18ee3a2b8c861569d4672aa70e2119ac04437854b5c"
       },
       {
         "bytes": 74117,
@@ -701,9 +701,9 @@
         "sha256": "1db7ffd214b1eb7957500494822e97d53f10b0d0b3803a4e5dafd357fba4f210"
       },
       {
-        "bytes": 55203,
+        "bytes": 55288,
         "path": "tests/test_release_check.py",
-        "sha256": "21ad7ef8cd9908ee0b2add61920a505c63e84f3db68dc39fd2b710313555e398"
+        "sha256": "d5725f719436b8c61bf00e2dee93287d77b4db830896f7ad3b85c5551c6d1027"
       },
       {
         "bytes": 21811,
@@ -741,9 +741,9 @@
         "sha256": "916bef648dbae9d4dbc664ce2493fc04afed73c6ec9ab933567cf8dbe104120f"
       },
       {
-        "bytes": 4841,
+        "bytes": 5826,
         "path": "tests/test_updates.py",
-        "sha256": "662fdb55bf73253fd608920fd592857b506b9c4d0de627c178029b77ae49ce89"
+        "sha256": "14429330863401880b18a1f45caba60fb2f0c3e22f3cad420fa20ce21d3ca2b5"
       },
       {
         "bytes": 7632,
@@ -751,9 +751,9 @@
         "sha256": "d47f482509a0ec645a89906b40260b587051b91d9cf2c3dcc8a0d03129b4a328"
       },
       {
-        "bytes": 15971,
+        "bytes": 16838,
         "path": "tests/test_windows_branding.py",
-        "sha256": "62d7aad37f193042cf8ac4c947ffa7afb90c0392c6d8ef118bae25f0f3bae95c"
+        "sha256": "0b296ad65ef6fb8d805db978fc627f3c1002d7319d82f1631ce73adcb326e465"
       }
     ],
     "documentation": [
@@ -768,9 +768,9 @@
         "sha256": "aec09fe7af6ea4c3d0f700cbd1b325dfc3ef6e7aac86be321ebb39fbeb003733"
       },
       {
-        "bytes": 8201,
+        "bytes": 8899,
         "path": "CHANGELOG.md",
-        "sha256": "d7e67b457a560b0f12d4b29765cb18ccada25922beff6d34d80e5c65bae786b8"
+        "sha256": "df23dc960fb440b42df11d4376ddb3583c5878c162634edb7bba55b58ed2e64b"
       },
       {
         "bytes": 959,
@@ -783,19 +783,19 @@
         "sha256": "0e97d8cf417f4757052e831e42c8d599653d11157773264aa201a641e8afc2a0"
       },
       {
-        "bytes": 23277,
+        "bytes": 23283,
         "path": "README.md",
-        "sha256": "f02b427ae3152fce5b6f24b32bc55c07b2e277c0d9d58f1cd656f93c0adfe669"
+        "sha256": "7c37a1a5925f97f15fb8c3f15b8d3c14669bbc159342ef3bae8723468bc6c64d"
       },
       {
-        "bytes": 4581,
+        "bytes": 4587,
         "path": "README.zh-Hans.md",
-        "sha256": "800c9cac5e38c81b7c57c2ebc321ae05a00576f004e8dec45ab22285a114c682"
+        "sha256": "31de8753f64181b2cda823809e173723ebd8a4d5f6956b35403fe87b7b40793c"
       },
       {
-        "bytes": 4578,
+        "bytes": 4584,
         "path": "README.zh-Hant.md",
-        "sha256": "0007294d968d0101423878eefbba0f145e8a2e8cbbcaf320780e4fde46310d8d"
+        "sha256": "c4acdb3a4df004c2bbd4d2101a8528e2599e136b565ed972a9f287001aa07fdc"
       },
       {
         "bytes": 3906,
@@ -828,9 +828,9 @@
         "sha256": "9784058e385dc5a8b46dae6a7ddc0af10f8fc8762c3b6fbbc196792a4ecefe6e"
       },
       {
-        "bytes": 3078,
+        "bytes": 3541,
         "path": "docs/GITHUB_ALPHA_RELEASE_DRAFT_20260818.md",
-        "sha256": "b8644b2b698bb2e9db8c63f876cc61e529d231c2c169e35a234a340167ddf581"
+        "sha256": "5c787a4c1748c4efe4a12f029a0a470615bef8898066fbcd3e2af4d55391ad2e"
       },
       {
         "bytes": 1775,
@@ -853,19 +853,19 @@
         "sha256": "222684f990d80a3f25715fc9711f94041fef872cf504bcc1b3e4289b9d317ed9"
       },
       {
-        "bytes": 4728,
+        "bytes": 4734,
         "path": "docs/alpha-quickstart.zh-Hans.md",
-        "sha256": "2bfa8dda103c9e722737a98a3f3520ed233c92ee6fbed62079a48b1e0fecfa53"
+        "sha256": "c8853d0d2132aeb6c1d548806ab2432fdac124f7117d900316b795f06949f054"
       },
       {
-        "bytes": 4731,
+        "bytes": 4737,
         "path": "docs/alpha-quickstart.zh-Hant.md",
-        "sha256": "b37275a600eac89e8a475a0e066fbbc8bcd86134930cbe0fb9e92bf901428d8a"
+        "sha256": "7c51b9ada8e03b3990eddcfbd2d3164511128d20e881992337efe88e7933c228"
       },
       {
-        "bytes": 5682,
+        "bytes": 5684,
         "path": "docs/alpha-support-matrix.md",
-        "sha256": "7480d07a244b5d8f3dd0f6aa6642735f287b76a2892326683893e89a3c7227b5"
+        "sha256": "7fafaf2da8f1305701e7ef167266a0a46e83fefa10ea89a857c40bf5dd60d07f"
       },
       {
         "bytes": 5282,

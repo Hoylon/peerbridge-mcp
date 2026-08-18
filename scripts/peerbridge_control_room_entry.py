@@ -17,13 +17,19 @@ from peerbridge_mcp.announcements import AnnouncementConfig, fetch_announcements
 from peerbridge_mcp.cli import main as cli_main
 from peerbridge_mcp.feedback import run_feedback_encryption_self_test
 from peerbridge_mcp.mailbox_supervisor import MailboxSupervisor
-from peerbridge_mcp.monitor import main as monitor_main
+from peerbridge_mcp.monitor import (
+    INSTANCE_MUTEX,
+    WINDOW_TITLE,
+    WINDOW_TITLE_LIVE,
+    main as monitor_main,
+)
 
 
 STARTUP_TIMEOUT_SECONDS = 15.0
 SHUTDOWN_TIMEOUT_SECONDS = 5.0
 CONTRACT_TIMEOUT_SECONDS = 30.0
 STILL_ACTIVE = 259
+SYNCHRONIZE = 0x00100000
 _FROZEN_NULL_STREAMS: list[Any] = []
 SELF_TEST_RECEIPT_SCHEMA = "peerbridge-packaged-self-test-v1"
 
@@ -229,6 +235,42 @@ def _process_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def _activate_existing_control_room(wait_seconds: float = 1.5) -> bool:
+    """Bring the existing Windows control room forward before taking its lock."""
+    if sys.platform != "win32":
+        return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenMutexW.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p)
+    kernel32.OpenMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+    kernel32.CloseHandle.restype = ctypes.c_bool
+    mutex = kernel32.OpenMutexW(SYNCHRONIZE, False, INSTANCE_MUTEX)
+    if not mutex:
+        return False
+    kernel32.CloseHandle(mutex)
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.FindWindowW.argtypes = (ctypes.c_wchar_p, ctypes.c_wchar_p)
+    user32.FindWindowW.restype = ctypes.c_void_p
+    user32.ShowWindow.argtypes = (ctypes.c_void_p, ctypes.c_int)
+    user32.ShowWindow.restype = ctypes.c_bool
+    user32.SetForegroundWindow.argtypes = (ctypes.c_void_p,)
+    user32.SetForegroundWindow.restype = ctypes.c_bool
+    deadline = time.monotonic() + max(0.0, min(float(wait_seconds), 3.0))
+    titles = (WINDOW_TITLE_LIVE, WINDOW_TITLE, f"{WINDOW_TITLE} // ERROR")
+    while True:
+        for title in titles:
+            hwnd = user32.FindWindowW(None, title)
+            if hwnd:
+                user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+                user32.SetForegroundWindow(hwnd)
+                return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
 def _terminate_owned_process(process: subprocess.Popen[Any]) -> None:
     if process.poll() is not None:
         return
@@ -421,6 +463,20 @@ def _launcher_payload(supervisor_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _existing_instance_payload() -> dict[str, Any]:
+    return {
+        "schema": "peerbridge-launch-health-v1",
+        "status": "existing-instance",
+        "health": "existing-control-room-activated",
+        "launcher_pid": os.getpid(),
+        "supervisor_pid": 0,
+        "runtime_kind": _runtime_kind(),
+        "runtime_path": str(_runtime_path()),
+        "runtime_sha256": _runtime_sha256(),
+        "version": __version__,
+    }
+
+
 def _run_managed_launcher(
     project_root: Path,
     db_path: Path,
@@ -431,6 +487,11 @@ def _run_managed_launcher(
 ) -> int:
     project_root = project_root.resolve()
     db_path = db_path.resolve()
+    if _activate_existing_control_room():
+        payload = _existing_instance_payload()
+        if launcher_ready_path is not None:
+            _write_json_create_only(launcher_ready_path.resolve(), payload)
+        return 0
     project_root.mkdir(parents=True, exist_ok=True)
     init_result = cli_main(["init", "--project-root", str(project_root), "--scope", scope])
     if init_result != 0:

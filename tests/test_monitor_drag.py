@@ -806,6 +806,31 @@ def test_attachment_history_labels_expose_only_verified_content_sha_names() -> N
     assert "customer" not in " ".join(labels)
 
 
+def test_chat_attachment_dialog_is_owned_by_control_room(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.root = object()
+    monitor._chat_attachment_paths = ()
+    monitor.chat_attachment_status = _Value()
+    monitor._t = lambda key: key
+    monitor._sync_room_control_states = lambda: None
+    selected_path = tmp_path / "chart.png"
+    captured: dict[str, object] = {}
+
+    def choose(**kwargs: object) -> tuple[str, ...]:
+        captured.update(kwargs)
+        return (str(selected_path),)
+
+    monkeypatch.setattr("peerbridge_mcp.monitor.filedialog.askopenfilenames", choose)
+
+    monitor._choose_chat_attachments()
+
+    assert captured["parent"] is monitor.root
+    assert monitor._chat_attachment_paths == (selected_path,)
+    assert monitor.chat_attachment_status.get() == "chat.attachments_selected"
+
+
 def test_room_agent_overflow_retains_every_hidden_seat_for_menu_actions() -> None:
     cards = tuple({"agent_id": f"agent-{index}"} for index in range(9))
 

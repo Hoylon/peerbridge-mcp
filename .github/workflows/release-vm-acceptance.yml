@@ -32,10 +32,10 @@ jobs:
           RELEASE_ASSET: ${{ inputs.asset }}
           EXPECTED_SHA256: ${{ inputs.sha256 }}
         run: |
-          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$') {
+          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+(?:\.[0-9]+)?$') {
             throw 'The release tag format is invalid.'
           }
-          if ($env:RELEASE_ASSET -cnotmatch '^PeerBridgeControlRoom-[0-9]+\.[0-9]+\.[0-9]+a[0-9]+-windows-x64-portable\.zip$') {
+          if ($env:RELEASE_ASSET -cnotmatch '^PeerBridgeControlRoom-[0-9]+\.[0-9]+\.[0-9]+a[0-9]+(?:\.post[0-9]+)?-windows-x64-portable\.zip$') {
             throw 'The release asset name is invalid.'
           }
           if ($env:EXPECTED_SHA256 -cnotmatch '^[0-9a-f]{64}$') {

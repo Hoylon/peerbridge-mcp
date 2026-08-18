@@ -403,11 +403,19 @@ if ($peMachine -ne 0x8664) {
     throw ('Portable executable must be PE AMD64 (0x8664), found 0x{0:X4}.' -f $peMachine)
 }
 $productVersion = [string]$package.versionInfo
-$versionMatch = [regex]::Match($productVersion, '^(\d+)\.(\d+)\.(\d+)(?:(?:a|b|rc)(\d+))?$')
+$versionMatch = [regex]::Match(
+    $productVersion,
+    '^(\d+)\.(\d+)\.(\d+)(?:(?:a|b|rc)(\d+)(?:\.post(\d+))?)?$'
+)
 if (-not $versionMatch.Success) {
     throw "Portable package version cannot be mapped to Windows metadata: $productVersion"
 }
-$revision = if ($versionMatch.Groups[4].Success) { [int]$versionMatch.Groups[4].Value } else { 0 }
+$preRelease = if ($versionMatch.Groups[4].Success) { [int]$versionMatch.Groups[4].Value } else { 0 }
+$maintenance = if ($versionMatch.Groups[5].Success) { [int]$versionMatch.Groups[5].Value } else { 0 }
+if ($maintenance -gt 999 -or ($maintenance -gt 0 -and $preRelease -gt 65)) {
+    throw "Portable package maintenance version cannot be mapped to Windows metadata: $productVersion"
+}
+$revision = if ($maintenance -gt 0) { ($preRelease * 1000) + $maintenance } else { $preRelease }
 $expectedFileVersion = @(
     [int]$versionMatch.Groups[1].Value
     [int]$versionMatch.Groups[2].Value
@@ -495,6 +503,8 @@ function Invoke-StartupLifecycle {
     $previousLocalAppData = [Environment]::GetEnvironmentVariable('LOCALAPPDATA', 'Process')
     $previousContract = [Environment]::GetEnvironmentVariable('PEERBRIDGE_STARTUP_CONTRACT_PATH', 'Process')
     $previousHeadless = [Environment]::GetEnvironmentVariable('PEERBRIDGE_LAUNCHER_HEADLESS', 'Process')
+    $previousInstanceId = [Environment]::GetEnvironmentVariable('PEERBRIDGE_INSTANCE_ID', 'Process')
+    $instanceId = 'verify-' + (Get-StringDigest -Value $caseRoot -Algorithm 'SHA256').Substring(0, 24)
     $wrapper = $null
     $launcherProcess = $null
     $supervisorProcess = $null
@@ -505,6 +515,7 @@ function Invoke-StartupLifecycle {
         [Environment]::SetEnvironmentVariable('LOCALAPPDATA', $localAppData, 'Process')
         [Environment]::SetEnvironmentVariable('PEERBRIDGE_STARTUP_CONTRACT_PATH', $contractPath, 'Process')
         [Environment]::SetEnvironmentVariable('PEERBRIDGE_LAUNCHER_HEADLESS', '1', 'Process')
+        [Environment]::SetEnvironmentVariable('PEERBRIDGE_INSTANCE_ID', $instanceId, 'Process')
         if ($ViaCmd) {
             $cmdLauncher = Join-Path $packageRoot.FullName 'Launch PeerBridge.cmd'
             if (-not (Test-Path -LiteralPath $cmdLauncher -PathType Leaf)) {
@@ -601,6 +612,7 @@ function Invoke-StartupLifecycle {
         [Environment]::SetEnvironmentVariable('LOCALAPPDATA', $previousLocalAppData, 'Process')
         [Environment]::SetEnvironmentVariable('PEERBRIDGE_STARTUP_CONTRACT_PATH', $previousContract, 'Process')
         [Environment]::SetEnvironmentVariable('PEERBRIDGE_LAUNCHER_HEADLESS', $previousHeadless, 'Process')
+        [Environment]::SetEnvironmentVariable('PEERBRIDGE_INSTANCE_ID', $previousInstanceId, 'Process')
     }
 }
 

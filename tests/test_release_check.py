@@ -1092,6 +1092,7 @@ def test_strict_git_preflight_requires_expected_annotated_tag(tmp_path: Path) ->
 
 def test_pep440_alpha_version_maps_to_public_release_tag() -> None:
     assert release_check.expected_release_tag("0.1.0a1") == "v0.1.0-alpha.1"
+    assert release_check.expected_release_tag("0.1.0a5.post1") == "v0.1.0-alpha.5.1"
     assert release_check.expected_release_tag("1.2.3") == "v1.2.3"
 
 

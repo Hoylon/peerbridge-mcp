@@ -7,10 +7,12 @@ import sys
 from pathlib import Path
 
 from peerbridge_mcp.monitor import (
+    DEFAULT_INSTANCE_MUTEX,
     WINDOWS_APP_USER_MODEL_ID,
     apply_windows_window_icon,
     packaged_icon_paths,
     release_windows_icon_handles,
+    windows_instance_mutex_name,
 )
 
 
@@ -27,6 +29,21 @@ def test_owner_logo_source_and_operational_assets_are_packaged() -> None:
     assert source_path.is_file()
     assert hashlib.sha256(source_path.read_bytes()).hexdigest() == OWNER_SOURCE_SHA256
     assert WINDOWS_APP_USER_MODEL_ID == "PeerBridge.MCP.ControlRoom"
+
+
+def test_portable_verifier_instance_mutex_is_bounded() -> None:
+    assert windows_instance_mutex_name("") == DEFAULT_INSTANCE_MUTEX
+    assert (
+        windows_instance_mutex_name("verify-0123456789abcdef")
+        == DEFAULT_INSTANCE_MUTEX + "-verify-0123456789abcdef"
+    )
+    for invalid in ("short", r"..\global", "contains space", "x" * 65):
+        try:
+            windows_instance_mutex_name(invalid)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"unsafe instance id accepted: {invalid!r}")
 
 
 def test_windows_icon_has_expected_multisize_png_frames() -> None:
@@ -108,7 +125,7 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert "runtime_kind -ne 'source'" in launcher
     assert ".peerbridge-artifacts" not in launcher
     assert "PeerBridgeControlRoom.exe" not in launcher
-    assert "from peerbridge_mcp.monitor import main as monitor_main" in entry
+    assert "main as monitor_main" in entry
     assert "def _ensure_frozen_standard_streams()" in entry
     assert 'open(os.devnull, "w", encoding="utf-8")' in entry
     assert "_ensure_frozen_standard_streams()" in entry
@@ -122,6 +139,11 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert 'args[:2] == ["-m", "peerbridge_mcp"]' in entry
     assert "return cli_main(args[2:])" in entry
     assert "_start_managed_supervisor" in entry
+    assert "def _activate_existing_control_room" in entry
+    assert '"status": "existing-instance"' in entry
+    assert "OpenMutexW" in entry
+    assert "existing-instance" in launcher
+    assert "Test-Path -LiteralPath $readyPath" in launcher
     assert "database-and-supervisor-lock-ready" in entry
     assert "STARTUP_TIMEOUT_SECONDS = 15.0" in entry
     assert "PEERBRIDGE_STARTUP_CONTRACT_PATH" in entry
@@ -262,6 +284,7 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
         assert field in script
     assert "PEERBRIDGE_STARTUP_CONTRACT_PATH" in script
     assert "PEERBRIDGE_LAUNCHER_HEADLESS" in script
+    assert "PEERBRIDGE_INSTANCE_ID" in script
     assert "[Environment]::SetEnvironmentVariable('LOCALAPPDATA'" in script
     assert "Invoke-StartupLifecycle -Name 'zero-argument'" in script
     assert "Invoke-StartupLifecycle -Name 'cmd-zero-argument' -ViaCmd" in script

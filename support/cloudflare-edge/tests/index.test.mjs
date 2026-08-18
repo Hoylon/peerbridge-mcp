@@ -1084,13 +1084,14 @@ test("malformed traffic cannot consume the accepted global case quota", async ()
 
 test("distributed malformed traffic hits a global attempt cap before body parsing", async () => {
   const { env } = memoryIntakeEnv();
+  const attemptNow = new Date().toISOString();
   for (let index = 0; index < 500; index += 1) {
     const result = await testing.rateLimit(
       new Request("https://edge.example/v1/feedback", {
         headers: { "cf-connecting-ip": `198.51.100.${index}` },
       }),
       env,
-      "2026-08-17T00:00:00.000Z",
+      attemptNow,
       "attempt",
     );
     assert.equal(result.response, null);

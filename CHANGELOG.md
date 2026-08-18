@@ -7,12 +7,25 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
-## [0.1.0-alpha.6] - 2026-08-18
+## [0.1.0-alpha.5.1] - 2026-08-18
 
 ### Fixed
 
 - Allow immediate POSIX loopback restart after prior client sockets enter `TIME_WAIT`,
   while preserving exclusive listener ownership on Windows.
+- Keep the chat attachment picker owned by the control-room window so it cannot open
+  invisibly behind the application.
+- Ship and launch the versioned native Windows executable with the embedded PeerBridge
+  icon for the window, taskbar, desktop shortcut, and Start menu shortcut.
+- Focus an already-running control room instead of starting a competing source or frozen
+  instance.
+- Recognize Alpha maintenance versions and GitHub's display-case repository URLs in the
+  update checker and release acceptance workflow.
+
+### Changed
+
+- Isolate packaged lifecycle verification with a bounded verifier-only instance identity,
+  while keeping the production single-instance mutex unchanged.
 
 ## [0.1.0-alpha.5] - 2026-08-18
 
@@ -146,8 +159,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.6...HEAD
-[0.1.0-alpha.6]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.6
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.1...HEAD
+[0.1.0-alpha.5.1]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.1
 [0.1.0-alpha.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5
 [0.1.0-alpha.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.4
 [0.1.0-alpha.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.3

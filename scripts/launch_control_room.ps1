@@ -54,9 +54,6 @@ try {
     $lastReadError = $null
     while ([DateTime]::UtcNow -lt $deadline) {
         $launcher.Refresh()
-        if ($launcher.HasExited) {
-            throw "Source launcher exited before health handshake (code $($launcher.ExitCode))."
-        }
         if (Test-Path -LiteralPath $readyPath -PathType Leaf) {
             try {
                 $payload = Get-Content -LiteralPath $readyPath -Raw | ConvertFrom-Json
@@ -64,6 +61,9 @@ try {
             } catch {
                 $lastReadError = $_.Exception.Message
             }
+        }
+        if ($launcher.HasExited) {
+            throw "Source launcher exited before health handshake (code $($launcher.ExitCode))."
         }
         Start-Sleep -Milliseconds 50
     }
@@ -74,7 +74,7 @@ try {
 
     $expectedRuntime = [System.IO.Path]::GetFullPath($pythonw)
     $expectedHash = (Get-FileHash -LiteralPath $pythonw -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($payload.schema -ne 'peerbridge-launch-health-v1' -or $payload.status -ne 'ready') {
+    if ($payload.schema -ne 'peerbridge-launch-health-v1' -or $payload.status -notin @('ready', 'existing-instance')) {
         throw 'Source launcher returned an invalid health handshake.'
     }
     if ([int]$payload.launcher_pid -ne $launcher.Id) {
@@ -91,6 +91,15 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace([string]$payload.version)) {
         throw 'Source launcher did not report its package version.'
+    }
+
+    if ($payload.status -eq 'existing-instance') {
+        $launcher.WaitForExit(5000) | Out-Null
+        $launcher.Refresh()
+        if (-not $launcher.HasExited -or $launcher.ExitCode -ne 0) {
+            throw 'Source launcher did not exit cleanly after activating the existing control room.'
+        }
+        exit 0
     }
 
     $supervisorPid = [int]$payload.supervisor_pid

@@ -307,16 +307,25 @@ def _git_file_inventory(
 
 def expected_release_tag(version: str) -> str:
     match = re.fullmatch(
-        r"(?P<release>\d+(?:\.\d+)*)(?:(?P<phase>a|b|rc)(?P<number>\d+))?",
+        r"(?P<release>\d+(?:\.\d+)*)"
+        r"(?:(?P<phase>a|b|rc)(?P<number>\d+))?"
+        r"(?:\.post(?P<post_number>\d+))?",
         version,
     )
     if match is None:
         return f"v{version}"
     phase = match.group("phase")
     if phase is None:
-        return f"v{match.group('release')}"
+        post_number = match.group("post_number")
+        suffix = f".post{post_number}" if post_number is not None else ""
+        return f"v{match.group('release')}{suffix}"
     label = {"a": "alpha", "b": "beta", "rc": "rc"}[phase]
-    return f"v{match.group('release')}-{label}.{match.group('number')}"
+    post_number = match.group("post_number")
+    maintenance = f".{post_number}" if post_number is not None else ""
+    return (
+        f"v{match.group('release')}-{label}.{match.group('number')}"
+        f"{maintenance}"
+    )
 
 
 def _configured_project_version(root: Path) -> str | None:

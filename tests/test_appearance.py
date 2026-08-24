@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from peerbridge_mcp.appearance import (
+    CHOOSER_GEOMETRY,
+    CHOOSER_MINIMUM_SIZE,
     _draw_modern_preview,
     _draw_pixel_preview,
     appearance_preference_path,
@@ -52,3 +54,10 @@ def test_both_first_run_previews_render_with_tk() -> None:
         assert modern.find_all()
     finally:
         root.destroy()
+
+
+def test_first_run_chooser_default_geometry_keeps_actions_visible() -> None:
+    width, height = (int(value) for value in CHOOSER_GEOMETRY.split("x", 1))
+    assert width >= CHOOSER_MINIMUM_SIZE[0]
+    assert height >= CHOOSER_MINIMUM_SIZE[1]
+    assert height >= 680

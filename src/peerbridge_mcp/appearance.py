@@ -15,6 +15,8 @@ from .localization import (
 
 
 DESKTOP_SURFACES = ("pixel", "modern")
+CHOOSER_GEOMETRY = "860x680"
+CHOOSER_MINIMUM_SIZE = (760, 620)
 
 
 def appearance_preference_path(project_root: Path) -> Path:
@@ -88,8 +90,8 @@ def choose_desktop_surface(project_root: Path) -> str | None:
     selected: list[str] = []
     root = tk.Tk()
     root.title("PeerBridge · Choose appearance / 選擇外觀")
-    root.geometry("860x560")
-    root.minsize(760, 520)
+    root.geometry(CHOOSER_GEOMETRY)
+    root.minsize(*CHOOSER_MINIMUM_SIZE)
     root.configure(background="#f6f7f9")
     with contextlib.suppress(tk.TclError):
         icon = tk.PhotoImage(

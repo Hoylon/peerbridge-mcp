@@ -26,7 +26,7 @@ def _environment(tmp_path: Path) -> tuple[dict[str, str], Path, Path]:
             "PATH": os.pathsep.join((str(hostile), str(allowed))),
         }
     else:
-        allowed = Path("/usr/bin")
+        allowed = tmp_path / "home" / ".local" / "bin"
         values = {
             "HOME": str(tmp_path / "home"),
             "PATH": os.pathsep.join((str(hostile), str(allowed))),

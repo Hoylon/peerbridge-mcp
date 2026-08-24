@@ -40,8 +40,11 @@ def build_macos_seatbelt_profile(
 ) -> MacSandboxProfile:
     """Return a deny-by-default profile with one writable governed worktree."""
 
-    worktree = Path(worktree).resolve(strict=True)
-    scratch = Path(scratch).resolve(strict=True)
+    try:
+        worktree = Path(worktree).resolve(strict=True)
+        scratch = Path(scratch).resolve(strict=True)
+    except OSError as exc:
+        raise MacSandboxError("macOS sandbox directory is unavailable") from exc
     if not worktree.is_dir() or not scratch.is_dir():
         raise MacSandboxError("macOS sandbox directory is unavailable")
     system_reads = (
@@ -67,7 +70,9 @@ def build_macos_seatbelt_profile(
 (allow file-read*
 {read_rules})
 (allow file-write*
+    (literal {_scheme_string(worktree)})
     (subpath {_scheme_string(worktree)})
+    (literal {_scheme_string(scratch)})
     (subpath {_scheme_string(scratch)}))
 """
     return MacSandboxProfile(

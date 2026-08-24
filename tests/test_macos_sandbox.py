@@ -36,6 +36,8 @@ def test_profile_allows_only_governed_write_roots(tmp_path: Path) -> None:
     assert "(allow network-outbound)" in policy.profile
     assert "(allow file-write*\n" in policy.profile
     assert "(allow file-write*)" not in policy.profile
+    assert f"(literal \"{worktree.resolve()}\")" in policy.profile
+    assert f"(literal \"{scratch.resolve()}\")" in policy.profile
     assert str(tmp_path / "outside") not in policy.profile
 
 

@@ -6,6 +6,7 @@ import json
 import re
 import socket
 import sqlite3
+import sys
 import threading
 import urllib.parse
 from contextlib import contextmanager
@@ -468,6 +469,7 @@ class FakeWebview:
             handler()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows WebView2 contract")
 def test_native_workbench_uses_webview2_and_stops_server(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -500,6 +502,13 @@ def test_native_workbench_uses_webview2_and_stops_server(
     assert fake.settings["WEBVIEW2_RUNTIME_PATH"] == str(runtime)
     assert fake.platform_seen == "Windows"
     assert workbench_module.platform.system() == "WMI-BLOCKED"
+
+
+def test_public_text_redacts_private_macos_temporary_paths() -> None:
+    rendered = workbench_module._public_text(
+        "/private/var/folders/example/T/peerbridge/private-file.txt"
+    )
+    assert rendered == "[LOCAL PATH]"
 
 
 def test_workbench_refuses_external_browser_token_launch(

@@ -465,6 +465,10 @@ def test_native_acp_route_is_exactly_bound_and_uses_acpx_runner(
         "peerbridge_mcp.acpx_runner.native_acp_runtime_available",
         lambda **_kwargs: True,
     )
+    monkeypatch.setattr(
+        "peerbridge_mcp.acpx_runner.find_acpx",
+        lambda: executable,
+    )
     human = make_bridge(tmp_path, "human-operator")
     register_route(
         human,

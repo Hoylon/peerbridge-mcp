@@ -153,7 +153,9 @@ SAFE_ROUTE = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
 SAFE_MODEL_ID = re.compile(r"[A-Za-z0-9_.:/-]{1,500}\Z")
 SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
 WINDOWS_PATH = re.compile(r"(?i)\b[A-Z]:[\\/][^\r\n]*")
-POSIX_PRIVATE_PATH = re.compile(r"(?<!\w)/(?:Users|home|var|tmp|etc)/[^\s\"']+")
+POSIX_PRIVATE_PATH = re.compile(
+    r"(?<!\w)/(?:Users|home|var|tmp|etc|private/(?:var|tmp))/[^\s\"']+"
+)
 ALLOWED_PRIORITIES = frozenset({"low", "normal", "high", "critical"})
 ROOM_ROLE_IDS = frozenset(
     {"equal-participant", "researcher", "implementer", "reviewer", "custom"}

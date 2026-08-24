@@ -51,6 +51,7 @@ def test_ci_dependency_locks_are_hashed_and_cover_direct_dependencies() -> None:
             )
     assert bootstrap == {
         "pip": "26.1.2",
+        "packaging": "26.3",
         "setuptools": "84.0.0",
         "wheel": "0.48.0",
     }

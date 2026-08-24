@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-24T14:22:27Z",
+  "generated_at_utc": "2026-08-24T14:38:53Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -12,17 +12,17 @@
     "tests_failed": 0,
     "tests_passed": 1152,
     "tests_skipped": 6,
-    "release_certified_payload_root_sha256": "c9d1d1302a00b16d14aa6692ad6ca2bf86dad8aa1c9b57b5f55efdbea966077b",
+    "release_certified_payload_root_sha256": "fd77e4514dcf60c9e043b3a948bdd752bacf8d2e8bf9ca13cd2cb972e7c62120",
     "test_evidence": {
       "command": ".venv\\Scripts\\python.exe -m pytest -o addopts= -q --isolated-basetemp",
-      "created_at_utc": "2026-08-24T14:22:17Z",
+      "created_at_utc": "2026-08-24T14:38:43Z",
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "tests_collected": 1158,
       "tests_failed": 0,
       "tests_passed": 1152,
       "tests_skipped": 6,
-      "tracked_payload_root_sha256": "c9d1d1302a00b16d14aa6692ad6ca2bf86dad8aa1c9b57b5f55efdbea966077b"
+      "tracked_payload_root_sha256": "fd77e4514dcf60c9e043b3a948bdd752bacf8d2e8bf9ca13cd2cb972e7c62120"
     }
   },
   "peerbridge": {
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "c9d1d1302a00b16d14aa6692ad6ca2bf86dad8aa1c9b57b5f55efdbea966077b",
+    "tracked_payload_root_sha256": "fd77e4514dcf60c9e043b3a948bdd752bacf8d2e8bf9ca13cd2cb972e7c62120",
     "tracked_payload_file_count": 259,
     "source_files": [
       {
@@ -111,9 +111,9 @@
         "sha256": "17d834f8dd00663e958cdfd7f463c475b5a6f8a7bddb87c922e5058ce2efedd2"
       },
       {
-        "bytes": 395,
+        "bytes": 496,
         "path": "requirements/pip-bootstrap.lock",
-        "sha256": "fdf284f13f440bda091aea4563714b7c6e49f15e2b84bcdeaac735868b140112"
+        "sha256": "ea27aeb4e730683ccb6bfd8902d9570e1a95148b32dca4af3717696e510dd4c0"
       },
       {
         "bytes": 2116,
@@ -816,9 +816,9 @@
         "sha256": "58bf24d1c8890e326b53c1b3c7c1c45142ca26f3df5f9a8eaef80ed7dba952d8"
       },
       {
-        "bytes": 5505,
+        "bytes": 5534,
         "path": "tests/test_ci_release_hardening.py",
-        "sha256": "7526a95fd31834125e53762ce1abe161ce2f2305a76d6f311de6a350b149de64"
+        "sha256": "0acc3078601ca12693d7f19d1f28435bfd5c52a4c74413e40fa748597344dea4"
       },
       {
         "bytes": 10823,

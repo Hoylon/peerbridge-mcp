@@ -60,6 +60,16 @@ def build_macos_seatbelt_profile(
     read_rules = "\n".join(
         f"    (subpath {_scheme_string(path)})" for path in read_paths
     )
+    # Seatbelt still needs metadata access to each ancestor in order to resolve
+    # an allowed descendant. This reveals no file contents and does not widen
+    # the governed write roots.
+    metadata_paths = sorted(
+        {parent for path in read_paths for parent in path.parents},
+        key=lambda path: (len(path.parts), str(path)),
+    )
+    metadata_rules = "\n".join(
+        f"    (literal {_scheme_string(path)})" for path in metadata_paths
+    )
     profile = f"""(version 1)
 (deny default)
 (allow process*)
@@ -67,6 +77,8 @@ def build_macos_seatbelt_profile(
 (allow mach-lookup)
 (allow signal (target self))
 (allow network-outbound)
+(allow file-read-metadata
+{metadata_rules})
 (allow file-read*
 {read_rules})
 (allow file-write*

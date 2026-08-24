@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -108,6 +109,40 @@ def test_fetch_models_uses_saved_provider_identity_only(monkeypatch: pytest.Monk
     assert calls == [
         (["provider", "fetch-models", "-a", "codex", "relay-one"], 60)
     ]
+
+
+@pytest.mark.parametrize(
+    ("stderr", "message"),
+    [
+        ("Missing API key for provider secret-provider-id", "no saved API key"),
+        ("Codex Provider 缺少 base_url 配置", "no model-discovery endpoint"),
+        ("HTTP 401 invalid api key", "credential was rejected"),
+        ("HTTP 429 quota exceeded", "quota or rate limit"),
+    ],
+)
+def test_cli_failure_is_actionable_without_replaying_provider_identity(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stderr: str,
+    message: str,
+) -> None:
+    executable = tmp_path / "cc-switch.exe"
+    executable.write_bytes(b"stub")
+    monkeypatch.setattr(ccswitch, "find_cli", lambda: executable)
+    monkeypatch.setattr(
+        ccswitch.subprocess,
+        "run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr=stderr,
+        ),
+    )
+
+    with pytest.raises(ccswitch.CcSwitchError, match=message) as caught:
+        ccswitch._run(["provider", "fetch-models", "-a", "codex", "secret-provider-id"])
+
+    assert "secret-provider-id" not in str(caught.value)
 
 
 def test_switch_provider_requires_supported_app_and_safe_id(

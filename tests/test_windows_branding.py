@@ -138,6 +138,11 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert "make_server, run_native_workbench" in entry
     assert "return run_native_workbench(workbench)" in entry
     assert 'args[:1] == ["--legacy-pixel"]' in entry
+    assert "choose_desktop_surface" in entry
+    assert "saved_desktop_surface" in entry
+    assert 'selected_surface == "pixel"' in entry
+    assert "--choose-appearance" in entry
+    assert '"--theme",\n                    "pixel"' in entry
     webview_hook = (
         PROJECT_ROOT / "scripts" / "pyinstaller-hooks" / "hook-webview.py"
     ).read_text(encoding="utf-8")
@@ -183,6 +188,17 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
         "OriginalFilename",
     ):
         assert f"StringStruct('{field}'" in version_template
+
+
+def test_pixel_combobox_palette_covers_readonly_and_popdown_states() -> None:
+    source = (PROJECT_ROOT / "src" / "peerbridge_mcp" / "monitor.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'style.map(\n            "TCombobox"' in source
+    assert 'self.root.option_add("*TCombobox*Listbox.background", COLORS["panel"])' in source
+    assert 'self.root.option_add("*TCombobox*Listbox.foreground", COLORS["text"])' in source
+    assert 'self.root.option_add("*TCombobox*Listbox.selectBackground", COLORS["blue"])' in source
 
 
 def test_source_launcher_keeps_managed_children_in_the_active_environment() -> None:

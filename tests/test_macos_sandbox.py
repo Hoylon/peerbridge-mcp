@@ -34,6 +34,10 @@ def test_profile_allows_only_governed_write_roots(tmp_path: Path) -> None:
     assert f"(subpath \"{scratch.resolve()}\")" in policy.profile
     assert "(deny default)" in policy.profile
     assert "(allow network-outbound)" in policy.profile
+    assert "(allow file-read-metadata" in policy.profile
+    assert '(literal "/")' in policy.profile
+    for parent in worktree.resolve().parents:
+        assert f'(literal "{parent}")' in policy.profile
     assert "(allow file-write*\n" in policy.profile
     assert "(allow file-write*)" not in policy.profile
     assert f"(literal \"{worktree.resolve()}\")" in policy.profile

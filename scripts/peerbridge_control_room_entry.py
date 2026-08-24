@@ -661,7 +661,12 @@ def _run_managed_launcher(
     launcher_ready_path: Path | None = None,
     contract_path: Path | None = None,
     legacy_pixel: bool = False,
+    choose_appearance: bool = False,
 ) -> int:
+    from peerbridge_mcp.appearance import (
+        choose_desktop_surface,
+        saved_desktop_surface,
+    )
     from peerbridge_mcp.cli import main as cli_main
     from peerbridge_mcp.local_workbench import make_server, run_native_workbench
     from peerbridge_mcp.monitor import acquire_single_instance, main as monitor_main
@@ -679,6 +684,18 @@ def _run_managed_launcher(
                 "before starting this build"
             )
         return 0
+    project_root.mkdir(parents=True, exist_ok=True)
+    selected_surface = "pixel" if legacy_pixel else saved_desktop_surface(project_root)
+    interactive_launch = launcher_ready_path is None and contract_path is None
+    if not legacy_pixel and interactive_launch and (
+        choose_appearance or selected_surface is None
+    ):
+        selected_surface = choose_desktop_surface(project_root)
+        if selected_surface is None:
+            return 0
+    if selected_surface is None:
+        selected_surface = "modern"
+    legacy_pixel = selected_surface == "pixel"
     if contract_path is None and not legacy_pixel and not acquire_single_instance():
         raced_identity = _activate_existing_control_room()
         if raced_identity is None:
@@ -691,7 +708,6 @@ def _run_managed_launcher(
                 "a different PeerBridge build acquired the Control Room during startup"
             )
         return 0
-    project_root.mkdir(parents=True, exist_ok=True)
     init_result = cli_main(["init", "--project-root", str(project_root), "--scope", scope])
     if init_result != 0:
         raise RuntimeError(f"workspace initialization failed (code {init_result})")
@@ -719,6 +735,8 @@ def _run_managed_launcher(
                     scope,
                     "--refresh-ms",
                     "1500",
+                    "--theme",
+                    "pixel",
                 ]
             )
         workbench = make_server(
@@ -739,6 +757,7 @@ def _source_launch(args: list[str]) -> int:
     parser.add_argument("--scope", required=True)
     parser.add_argument("--launcher-ready-path", type=Path, required=True)
     parser.add_argument("--legacy-pixel", action="store_true")
+    parser.add_argument("--choose-appearance", action="store_true")
     parsed = parser.parse_args(args)
     return _run_managed_launcher(
         parsed.project_root,
@@ -746,6 +765,7 @@ def _source_launch(args: list[str]) -> int:
         parsed.scope,
         launcher_ready_path=parsed.launcher_ready_path,
         legacy_pixel=parsed.legacy_pixel,
+        choose_appearance=parsed.choose_appearance,
     )
 
 
@@ -756,12 +776,14 @@ def _workspace_launch(args: list[str]) -> int:
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--scope", required=True)
     parser.add_argument("--legacy-pixel", action="store_true")
+    parser.add_argument("--choose-appearance", action="store_true")
     parsed = parser.parse_args(args)
     return _run_managed_launcher(
         parsed.project_root,
         parsed.db,
         parsed.scope,
         legacy_pixel=parsed.legacy_pixel,
+        choose_appearance=parsed.choose_appearance,
     )
 
 

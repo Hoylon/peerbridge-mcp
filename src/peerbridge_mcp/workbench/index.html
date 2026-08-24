@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PeerBridge Workbench</title>
-  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260824-6">
+  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260825-12">
 </head>
 <body>
   <div id="access-gate" class="access-gate" hidden>
@@ -25,6 +25,7 @@
         </div>
         <span id="scope-chip" class="scope-chip">LOCAL</span>
       </header>
+      <div id="connection-error" class="connection-error" role="alert" hidden></div>
 
       <div class="sidebar-actions">
         <button id="new-room" class="new-room" type="button">
@@ -67,7 +68,15 @@
       <footer class="operator-card">
         <div class="operator-avatar">HY</div>
         <div><strong data-i18n="operator">本機操作者</strong><span id="scope-label">--</span></div>
-        <button id="locale-button" class="icon-button" type="button" title="Language">文</button>
+        <label class="locale-control" for="locale-select">
+          <span>文 / EN</span>
+          <select id="locale-select" aria-label="Language">
+            <option value="zh-Hant">繁體中文</option>
+            <option value="zh-Hans">简体中文</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <button id="appearance-button" class="appearance-button" type="button"><span aria-hidden="true">◐</span><span data-i18n="appearance">外觀</span><small id="appearance-current">Modern</small></button>
       </footer>
       <div id="sidebar-resizer" class="panel-resizer panel-resizer-right" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize navigation" aria-valuemin="190" aria-valuemax="320"></div>
     </aside>
@@ -92,6 +101,7 @@
       <section id="chat-view" class="content-view active-view">
         <section id="history-notice" class="history-notice" hidden aria-live="polite">
           <div><strong data-i18n="history_read_only">唯讀 Agent 歷史</strong><span id="history-detail">--</span></div>
+          <button id="continue-history" class="secondary-button" type="button" data-i18n="continue_history">從此歷史繼續</button>
           <span id="history-hash" class="route-hash">--</span>
         </section>
         <section id="collaboration-overview" class="collaboration-overview" aria-label="Room activity">
@@ -156,6 +166,10 @@
       <section id="cockpit-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="workspace">工作區</span><h2 data-i18n="cockpit">多智能體控制台</h2></div><span id="cockpit-summary">--</span></div>
         <div id="cockpit-metrics" class="metric-strip"></div>
+        <section class="agent-runtime-panel" aria-labelledby="agent-runtime-heading">
+          <div class="section-heading"><div><h3 id="agent-runtime-heading" data-i18n="agent_runtime">Agent 即時狀態</h3><p data-i18n="agent_runtime_hint">以本機 presence、工作階段與派送事件顯示可觀察活動。</p></div><span id="agent-runtime-summary">--</span></div>
+          <div id="agent-runtime-strip" class="agent-runtime-strip" aria-live="polite"></div>
+        </section>
         <section class="action-panel" aria-labelledby="managed-launch-heading">
           <div class="section-heading action-panel-heading">
             <div><h3 id="managed-launch-heading" data-i18n="official_agent_capabilities">官方 Agent 能力</h3><p data-i18n="official_agent_capabilities_hint">依本機安裝、驗證收據及 PeerBridge 映射顯示真實能力。</p></div>
@@ -168,7 +182,7 @@
             <label class="field"><span data-i18n="role">角色</span><select id="managed-role" required></select></label>
             <label class="field"><span data-i18n="permission_tier">權限層級</span><select id="managed-permission" required></select><small id="managed-permission-hint" class="permission-mode-hint" aria-live="polite"></small></label>
             <label id="managed-binding-field" class="field" hidden><span data-i18n="governed_worktree">治理工作樹</span><select id="managed-binding"></select><small data-i18n="governed_worktree_hint">寫入權限只在已批准的隔離工作樹內生效。</small></label>
-            <label class="field"><span data-i18n="requested_route">指定路由（選填）</span><input id="managed-route" maxlength="200" data-i18n-placeholder="requested_route_placeholder" placeholder="例如官方模型或已設定路由"></label>
+            <label class="field"><span data-i18n="model_route">模型／路由</span><select id="managed-route"><option value="" data-i18n="no_route">不綁定路由</option></select></label>
             <label class="field"><span data-i18n="working_directory">工作資料夾</span><input id="managed-directory" maxlength="500" value="." required></label>
             <label class="field action-form-wide"><span data-i18n="initial_instruction">初始指令（選填）</span><textarea id="managed-input" rows="2" maxlength="20000" data-i18n-placeholder="initial_instruction_placeholder" placeholder="啟動後交給 Agent 的第一項工作"></textarea></label>
             <div class="managed-attachment-row action-form-wide">
@@ -193,7 +207,7 @@
           <section class="session-browser"><div class="section-heading"><h3 data-i18n="managed_sessions">受管工作階段</h3><span id="session-count">0</span></div><div id="session-list" class="record-list"></div></section>
           <section id="session-inspector" class="session-inspector">
             <div class="section-heading"><div><h3 id="session-detail-title" data-i18n="session_details">工作階段詳情</h3><span id="session-detail-subtitle" data-i18n="no_session_selected">尚未選擇工作階段</span></div><span id="session-event-count">0</span></div>
-            <div class="session-detail-tabs" role="tablist">
+            <div id="session-detail-tabs" class="session-detail-tabs" role="tablist">
               <button type="button" class="active" data-session-tab="terminal" data-i18n="terminal">終端</button>
               <button type="button" data-session-tab="activity" data-i18n="activity">活動</button>
               <button type="button" data-session-tab="final" data-i18n="final_answer">最終回答</button>
@@ -240,7 +254,7 @@
       </section>
 
       <section id="review-view" class="content-view summary-view">
-        <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="review">互評</h2></div><span id="review-summary">--</span></div>
+        <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="review">互評</h2></div><div class="section-actions"><button id="start-review-workflow" class="primary-button" type="button" data-i18n="start_review_workflow">派發互評流程</button><span id="review-summary">--</span></div></div>
         <div class="split-workspace">
           <section><div class="section-heading"><h3 data-i18n="review_requests">互評請求</h3><span id="peer-call-count">0</span></div><div id="peer-call-list" class="record-list"></div></section>
           <section><div class="section-heading"><h3 data-i18n="review_results">互評結果</h3><span id="peer-review-count">0</span></div><div id="peer-review-list" class="record-list"></div></section>
@@ -249,13 +263,22 @@
 
       <section id="change-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="change">變更</h2></div><span id="change-summary">--</span></div>
+        <section class="worktree-diff-panel" aria-labelledby="worktree-diff-heading">
+          <div class="section-heading">
+            <div><h3 id="worktree-diff-heading" data-i18n="current_code_diff">目前程式碼變更</h3><p data-i18n="current_code_diff_hint">只讀取本專案 Git 工作樹；秘密內容會遮蔽，輸出有大小上限。</p></div>
+            <div class="section-actions"><span id="worktree-diff-summary">--</span><button id="worktree-diff-refresh" class="secondary-button" type="button" data-i18n="refresh">重新整理</button></div>
+          </div>
+          <div id="worktree-diff-files" class="diff-file-list"></div>
+          <div id="worktree-diff-view" class="diff-view" aria-live="polite"></div>
+        </section>
+        <div class="section-heading"><h3 data-i18n="recorded_changes">已記錄變更</h3><span id="recorded-change-count">0</span></div>
         <div id="change-list" class="record-list wide-record-list"></div>
       </section>
 
       <section id="audit-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="audit">審計</h2></div><span id="snapshot-signature">--</span></div>
         <div id="audit-grid" class="audit-grid"></div>
-        <div class="section-heading"><h3 data-i18n="recent_events">最近事件</h3><span id="audit-event-count">0</span></div>
+        <div class="section-heading"><h3 data-i18n="recent_events">最近事件</h3><div class="section-actions"><span id="audit-verify-status" role="status"></span><button id="audit-verify" class="secondary-button" type="button" data-i18n="verify_audit_chain">驗證審計鏈</button><span id="audit-event-count">0</span></div></div>
         <div id="audit-event-list" class="record-list wide-record-list"></div>
       </section>
 
@@ -318,9 +341,9 @@
         <section class="action-panel governance-panel" aria-labelledby="proof-heading">
           <div class="section-heading action-panel-heading"><div><h3 id="proof-heading" data-i18n="proof_bundle">證據包</h3><p data-i18n="proof_bundle_hint">輸出經清理的可攜式證據，或對既有證據包進行零寫入驗證。</p></div></div>
           <form id="proof-form" class="inline-governance-form">
-            <label class="field"><span data-i18n="task_id">工作 ID</span><input id="proof-task" maxlength="200"></label>
+            <label class="field"><span data-i18n="task_id">工作 ID</span><input id="proof-task" maxlength="200" required></label>
             <button id="proof-export" class="primary-button" type="button" data-i18n="export_proof">匯出證據包</button>
-            <label class="field proof-path-field"><span data-i18n="bundle_path">證據包路徑</span><input id="proof-path" maxlength="500" placeholder=".peerbridge-artifacts/proof-bundles/..."></label>
+            <label class="field proof-path-field"><span data-i18n="bundle_path">證據包路徑</span><input id="proof-path" maxlength="500" placeholder=".peerbridge-artifacts/proof-bundles/..." required></label>
             <button id="proof-verify" class="secondary-button" type="button" data-i18n="verify_proof">驗證證據包</button>
             <span id="proof-status" role="status"></span>
           </form>
@@ -333,6 +356,46 @@
 
       <section id="connect-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="connect">接入</h2></div><span id="connect-summary">--</span></div>
+        <section class="action-panel integration-panel" aria-labelledby="ccswitch-heading">
+          <div class="section-heading action-panel-heading">
+            <div><h3 id="ccswitch-heading" data-i18n="ccswitch_title">CC Switch 一鍵接入</h3><p data-i18n="ccswitch_hint">讀取 CC Switch 已保存的供應商與模型；只有按下確認後才會切換目前供應商。</p></div>
+          </div>
+          <form id="ccswitch-form" class="action-form integration-form">
+            <label class="field"><span data-i18n="ccswitch_app">應用程式</span><select id="ccswitch-app"><option value="codex">Codex</option><option value="claude">Claude Code</option><option value="gemini">Gemini CLI</option><option value="open-code">OpenCode</option><option value="hermes">Hermes</option><option value="open-claw">OpenClaw</option></select></label>
+            <label class="field"><span data-i18n="ccswitch_provider">CC Switch 供應商</span><select id="ccswitch-provider"><option value="" data-i18n="discover_first">先讀取供應商</option></select></label>
+            <label class="field"><span data-i18n="model">模型</span><select id="ccswitch-model"><option value="" data-i18n="discover_models_first">先讀取模型</option></select></label>
+            <label class="field"><span data-i18n="agent_id">Agent ID</span><input id="ccswitch-agent" maxlength="200" value="codex-main" required></label>
+            <label class="field"><span data-i18n="reasoning_mode">推理強度</span><select id="ccswitch-reasoning"><option value="">--</option><option value="low" data-i18n="reason_low">低</option><option value="medium" data-i18n="reason_medium">中</option><option value="high" data-i18n="reason_high">高</option><option value="xhigh" data-i18n="reason_xhigh">特高</option><option value="max" data-i18n="reason_max">最高</option></select></label>
+            <div class="action-submit integration-actions">
+              <span id="ccswitch-status" role="status"></span>
+              <button id="ccswitch-discover" class="secondary-button" type="button" data-i18n="discover_providers">讀取供應商</button>
+              <button id="ccswitch-models" class="secondary-button" type="button" data-i18n="discover_models">讀取模型</button>
+              <button id="ccswitch-save-route" class="primary-button" type="submit" data-i18n="save_route">建立路由</button>
+              <button id="ccswitch-activate" class="secondary-button" type="button" data-i18n="activate_provider">切換供應商</button>
+            </div>
+          </form>
+        </section>
+        <section class="action-panel integration-panel" aria-labelledby="provider-heading">
+          <div class="section-heading action-panel-heading">
+            <div><h3 id="provider-heading" data-i18n="provider_setup">直接 API／中轉／本機供應商</h3><p data-i18n="provider_setup_hint">憑證只保存於本機安全儲存；PeerBridge 資料庫只記錄不可逆指紋與端點雜湊。</p></div>
+          </div>
+          <form id="provider-connection-form" class="action-form integration-form">
+            <label class="field"><span data-i18n="connection_id">連線 ID</span><input id="provider-connection-id" maxlength="200" required placeholder="relay-example"></label>
+            <label class="field"><span data-i18n="display_name">顯示名稱</span><input id="provider-display-name" maxlength="200" required placeholder="Example Relay"></label>
+            <label class="field"><span data-i18n="route_class">路由類型</span><select id="provider-route-class"><option value="official" data-i18n="official">官方</option><option value="relay" data-i18n="relay">中轉</option><option value="local" data-i18n="local">本機</option></select></label>
+            <label class="field action-form-wide"><span data-i18n="endpoint">API 端點</span><input id="provider-endpoint" type="url" maxlength="1000" required placeholder="https://example.com/v1"></label>
+            <label class="field secret-field action-form-wide"><span>API Key</span><span class="secret-input-row"><input id="provider-api-key" type="password" maxlength="4000" autocomplete="off" required><button id="provider-key-toggle" class="secondary-button" type="button" data-i18n="show">顯示</button></span></label>
+            <div class="action-submit"><span id="provider-save-status" role="status"></span><button class="primary-button" type="submit" data-i18n="save_provider">保存供應商</button></div>
+          </form>
+          <div class="section-heading managed-launch-subheading"><div><h3 data-i18n="model_route_setup">讀取模型並建立路由</h3><p data-i18n="model_route_setup_hint">模型清單由所選供應商即時回報，不會用預設名稱冒充。</p></div></div>
+          <form id="provider-route-form" class="action-form integration-form">
+            <label class="field"><span data-i18n="provider_connections">供應商連線</span><select id="provider-route-connection"><option value="" data-i18n="no_records">目前沒有記錄</option></select></label>
+            <label class="field"><span data-i18n="agent_id">Agent ID</span><input id="provider-route-agent" maxlength="200" value="codex-main" required></label>
+            <label class="field"><span data-i18n="model">模型</span><select id="provider-route-model"><option value="" data-i18n="discover_models_first">先讀取模型</option></select></label>
+            <label class="field"><span data-i18n="reasoning_mode">推理強度</span><select id="provider-route-reasoning"><option value="">--</option><option value="low" data-i18n="reason_low">低</option><option value="medium" data-i18n="reason_medium">中</option><option value="high" data-i18n="reason_high">高</option><option value="xhigh" data-i18n="reason_xhigh">特高</option><option value="max" data-i18n="reason_max">最高</option></select></label>
+            <div class="action-submit integration-actions"><span id="provider-route-status" role="status"></span><button id="provider-discover-models" class="secondary-button" type="button" data-i18n="discover_models">讀取模型</button><button class="primary-button" type="submit" data-i18n="save_route">建立路由</button></div>
+          </form>
+        </section>
         <section class="action-panel" aria-labelledby="identity-authorize-heading">
           <div class="section-heading action-panel-heading"><div><h3 id="identity-authorize-heading" data-i18n="authorize_agent_identity">授權 Agent 接入</h3><p data-i18n="authorize_agent_identity_hint">建立十分鐘內只可使用一次的權限，供 CLI 簽發綁定工具 profile 的 Agent capability。</p></div></div>
           <form id="identity-authorize-form" class="action-form">
@@ -392,6 +455,7 @@
       <section id="usage-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="workspace">工作區</span><h2 data-i18n="token_usage">Token 使用量</h2></div><span id="usage-total">--</span></div>
         <div id="usage-periods" class="usage-period-selector" role="tablist" aria-label="Token period"></div>
+        <p id="usage-truncation" class="usage-truncation" role="status" hidden></p>
         <div class="usage-dashboard-grid">
           <section class="usage-panel"><div class="section-heading"><h3 data-i18n="token_breakdown">Token 分拆</h3></div><div id="usage-bars" class="usage-bars"></div></section>
           <section class="usage-panel"><div class="section-heading"><h3 data-i18n="token_trend">Token 趨勢</h3></div><div id="usage-trend" class="usage-trend"></div></section>
@@ -406,7 +470,7 @@
         <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="announcement">公告</h2></div><span id="announcement-summary">--</span></div>
         <div class="support-state">
           <div><h3 data-i18n="announcement_status">公告來源狀態</h3><p id="announcement-detail" data-i18n="announcement_unconfigured">尚未設定公告 HTTPS 來源；本機不會偽造公告。</p></div>
-          <button id="refresh-announcements" class="secondary-button" type="button" data-i18n="refresh">重新整理</button>
+          <div class="support-state-actions"><button id="mark-announcements-read" class="secondary-button" type="button" data-i18n="mark_all_read">全部標為已讀</button><button id="refresh-announcements" class="secondary-button" type="button" data-i18n="refresh">重新整理</button></div>
         </div>
         <div id="announcement-list" class="record-list wide-record-list"></div>
       </section>
@@ -474,7 +538,30 @@
     </form>
   </dialog>
 
+  <dialog id="appearance-dialog" class="workbench-dialog appearance-dialog">
+    <form id="appearance-form" method="dialog" class="dialog-form">
+      <header><div><span data-i18n="workspace">工作區</span><h2 data-i18n="choose_appearance">選擇外觀</h2></div><button id="appearance-close" class="icon-button" type="button" aria-label="Close">×</button></header>
+      <p class="appearance-intro" data-i18n="choose_appearance_hint">選擇 Pixel Control Room 或 Modern Workbench；重新啟動後套用。</p>
+      <div class="appearance-options">
+        <label class="appearance-option">
+          <input type="radio" name="appearance-surface" value="pixel">
+          <span class="appearance-preview pixel-preview" aria-hidden="true"><i class="preview-sidebar"></i><i class="preview-toolbar"></i><i class="preview-terminal"></i><i class="preview-input"></i></span>
+          <strong>Pixel Control Room</strong>
+          <span data-i18n="pixel_appearance_hint">原本深色像素風、高密度終端與控制介面。</span>
+        </label>
+        <label class="appearance-option">
+          <input type="radio" name="appearance-surface" value="modern">
+          <span class="appearance-preview modern-preview" aria-hidden="true"><i class="preview-sidebar"></i><i class="preview-toolbar"></i><i class="preview-chat-a"></i><i class="preview-chat-b"></i><i class="preview-input"></i></span>
+          <strong>Modern Workbench</strong>
+          <span data-i18n="modern_appearance_hint">對話優先，整合模型、權限、變更與證據。</span>
+        </label>
+      </div>
+      <div id="appearance-status" class="dialog-status" role="status"></div>
+      <footer><button id="appearance-cancel" class="secondary-button" type="button" data-i18n="cancel">取消</button><button class="primary-button" type="submit" data-i18n="save_appearance">儲存外觀</button></footer>
+    </form>
+  </dialog>
+
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="/assets/app.js?v=alpha52-20260824-6" defer></script>
+  <script src="/assets/app.js?v=alpha52-20260825-12" defer></script>
 </body>
 </html>

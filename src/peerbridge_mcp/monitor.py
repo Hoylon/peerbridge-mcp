@@ -2640,19 +2640,33 @@ MCP_HUMAN_CLIENT_TOOLS = (
     "bind_guided_discussion",
     "cancel_operation",
     "control_discussion",
+    "create_execution_worktree",
     "create_room",
+    "decide_permission",
     "enqueue_workflow",
+    "export_proof_bundle",
+    "grant_capability",
     "join_room",
     "leave_room",
     "list_agents",
+    "list_provider_connections",
     "list_rooms",
     "poll_messages",
     "post_room_message",
+    "register_capability",
     "room_members",
+    "save_workflow_schedule",
+    "seal_execution",
     "send_message",
     "send_room_fanout",
     "set_room_automation",
     "set_room_member_role",
+    "set_workflow_schedule_enabled",
+    "upsert_provider_connection",
+    "upsert_route_profile",
+    "verify_audit_chain",
+    "verify_execution_source",
+    "verify_proof_bundle",
 )
 
 
@@ -5765,7 +5779,34 @@ class PixelMonitor:
             darkcolor=COLORS["line"],
             arrowsize=12,
             font=(UI_FONT_FAMILY, 9),
+            arrowcolor=COLORS["text"],
         )
+        style.map(
+            "TCombobox",
+            fieldbackground=[
+                ("readonly", COLORS["panel"]),
+                ("disabled", COLORS["panel_2"]),
+            ],
+            foreground=[
+                ("readonly", COLORS["text"]),
+                ("disabled", COLORS["muted"]),
+            ],
+            selectbackground=[("readonly", COLORS["panel"])],
+            selectforeground=[("readonly", COLORS["text"])],
+            arrowcolor=[
+                ("readonly", COLORS["text"]),
+                ("disabled", COLORS["muted"]),
+            ],
+        )
+        self.root.option_add("*TCombobox*Listbox.background", COLORS["panel"])
+        self.root.option_add("*TCombobox*Listbox.foreground", COLORS["text"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", COLORS["blue"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", COLORS["black"])
+        self.root.option_add("*TCombobox*Listbox.font", (UI_FONT_FAMILY, 9))
+        self.root.option_add("*Menu.background", COLORS["panel"])
+        self.root.option_add("*Menu.foreground", COLORS["text"])
+        self.root.option_add("*Menu.activeBackground", COLORS["blue"])
+        self.root.option_add("*Menu.activeForeground", COLORS["black"])
         style.configure(
             SIDEBAR_SCROLLBAR_STYLE,
             background=COLORS["line"],

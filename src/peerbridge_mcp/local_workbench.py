@@ -127,6 +127,7 @@ from .managed_agents import (
     ManagedAgentManager,
     build_observe_launch,
 )
+from .localization import LocalizationError, load_preferences, save_preferences
 from .official_agent_runtime import HybridManagedAgentManager
 from .monitor import (
     BridgeReader,
@@ -148,6 +149,10 @@ MAX_IDEMPOTENCY_RECORDS = 256
 MAX_HISTORY_SELECTIONS = 512
 HISTORY_SELECTION_TTL_SECONDS = 10 * 60
 MANAGED_SESSION_AUTHORIZATION_SECONDS = 12 * 60 * 60
+MAX_WORKTREE_DIFF_BYTES = 512 * 1024
+MAX_WORKTREE_DIFF_FILES = 160
+MAX_WORKTREE_GIT_METADATA_BYTES = 512 * 1024
+MAX_PROVIDER_MODEL_OPTIONS = 500
 SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
 SAFE_ROUTE = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
 SAFE_MODEL_ID = re.compile(r"[A-Za-z0-9_.:/-]{1,500}\Z")
@@ -162,7 +167,7 @@ ROOM_ROLE_IDS = frozenset(
 )
 MANAGED_AGENT_IDS = frozenset({"codex", "claude-code", "grok", "kimi-code"})
 MANAGED_AGENT_ORDER = ("codex", "claude-code", "grok", "kimi-code")
-PRIMARY_OFFICIAL_AGENT_IDS = frozenset({"codex", "claude-code", "grok"})
+PRIMARY_OFFICIAL_AGENT_IDS = frozenset({"codex", "claude-code", "grok", "kimi-code"})
 MANAGED_PERMISSION_TIERS = frozenset(
     {"observe", "review", "edit", "full-development"}
 )
@@ -188,6 +193,14 @@ class WorkbenchError(ValueError):
     """An operator-safe local workbench error."""
 
 
+@dataclass(frozen=True)
+class _GitCommandResult:
+    returncode: int
+    stdout: bytes
+    truncated: bool
+    timed_out: bool
+
+
 def _is_loopback(value: str) -> bool:
     try:
         return ipaddress.ip_address(value).is_loopback
@@ -204,6 +217,265 @@ def _public_text(value: Any) -> str:
     text = _redact(value)
     text = WINDOWS_PATH.sub("[LOCAL PATH]", text)
     return POSIX_PRIVATE_PATH.sub("[LOCAL PATH]", text)
+
+
+def _path_is_within(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _resolve_git_executable(project_root: Path) -> Path | None:
+    """Resolve Git from explicit absolute PATH entries, never from the current directory."""
+
+    root = project_root.resolve()
+    executable_names = ("git.exe",) if sys.platform == "win32" else ("git",)
+    for raw_directory in os.environ.get("PATH", "").split(os.pathsep):
+        normalized = os.path.expandvars(raw_directory.strip().strip('"'))
+        if not normalized:
+            continue
+        directory = Path(normalized)
+        if not directory.is_absolute():
+            continue
+        for executable_name in executable_names:
+            try:
+                candidate = (directory / executable_name).resolve(strict=True)
+            except OSError:
+                continue
+            if not candidate.is_file() or _path_is_within(candidate, root):
+                continue
+            if sys.platform != "win32" and not os.access(candidate, os.X_OK):
+                continue
+            return candidate
+    return None
+
+
+def _git_command(
+    project_root: Path,
+    *arguments: str,
+    output_limit: int,
+) -> _GitCommandResult:
+    executable = _resolve_git_executable(project_root)
+    if executable is None:
+        raise FileNotFoundError("trusted Git executable is unavailable")
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_PAGER": "cat",
+            "LC_ALL": "C",
+        }
+    )
+    process = subprocess.Popen(
+        [str(executable), "-C", str(project_root), *arguments],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        env=environment,
+        close_fds=True,
+        creationflags=(
+            int(getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            if sys.platform == "win32"
+            else 0
+        ),
+    )
+    captured = bytearray()
+    truncated = threading.Event()
+
+    def read_output() -> None:
+        stream = process.stdout
+        if stream is None:
+            return
+        while True:
+            chunk = stream.read(64 * 1024)
+            if not chunk:
+                return
+            remaining = output_limit - len(captured)
+            if remaining > 0:
+                captured.extend(chunk[:remaining])
+            if len(chunk) > max(remaining, 0) or len(captured) >= output_limit:
+                truncated.set()
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+                return
+
+    reader = threading.Thread(target=read_output, daemon=True)
+    reader.start()
+    timed_out = False
+    try:
+        process.wait(timeout=12)
+    except subprocess.TimeoutExpired:
+        timed_out = True
+        try:
+            process.terminate()
+            process.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            try:
+                process.kill()
+            except OSError:
+                pass
+            process.wait(timeout=2)
+    reader.join(timeout=2)
+    if reader.is_alive():
+        try:
+            process.kill()
+        except OSError:
+            pass
+        reader.join(timeout=1)
+    return _GitCommandResult(
+        returncode=int(process.returncode or 0),
+        stdout=bytes(captured),
+        truncated=truncated.is_set(),
+        timed_out=timed_out,
+    )
+
+
+def _worktree_diff(project_root: Path) -> dict[str, Any]:
+    """Return a bounded, redacted, read-only Git diff for the local workbench."""
+
+    try:
+        probe = _git_command(
+            project_root,
+            "rev-parse",
+            "--is-inside-work-tree",
+            output_limit=4096,
+        )
+    except (FileNotFoundError, OSError, subprocess.SubprocessError):
+        return {"available": False, "reason": "git_unavailable", "files": [], "patch": ""}
+    if probe.returncode != 0 or probe.stdout.strip() != b"true":
+        return {"available": False, "reason": "not_git_repository", "files": [], "patch": ""}
+
+    exclusions = (
+        ":(exclude).peerbridge/**",
+        ":(exclude).env",
+        ":(exclude).env.*",
+        ":(exclude)**/*.pem",
+        ":(exclude)**/*.key",
+        ":(exclude)**/*.pfx",
+        ":(exclude)**/*.p12",
+    )
+    pathspec = ("--", ".", *exclusions)
+    head = _git_command(
+        project_root,
+        "rev-parse",
+        "--short=12",
+        "HEAD",
+        output_limit=4096,
+    )
+    status = _git_command(
+        project_root,
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        *pathspec,
+        output_limit=MAX_WORKTREE_GIT_METADATA_BYTES,
+    )
+    numstat = _git_command(
+        project_root,
+        "diff",
+        "--numstat",
+        "--no-renames",
+        "HEAD",
+        *pathspec,
+        output_limit=MAX_WORKTREE_GIT_METADATA_BYTES,
+    )
+    patch = _git_command(
+        project_root,
+        "diff",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-renames",
+        "--unified=3",
+        "HEAD",
+        *pathspec,
+        output_limit=MAX_WORKTREE_DIFF_BYTES,
+    )
+    if any(
+        result.timed_out or (result.returncode != 0 and not result.truncated)
+        for result in (status, numstat, patch)
+    ):
+        return {"available": False, "reason": "git_diff_failed", "files": [], "patch": ""}
+
+    status_by_path: dict[str, str] = {}
+    for line in status.stdout.decode("utf-8", errors="replace").splitlines():
+        if len(line) < 4:
+            continue
+        code = line[:2].strip() or "M"
+        path = line[3:].strip().strip('"')
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[-1]
+        if path:
+            status_by_path[path.replace("\\", "/")] = code
+
+    files: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    total_additions = 0
+    total_deletions = 0
+    for line in numstat.stdout.decode("utf-8", errors="replace").splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        added_raw, deleted_raw, path = parts
+        normalized_path = path.replace("\\", "/")
+        binary = added_raw == "-" or deleted_raw == "-"
+        additions = None if binary else _safe_int(added_raw)
+        deletions = None if binary else _safe_int(deleted_raw)
+        if additions is not None:
+            total_additions += additions
+        if deletions is not None:
+            total_deletions += deletions
+        files.append(
+            {
+                "path": _public_text(normalized_path),
+                "status": status_by_path.get(normalized_path, "M"),
+                "additions": additions,
+                "deletions": deletions,
+                "binary": binary,
+            }
+        )
+        seen.add(normalized_path)
+        if len(files) >= MAX_WORKTREE_DIFF_FILES:
+            break
+    for path, code in sorted(status_by_path.items()):
+        if path in seen or len(files) >= MAX_WORKTREE_DIFF_FILES:
+            continue
+        files.append(
+            {
+                "path": _public_text(path),
+                "status": code,
+                "additions": None,
+                "deletions": None,
+                "binary": False,
+            }
+        )
+
+    raw_patch = patch.stdout
+    patch_truncated = patch.truncated
+    bounded_patch = raw_patch.decode("utf-8", errors="replace")
+    redacted_patch = _public_text(bounded_patch)
+    return {
+        "available": True,
+        "reason": "",
+        "head": head.stdout.decode("ascii", errors="ignore").strip(),
+        "dirty": bool(status_by_path),
+        "additions": total_additions,
+        "deletions": total_deletions,
+        "file_count": len(status_by_path),
+        "files": files,
+        "files_truncated": bool(
+            status.truncated or numstat.truncated or len(status_by_path) > len(files)
+        ),
+        "patch": redacted_patch,
+        "patch_truncated": patch_truncated,
+        "patch_sha256": (
+            hashlib.sha256(raw_patch).hexdigest() if not patch_truncated else ""
+        ),
+        "bounded_patch_sha256": hashlib.sha256(raw_patch).hexdigest(),
+    }
 
 
 def _safe_action_value(value: Any) -> Any:
@@ -223,6 +495,20 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(value or default)
     except (TypeError, ValueError):
         return default
+
+
+def _bounded_model_ids(values: Any) -> tuple[tuple[str, ...], bool]:
+    rows: list[str] = []
+    seen: set[str] = set()
+    for raw_value in values or ():
+        value = str(raw_value or "").strip()
+        if not value or not SAFE_MODEL_ID.fullmatch(value) or value in seen:
+            continue
+        if len(rows) >= MAX_PROVIDER_MODEL_OPTIONS:
+            return tuple(rows), True
+        rows.append(value)
+        seen.add(value)
+    return tuple(rows), False
 
 
 def _valid_sha256(value: Any) -> str | None:
@@ -705,6 +991,21 @@ def _json_list_count(value: Any) -> int:
     return len(decoded) if isinstance(decoded, list) else 0
 
 
+def _safe_json_list(value: Any, *, limit: int = 40) -> list[Any]:
+    if isinstance(value, list):
+        decoded = value
+    elif isinstance(value, str) and value:
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    else:
+        return []
+    if not isinstance(decoded, list):
+        return []
+    return decoded[:limit]
+
+
 def _safe_route(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "route_id": str(row.get("route_id") or ""),
@@ -919,6 +1220,7 @@ def _safe_permission(row: dict[str, Any]) -> dict[str, Any]:
         "decided_by": str(row.get("decided_by") or ""),
         "reason": _public_text(row.get("reason")),
         "consumed_utc": str(row.get("consumed_utc") or ""),
+        "expires_epoch": float(row.get("expires_epoch") or 0),
         "created_utc": str(row.get("created_utc") or ""),
         "sha256": str(row.get("decision_sha256") or ""),
     }
@@ -942,12 +1244,25 @@ def _safe_execution(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _safe_briefing(row: dict[str, Any]) -> dict[str, Any]:
+    bindings = []
+    for item in _safe_json_list(row.get("memory_bindings_json"), limit=80):
+        if not isinstance(item, dict):
+            continue
+        bindings.append(
+            {
+                "memory_id": str(item.get("memory_id") or ""),
+                "memory_sha256": str(item.get("memory_sha256") or ""),
+                "record_type": str(item.get("record_type") or ""),
+                "authority_id": str(item.get("authority_id") or ""),
+            }
+        )
     return {
         "briefing_id": str(row.get("briefing_id") or ""),
         "task_id": str(row.get("task_id") or ""),
         "agent_id": str(row.get("agent_id") or ""),
         "room_id": str(row.get("room_id") or ""),
         "memory_count": _json_list_count(row.get("memory_bindings_json")),
+        "memory_bindings": bindings,
         "created_utc": str(row.get("created_utc") or ""),
         "sha256": str(row.get("briefing_sha256") or ""),
     }
@@ -1017,12 +1332,18 @@ def _safe_review(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _safe_change(row: dict[str, Any]) -> dict[str, Any]:
+    changed_paths = [
+        _public_text(item)
+        for item in _safe_json_list(row.get("changed_paths_json"), limit=80)
+        if isinstance(item, str)
+    ]
     return {
         "record_id": str(row.get("record_id") or ""),
         "task_id": str(row.get("task_id") or ""),
         "actor": str(row.get("actor") or ""),
         "summary": _public_text(row.get("change_summary")),
         "changed_path_count": _json_list_count(row.get("changed_paths_json")),
+        "changed_paths": changed_paths,
         "test_summary": _public_text(row.get("tests")),
         "approval_mode": str(row.get("approval_mode") or ""),
         "review_count": _json_list_count(row.get("review_ids_json")),
@@ -1369,6 +1690,18 @@ def _feedback_state() -> dict[str, Any]:
     }
 
 
+def _appearance_state(project_root: Path) -> dict[str, Any]:
+    try:
+        preferences = load_preferences(project_root)
+    except LocalizationError:
+        return {"selected": "modern", "available": ["pixel", "modern"], "configuration_error": True}
+    return {
+        "selected": str(preferences.get("theme") or "modern"),
+        "available": ["pixel", "modern"],
+        "configuration_error": False,
+    }
+
+
 def _announcement_payload(item: Announcement, read_ids: set[str]) -> dict[str, Any]:
     return {
         "announcement_id": item.announcement_id,
@@ -1518,6 +1851,8 @@ def workbench_payload(
                 "message_count": _safe_int(row.get("message_count")),
                 "active_member_count": _safe_int(row.get("active_member_count")),
                 "updated_utc": str(row.get("updated_utc") or ""),
+                "room_kind": str(row.get("room_kind") or ""),
+                "provider": _redact(row.get("provider")),
             }
             for row in room["rooms"]
         ],
@@ -1682,6 +2017,9 @@ def workbench_payload(
             "member_roles": True,
             "managed_session_events": bool(session_rows or managed_rows),
             "managed_session_control": True,
+            "observable_agent_activity": True,
+            "agent_model_permission_controls": True,
+            "worktree_diff": True,
             "room_creation": True,
             "room_seat_management": True,
             "workflow_queue": True,
@@ -1715,6 +2053,7 @@ def workbench_payload(
             "selected": room.get("imported_history"),
         },
         "feedback": _feedback_state(),
+        "appearance": _appearance_state(project_root),
         "announcement_state": _announcement_state(project_root),
         "counts": {
             "agents": snapshot.table_counts.get("agent_presence", 0),
@@ -2106,6 +2445,19 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if parsed.path == "/api/worktree/diff":
+            if not self._authorized():
+                return
+            try:
+                payload = _worktree_diff(self.server.config.project_root)
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                self._json(
+                    HTTPStatus.SERVICE_UNAVAILABLE,
+                    {"error": "worktree diff unavailable"},
+                )
+                return
+            self._json(HTTPStatus.OK, payload)
+            return
         if parsed.path != "/api/bootstrap":
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
@@ -2246,9 +2598,73 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             name = str(payload.get("name") or "").strip()
             if not SAFE_IDENTIFIER.fullmatch(room_id):
                 raise WorkbenchError("invalid room ID")
+            if room_id.startswith("history."):
+                raise WorkbenchError("history room IDs are reserved")
             if not name or len(name) > 120:
                 raise WorkbenchError("invalid room name")
             result = client.create_room(room_id=room_id, name=name)
+        elif path == "/api/history/continue":
+            allowed = {"request_id", "source_room_id", "room_id", "name"}
+            if set(payload) != allowed:
+                raise WorkbenchError("unsupported history continuation fields")
+            source_room_id = str(payload.get("source_room_id") or "").strip()
+            room_id = str(payload.get("room_id") or "").strip()
+            name = str(payload.get("name") or "").strip()
+            if not source_room_id.startswith("history.") or not SAFE_IDENTIFIER.fullmatch(source_room_id):
+                raise WorkbenchError("invalid history source room")
+            if not SAFE_IDENTIFIER.fullmatch(room_id) or room_id.startswith("history."):
+                raise WorkbenchError("invalid continuation room ID")
+            if not name or len(name) > 120:
+                raise WorkbenchError("invalid room name")
+            matches = [
+                row
+                for row in list_conversation_imports(
+                    self.server.config.project_root, self.server.config.scope
+                )
+                if str(row.get("room_id") or "") == source_room_id
+            ]
+            if len(matches) != 1:
+                raise WorkbenchError("imported history source is missing or ambiguous")
+            source = matches[0]
+            source_view = imported_room_view(source, rooms=(), limit=120)
+            context_lines: list[str] = []
+            context_bytes = 0
+            for message in reversed(source_view.get("messages") or []):
+                line = f"{message.get('sender') or 'Agent'}: {_public_text(message.get('body'))}"
+                encoded_length = len(line.encode("utf-8")) + 1
+                if context_bytes + encoded_length > 16_000:
+                    break
+                context_lines.insert(0, line)
+                context_bytes += encoded_length
+            source_sha256 = str(source.get("source_sha256") or "")
+            source_conversation_id = _public_text(source.get("source_conversation_id"))
+            continuation_body = "\n".join(
+                [
+                    "PEERBRIDGE_HISTORY_CONTINUATION_V1",
+                    f"Provider: {source.get('provider') or '--'}",
+                    f"Source conversation: {source_conversation_id}",
+                    f"Source SHA-256: {source_sha256}",
+                    "",
+                    *context_lines,
+                ]
+            )
+            client.create_room(room_id=room_id, name=name)
+            message = client.send_message(
+                room_id=room_id,
+                recipient="*",
+                task_id=f"history-continuation-{hashlib.sha256(source_room_id.encode('utf-8')).hexdigest()[:20]}",
+                subject="History continuation",
+                body=continuation_body,
+                priority="normal",
+            )
+            result = {
+                "status": "created",
+                "room_id": room_id,
+                "source_room_id": source_room_id,
+                "source_sha256": source_sha256,
+                "context_message_id": message.get("message_id"),
+                "context_sha256": message.get("content_sha256"),
+            }
         elif path == "/api/room/member":
             allowed = {
                 "request_id",
@@ -2273,6 +2689,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 agent_id
             ):
                 raise WorkbenchError("invalid room member")
+            if room_id.startswith("history."):
+                raise WorkbenchError("imported history rooms are read-only")
             if route_profile_id and not SAFE_IDENTIFIER.fullmatch(route_profile_id):
                 raise WorkbenchError("invalid route profile ID")
             if role_id not in ROOM_ROLE_IDS:
@@ -2409,6 +2827,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 "set_workflow_schedule_enabled",
                 {"schedule_id": schedule_id, "enabled": enabled},
             )
+        elif path == "/api/audit/verify":
+            if set(payload) != {"request_id"}:
+                raise WorkbenchError("unsupported audit verification fields")
+            result = client.call_tool("verify_audit_chain", {})
         elif path == "/api/capability/register":
             allowed = {
                 "request_id",
@@ -3003,6 +3425,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             stagnation = _safe_int(payload.get("stagnation_rounds"))
             if not SAFE_IDENTIFIER.fullmatch(room_id):
                 raise WorkbenchError("invalid room ID")
+            if room_id.startswith("history."):
+                raise WorkbenchError("imported history rooms are read-only")
             if mode not in {"off", "once", "discussion"}:
                 raise WorkbenchError("invalid automation mode")
             if not 1 <= max_rounds <= 20:
@@ -3036,6 +3460,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 agent_id
             ):
                 raise WorkbenchError("invalid room member")
+            if room_id.startswith("history."):
+                raise WorkbenchError("imported history rooms are read-only")
             if role_id not in ROOM_ROLE_IDS:
                 raise WorkbenchError("invalid role")
             if role_id == "custom" and not role_label:
@@ -3259,12 +3685,96 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         self.server.remember_result(request_id, payload_sha256, response)
         self._json(HTTPStatus.OK, response)
 
+    def _handle_announcements_read(self, payload: dict[str, Any]) -> None:
+        if set(payload) != {"locale", "request_id"}:
+            raise WorkbenchError("unsupported announcement read fields")
+        request_id = self._request_id(payload)
+        locale = str(payload.get("locale") or "")
+        if locale not in ANNOUNCEMENT_LOCALES:
+            raise WorkbenchError("invalid announcement locale")
+        payload_sha256 = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        prior = self.server.prior_result(request_id, payload_sha256)
+        if prior is not None:
+            self._json(HTTPStatus.OK, prior)
+            return
+        if not self.server.allow_write():
+            self._json(HTTPStatus.TOO_MANY_REQUESTS, {"error": "write rate limit exceeded"})
+            return
+        try:
+            preferences = load_announcement_preferences(self.server.config.project_root)
+        except AnnouncementError:
+            preferences = fail_closed_announcement_preferences()
+        rows = load_announcement_cache(self.server.config.project_root)
+        read_ids = set(preferences["read_ids"])
+        read_ids.update(
+            announcement_read_key(item) for item in rows if item.locale == locale
+        )
+        save_announcement_preferences(
+            self.server.config.project_root,
+            network_enabled=bool(preferences["network_enabled"]),
+            popup_enabled=bool(preferences["popup_enabled"]),
+            read_ids=read_ids,
+            cursors=preferences["cursors"],
+        )
+        response = {"status": "read", "locale": locale, "read_count": len(read_ids)}
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
+
+    def _handle_appearance_save(self, payload: dict[str, Any]) -> None:
+        if set(payload) != {"request_id", "surface"}:
+            raise WorkbenchError("unsupported appearance fields")
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
+        surface = str(payload.get("surface") or "")
+        if surface not in {"pixel", "modern"}:
+            raise WorkbenchError("unsupported desktop surface")
+        if not self.server.allow_write():
+            self._json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": "write rate limit exceeded"},
+            )
+            return
+        try:
+            preferences = load_preferences(self.server.config.project_root)
+            saved = save_preferences(
+                self.server.config.project_root,
+                locale=str(preferences["locale"]),
+                tutorial_completed=bool(preferences["tutorial_completed"]),
+                theme=surface,
+            )
+        except LocalizationError as exc:
+            raise WorkbenchError("appearance preference could not be saved") from exc
+        response = {
+            "status": "saved",
+            "selected": str(saved["theme"]),
+            "restart_required": True,
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
+
     @staticmethod
     def _request_id(payload: dict[str, Any]) -> str:
         request_id = str(payload.get("request_id") or "")
         if not SAFE_REQUEST_ID.fullmatch(request_id):
             raise WorkbenchError("invalid request ID")
         return request_id
+
+    def _begin_replayable_action(
+        self, payload: dict[str, Any]
+    ) -> tuple[str, str] | None:
+        request_id = self._request_id(payload)
+        payload_sha256 = hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        prior = self.server.prior_result(request_id, payload_sha256)
+        if prior is not None:
+            self._json(HTTPStatus.OK, prior)
+            return None
+        return request_id, payload_sha256
 
     def _provider_connection(self, connection_id: str) -> dict[str, Any]:
         if not SAFE_IDENTIFIER.fullmatch(connection_id):
@@ -3292,7 +3802,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         }
         if set(payload) != allowed:
             raise WorkbenchError("unsupported provider fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         if not self.server.allow_write():
             self._json(
                 HTTPStatus.TOO_MANY_REQUESTS,
@@ -3346,26 +3859,28 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 "enabled": True,
             },
         )
-        self._json(
-            HTTPStatus.CREATED,
-            {
-                "status": "saved",
-                "connection": {
-                    "connection_id": connection["connection_id"],
-                    "display_name": connection["display_name"],
-                    "route_class": connection["route_class"],
-                    "provider_id": connection["provider_id"],
-                    "endpoint_sha256": connection["endpoint_sha256"],
-                    "connection_sha256": connection["connection_sha256"],
-                    "secret_present": route_class != "local",
-                },
+        response = {
+            "status": "saved",
+            "connection": {
+                "connection_id": connection["connection_id"],
+                "display_name": connection["display_name"],
+                "route_class": connection["route_class"],
+                "provider_id": connection["provider_id"],
+                "endpoint_sha256": connection["endpoint_sha256"],
+                "connection_sha256": connection["connection_sha256"],
+                "secret_present": route_class != "local",
             },
-        )
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.CREATED, response)
 
     def _handle_provider_discover(self, payload: dict[str, Any]) -> None:
         if set(payload) - {"connection_id", "request_id", "timeout_seconds"}:
             raise WorkbenchError("unsupported provider discovery fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         connection_id = str(payload.get("connection_id") or "").strip()
         connection = self._provider_connection(connection_id)
         try:
@@ -3378,18 +3893,19 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             )
         except RunnerError as exc:
             raise WorkbenchError("provider model discovery failed") from exc
-        self._json(
-            HTTPStatus.OK,
-            {
-                "status": "discovered",
-                "connection_id": connection_id,
-                "models": list(registry.models),
-                "model_count": len(registry.models),
-                "registry_sha256": registry.registry_sha256,
-                "endpoint_sha256": registry.endpoint_sha256,
-                "credential_version_sha256": registry.credential_version_sha256,
-            },
-        )
+        models, models_truncated = _bounded_model_ids(registry.models)
+        response = {
+            "status": "discovered",
+            "connection_id": connection_id,
+            "models": list(models),
+            "model_count": len(models),
+            "models_truncated": models_truncated,
+            "registry_sha256": registry.registry_sha256,
+            "endpoint_sha256": registry.endpoint_sha256,
+            "credential_version_sha256": registry.credential_version_sha256,
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
 
     def _handle_provider_route(self, payload: dict[str, Any]) -> None:
         allowed = {
@@ -3403,7 +3919,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         }
         if set(payload) - allowed:
             raise WorkbenchError("unsupported provider route fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         if not self.server.allow_write():
             self._json(
                 HTTPStatus.TOO_MANY_REQUESTS,
@@ -3454,44 +3973,58 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         if timeout not in {None, ""}:
             route["inference_timeout_seconds"] = int(timeout)
         result = self._human_client().call_tool("upsert_route_profile", route)
-        self._json(HTTPStatus.CREATED, {"status": "created", "route": result})
+        response = {"status": "created", "route": result}
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.CREATED, response)
 
     def _handle_ccswitch_providers(self, payload: dict[str, Any]) -> None:
         if set(payload) != {"app", "request_id"}:
             raise WorkbenchError("unsupported CC Switch provider fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         app = str(payload.get("app") or "").strip().lower()
         if app not in CCSWITCH_SUPPORTED_APPS:
             raise WorkbenchError("unsupported CC Switch application")
         providers = ccswitch_list_providers(app)
-        self._json(
-            HTTPStatus.OK,
-            {
-                "status": "discovered",
-                "app": app,
-                "providers": [
-                    {
-                        "provider_id": row.provider_id,
-                        "name": row.name,
-                        "current": row.current,
-                        "has_endpoint": row.has_endpoint,
-                    }
-                    for row in providers
-                ],
-            },
-        )
+        response = {
+            "status": "discovered",
+            "app": app,
+            "providers": [
+                {
+                    "provider_id": row.provider_id,
+                    "name": row.name,
+                    "current": row.current,
+                    "has_endpoint": row.has_endpoint,
+                }
+                for row in providers
+            ],
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
 
     def _handle_ccswitch_models(self, payload: dict[str, Any]) -> None:
         if set(payload) != {"app", "provider_id", "request_id"}:
             raise WorkbenchError("unsupported CC Switch model fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         app = str(payload.get("app") or "").strip().lower()
         provider_id = str(payload.get("provider_id") or "")
-        models = ccswitch_fetch_models(app, provider_id)
-        self._json(
-            HTTPStatus.OK,
-            {"status": "discovered", "app": app, "models": list(models)},
+        models, models_truncated = _bounded_model_ids(
+            ccswitch_fetch_models(app, provider_id)
         )
+        response = {
+            "status": "discovered",
+            "app": app,
+            "models": list(models),
+            "model_count": len(models),
+            "models_truncated": models_truncated,
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
 
     def _handle_ccswitch_route(self, payload: dict[str, Any]) -> None:
         allowed = {
@@ -3504,7 +4037,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         }
         if set(payload) - allowed:
             raise WorkbenchError("unsupported CC Switch route fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         if not self.server.allow_write():
             self._json(
                 HTTPStatus.TOO_MANY_REQUESTS,
@@ -3543,20 +4079,22 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         client = self._human_client()
         saved_connection = client.call_tool("upsert_provider_connection", connection)
         saved_route = client.call_tool("upsert_route_profile", routes[0])
-        self._json(
-            HTTPStatus.CREATED,
-            {
-                "status": "created",
-                "identity_sha256": identity.identity_sha256,
-                "connection": saved_connection,
-                "route": saved_route,
-            },
-        )
+        response = {
+            "status": "created",
+            "identity_sha256": identity.identity_sha256,
+            "connection": saved_connection,
+            "route": saved_route,
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.CREATED, response)
 
     def _handle_ccswitch_switch(self, payload: dict[str, Any]) -> None:
         if set(payload) != {"app", "confirmed", "provider_id", "request_id"}:
             raise WorkbenchError("unsupported CC Switch switch fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         if payload.get("confirmed") is not True:
             raise WorkbenchError("CC Switch provider change requires confirmation")
         if not self.server.allow_write():
@@ -3568,12 +4106,17 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         app = str(payload.get("app") or "").strip().lower()
         provider_id = str(payload.get("provider_id") or "")
         ccswitch_switch_provider(app, provider_id)
-        self._json(HTTPStatus.OK, {"status": "switched", "app": app})
+        response = {"status": "switched", "app": app}
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
 
     def _handle_agent_install(self, payload: dict[str, Any]) -> None:
         if set(payload) != {"agent_id", "confirmed", "request_id", "update"}:
             raise WorkbenchError("unsupported Agent install fields")
-        self._request_id(payload)
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
         if payload.get("confirmed") is not True:
             raise WorkbenchError("Agent installation requires confirmation")
         if not self.server.allow_write():
@@ -3587,16 +4130,15 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         if not spec.automatic_install_supported:
             raise WorkbenchError("this Agent requires its publisher installation guide")
         process = launch_agent_installer(agent_id, update=bool(payload.get("update")))
-        self._json(
-            HTTPStatus.ACCEPTED,
-            {
-                "status": "launched",
-                "agent_id": agent_id,
-                "display_name": spec.display_name,
-                "publisher": spec.publisher,
-                "pid": process.pid,
-            },
-        )
+        response = {
+            "status": "launched",
+            "agent_id": agent_id,
+            "display_name": spec.display_name,
+            "publisher": spec.publisher,
+            "pid": process.pid,
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.ACCEPTED, response)
 
     def _handle_agent_catalog_refresh(self, payload: dict[str, Any]) -> None:
         if set(payload) != {"request_id"}:
@@ -4006,7 +4548,16 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "/api/session/start",
             "/api/session/action",
             "/api/agents/refresh",
+            "/api/agent/install",
+            "/api/provider/save",
+            "/api/provider/discover",
+            "/api/provider/route",
+            "/api/ccswitch/providers",
+            "/api/ccswitch/models",
+            "/api/ccswitch/route",
+            "/api/ccswitch/switch",
             "/api/history/file/discover",
+            "/api/history/continue",
             "/api/history/import",
             "/api/history/codex/discover",
             "/api/history/codex/import",
@@ -4014,6 +4565,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "/api/history/native/import",
             "/api/feedback",
             "/api/announcements/refresh",
+            "/api/announcements/read",
+            "/api/appearance/save",
+            "/api/audit/verify",
         }:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
@@ -4030,8 +4584,28 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if path == "/api/announcements/refresh":
                 self._handle_announcement_refresh(payload)
                 return
+            if path == "/api/announcements/read":
+                self._handle_announcements_read(payload)
+                return
+            if path == "/api/appearance/save":
+                self._handle_appearance_save(payload)
+                return
             if path == "/api/agents/refresh":
                 self._handle_agent_catalog_refresh(payload)
+                return
+            direct_handlers = {
+                "/api/agent/install": self._handle_agent_install,
+                "/api/provider/save": self._handle_provider_save,
+                "/api/provider/discover": self._handle_provider_discover,
+                "/api/provider/route": self._handle_provider_route,
+                "/api/ccswitch/providers": self._handle_ccswitch_providers,
+                "/api/ccswitch/models": self._handle_ccswitch_models,
+                "/api/ccswitch/route": self._handle_ccswitch_route,
+                "/api/ccswitch/switch": self._handle_ccswitch_switch,
+            }
+            direct_handler = direct_handlers.get(path)
+            if direct_handler is not None:
+                direct_handler(payload)
                 return
             if path == "/api/history/file/discover":
                 self._handle_history_file_discover(payload)
@@ -4184,8 +4758,11 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             self.server.remember_result(request_id, payload_sha256, response)
             self._json(HTTPStatus.CREATED, response)
         except (
+            AgentInstallError,
             AnnouncementError,
             AttachmentError,
+            CcSwitchError,
+            CredentialStoreError,
             FeedbackError,
             GovernanceError,
             ManagedAgentError,

@@ -51,15 +51,22 @@ peerbridge monitor --project-root . --scope demo
 房间、为每个 Seat 选择 provider／model／reasoning，然后由人类或 Agent 发布房间
 根消息。
 
-顶部“外观”可以选择“像素控制室”或“现代简约”。选择会保存在本机，重新启动
-控制室后应用；它不会下载或加载第三方主题代码。
+全新工作区第一次启动会先显示两张本地预览：**Pixel Control Room** 和
+**Modern Workbench**。选择会保存在本地，重启后应用；Modern 左下的“外观”
+按钮或 Pixel 顶部的外观菜单都可以重新选择。它不会下载或加载第三方主题代码。
 
 在 **01 多智能体控制台** 查看当前房间智能体及已授权的桌面或外部终端工作，无需先
-选择文件夹。只有启动新的受管 CLI 才要选择已安装的 Codex 或 Claude Code 和工作文件夹；
-工作内容通过 stdin 发送且不由控制台保存。所有角色都在 **02 对话** 的房间座位设置，
+选择文件夹。启动新的受管 CLI 时可选择已安装的 Codex、Claude Code、Grok 或 Kimi 和
+工作文件夹；终端墙会并列显示每个工作阶段的已清理输出、后续输入、附件和生命周期控制。
+工作内容通过受控输入通道发送。所有角色都在 **02 对话** 的房间座位设置，
 默认是平等参与者。你可以用网格、聚焦或时间线查看各自的终端、活动、答案和证据。
 PeerBridge 只显示实际捕捉或经 adapter 明确授权的输出，不会声称看到隐藏思考，也
 不能补回在其他外部终端中发生的历史。
+
+控制台顶部的实时状态栏会直接显示每个 Agent 的模型／路线、权限层级和在线状态；
+红色表示离线、绿色表示在线待命、琥珀色表示正在执行、蓝色表示等待。活动文字只来自
+可观察的本地事件，例如读取、编辑、执行命令或搜索网络，不会显示或猜测私密思维链。
+在 **变更** 页面可查看当前 Git 工作树逐文件的新增／删除行数及经过秘密遮蔽的代码 diff。
 
 要完成首次多智能体流程，先在 **02 对话** 准备至少两个已有模型路线的房间座位，再点击
 “启动只读调查与比较”。它会沿用同一房间、角色和路线，最多执行两轮；不会重开另一组
@@ -92,19 +99,25 @@ Claude Code、Kimi Code CLI 和其他 MCP 客户端的配置示例见
 
 ## 4. Provider 和 API Key
 
-直接 OpenAI-compatible endpoint 不需要 CC Switch。在 **Safe connections** 中填写
-API base URL 和 Key；秘密只存入 Windows Credential Manager，不会进入 SQLite、
+直接 OpenAI-compatible endpoint 不需要 CC Switch。在 **接入** 中填写 API base URL
+和 Key、实时读取供应商模型并创建 Agent 路由；秘密只存入 Windows Credential Manager，不会进入 SQLite、
 MCP 消息、普通 Feedback、分析数据或 Git 历史。
+
+同一页面可通过 CC Switch 公共 CLI 读取已保存的供应商和模型。切换当前供应商必须另行
+确认；PeerBridge 不会在官方配额耗尽时自动切换到中转站。
 
 `official`、`relay`、`local` 是证据类别。中转站显示的模型名称不等于官方身份。
 PeerBridge 会分别保存请求模型、预期响应模型和实际响应模型，身份不匹配就停止。
 
 ## 5. 附件、记忆和隐私
 
-- 可明确选择 PNG/JPEG/GIF/WebP 或 UTF-8 文本类文件；最多 5 个、每个 8 MiB、
+- 可明确选择或直接粘贴 PNG/JPEG/GIF/WebP 图片，也可选择 UTF-8 文本类文件；最多 5 个、每个 8 MiB、
   合计 16 MiB。
-- Alpha 只传递可审计附件引用，不保证模型可以理解图片。
+- 支持原生图片输入的 runtime 会收到多模态内容；一次性视觉验证只有在模型读出隐藏
+  测试内容后才标记成功。不支持或未登录的 runtime 会明确失败。
 - 房间之间不会自动复制上下文；跨房间内容必须使用明确、可审计的摘要。
+- 导入的 Agent 历史房保持只读；点击“从此历史继续”会创建普通可写房间，并绑定来源
+  conversation ID、SHA-256 和有限上下文。新房间仍可修改 Seat、角色、路由和自动模式。
 - 不要把 API Key、私人数据库、逐字稿、`.peerbridge/` 或
   `.peerbridge-artifacts/` 放入公开 GitHub issue。
 

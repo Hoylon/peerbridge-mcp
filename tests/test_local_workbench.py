@@ -3,9 +3,11 @@ from __future__ import annotations
 import base64
 import http.client
 import json
+import os
 import re
 import socket
 import sqlite3
+import subprocess
 import sys
 import threading
 import urllib.parse
@@ -27,7 +29,7 @@ from peerbridge_mcp.local_workbench import (
     run_native_workbench,
     workbench_url,
 )
-from peerbridge_mcp.monitor import McpHumanClient
+from peerbridge_mcp.monitor import MCP_HUMAN_CLIENT_TOOLS, McpHumanClient
 
 
 TOKEN = "test-admin-token-not-for-production"
@@ -165,6 +167,49 @@ def message_payload(body: str = "Please review the Alpha 5.2 workbench.") -> dic
     }
 
 
+def test_workbench_routes_provider_ccswitch_and_agent_install_endpoints(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "project"
+    root.mkdir()
+    db = root / ".peerbridge" / "peerbridge.sqlite3"
+    seed(root, db)
+    calls: list[tuple[str, dict[str, object]]] = []
+    endpoints = {
+        "/api/agent/install": "_handle_agent_install",
+        "/api/provider/save": "_handle_provider_save",
+        "/api/provider/discover": "_handle_provider_discover",
+        "/api/provider/route": "_handle_provider_route",
+        "/api/ccswitch/providers": "_handle_ccswitch_providers",
+        "/api/ccswitch/models": "_handle_ccswitch_models",
+        "/api/ccswitch/route": "_handle_ccswitch_route",
+        "/api/ccswitch/switch": "_handle_ccswitch_switch",
+    }
+
+    for expected_path, method_name in endpoints.items():
+        def handler(self: object, payload: dict[str, object], *, path: str = expected_path) -> None:
+            calls.append((path, payload))
+            self._json(200, {"status": "ok", "path": path})
+
+        monkeypatch.setattr(workbench_module.WorkbenchHandler, method_name, handler)
+
+    monkeypatch.setattr(workbench_module, "managed_agent_catalog", lambda *_a, **_k: [])
+    with running_server(root, db) as (port, _server):
+        for index, expected_path in enumerate(endpoints):
+            status, _, body = request(
+                port,
+                "POST",
+                expected_path,
+                headers=auth_headers(port),
+                payload={"request_id": f"integrationroute{index:02d}0123456789abcdef"},
+            )
+            assert status == 200
+            assert json.loads(body)["path"] == expected_path
+
+    assert [path for path, _payload in calls] == list(endpoints)
+
+
 def test_history_import_creates_a_source_bound_read_only_virtual_room(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -254,6 +299,80 @@ def test_history_import_creates_a_source_bound_read_only_virtual_room(
         assert status == 200
         snapshot = json.loads(body)
 
+        for path, mutation in (
+            (
+                "/api/room/member",
+                {"action": "join", "agent_id": "grok-relay", "route_profile_id": "", "role_id": "equal-participant", "role_label": ""},
+            ),
+            (
+                "/api/room/member-role",
+                {"agent_id": "codex-history", "role_id": "reviewer", "role_label": ""},
+            ),
+            (
+                "/api/room/automation",
+                {"mode": "once", "max_rounds": 2, "max_messages": 8, "stagnation_rounds": 1},
+            ),
+        ):
+            status, _, mutation_body = request(
+                port,
+                "POST",
+                path,
+                headers=auth_headers(port),
+                payload={
+                    "request_id": f"historyreadonly{len(path):02d}0123456789abcdef",
+                    "room_id": room_id,
+                    **mutation,
+                },
+            )
+            assert status == 400
+            assert "read-only" in json.loads(mutation_body)["error"]
+
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/history/continue",
+            headers=auth_headers(port),
+            payload={
+                "request_id": "historycontinue0123456789abcdef",
+                "source_room_id": room_id,
+                "room_id": "continued-history-room",
+                "name": "Continued history room",
+            },
+        )
+        assert status == 200
+        continuation = json.loads(body)["result"]
+        assert continuation["source_sha256"]
+
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/bootstrap?room_id=continued-history-room",
+            headers=auth_headers(port),
+        )
+        assert status == 200
+        continuation_snapshot = json.loads(body)
+        assert continuation_snapshot["operator_active"] is True
+        assert continuation_snapshot["history_import"]["selected"] is None
+        assert "PEERBRIDGE_HISTORY_CONTINUATION_V1" in continuation_snapshot["messages"][0]["body"]
+        assert continuation["source_sha256"] in continuation_snapshot["messages"][0]["body"]
+
+        status, _, _ = request(
+            port,
+            "POST",
+            "/api/room/member",
+            headers=auth_headers(port),
+            payload={
+                "request_id": "continuedroomseat0123456789abcdef",
+                "action": "join",
+                "room_id": "continued-history-room",
+                "agent_id": "grok-relay",
+                "route_profile_id": "grok-high",
+                "role_id": "reviewer",
+                "role_label": "",
+            },
+        )
+        assert status == 200
+
     assert snapshot["room_id"] == room_id
     assert snapshot["operator_active"] is False
     assert snapshot["history_import"]["selected"]["read_only"] is True
@@ -262,7 +381,9 @@ def test_history_import_creates_a_source_bound_read_only_virtual_room(
         "human-operator",
         "codex-history",
     ]
-    assert any(row["room_id"] == room_id for row in snapshot["rooms"])
+    imported_room = next(row for row in snapshot["rooms"] if row["room_id"] == room_id)
+    assert imported_room["room_kind"] == "imported-history"
+    assert imported_room["provider"] == "codex"
 
 
 def test_native_history_routes_keep_provider_identity_and_selected_session(
@@ -633,11 +754,16 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'id="history-dialog"' in body
         assert b'id="import-history"' in body
         assert b'id="identity-authorize-form"' in body
-        assert b'/assets/app.css?v=alpha52-20260824-6' in body
-        assert b'/assets/app.js?v=alpha52-20260824-6' in body
+        assert b'/assets/app.css?v=alpha52-20260825-12' in body
+        assert b'/assets/app.js?v=alpha52-20260825-12' in body
         assert b'id="chat-focus-button"' in body
         assert b'id="room-search-button"' in body
         assert b'id="announcement-button"' in body
+        assert b'id="agent-runtime-strip"' in body
+        assert b'id="worktree-diff-view"' in body
+        assert b'id="worktree-diff-refresh"' in body
+        assert b'id="appearance-button"' in body
+        assert b'id="appearance-dialog"' in body
         assert body.index(b'id="room-search-button"') < body.index(b'id="room-list"')
         assert b'/assets/peerbridge-icon.png' in body
         assert TOKEN.encode() not in body
@@ -667,6 +793,15 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b"localizedErrorMessage" in body
         assert b"AbortController" in body
         assert b"fetchWithTimeout" in body
+        assert b"clipboardImageFiles" in body
+        assert b'byId("message-body").addEventListener("paste"' in body
+        assert b'byId("managed-input").addEventListener("paste"' in body
+        assert b'input.addEventListener("paste"' in body
+        assert b'/api/ccswitch/providers' in body
+        assert b'/api/provider/save' in body
+        assert b'/api/agent/install' in body
+        assert b'/api/worktree/diff' in body
+        assert b'/api/appearance/save' in body
         assert "本機請求逾時".encode() in body
         assert "本地请求超时".encode() in body
         assert "MCP 訊息通道目前無法使用".encode() in body
@@ -683,6 +818,19 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'authorization_confirmed: writeCapable' in body
         assert b'full_access_session_confirm' in body
         assert TOKEN.encode() not in body
+
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/worktree/diff",
+            headers=auth_headers(port),
+        )
+        assert status == 200
+        diff_payload = json.loads(body)
+        assert isinstance(diff_payload["available"], bool)
+        assert "files" in diff_payload
+        assert TOKEN not in body.decode("utf-8")
+        assert str(tmp_path) not in body.decode("utf-8")
 
         status, headers, body = request(port, "GET", "/assets/peerbridge-icon.png")
         assert status == 200
@@ -730,7 +878,163 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     assert javascript.count("capability_multimodal_input:") == 3
     assert javascript.count("session_action_completed:") == 3
     assert 'byId("managed-session-status").textContent = `${t("session_action_completed")}' in javascript
-    assert 'document.querySelector(".workspace")?.scrollTo({ top: 0' in javascript
+    assert 'document.querySelector(".content-view.active-view")?.scrollTo({ top: 0' in javascript
+    assert 'id="locale-select"' in html
+    assert '<span>文 / EN</span>' in html
+    assert 'id="ccswitch-form"' in html
+    assert 'id="provider-connection-form"' in html
+    assert 'id="provider-route-form"' in html
+    assert 'id="agent-runtime-strip"' in html
+    assert 'id="worktree-diff-view"' in html
+    assert 'function agentRuntime(agentId)' in javascript
+    assert 'function renderAgentRuntimeStrip()' in javascript
+    assert 'function fetchWorktreeDiff(force = false)' in javascript
+    assert 'const MAX_DIFF_RENDER_LINES = 4000' in javascript
+    assert 'const MAX_MODEL_OPTIONS = 500' in javascript
+    assert 'patchLines.slice(0, MAX_DIFF_RENDER_LINES)' in javascript
+    assert 'permissionEvidence ? permissionTierLabel(permissionEvidence) : t("unknown")' in javascript
+    assert 'recentObservable(latestObservableEvent, ["created_utc"], 180000)' in javascript
+    assert workbench_module.PRIMARY_OFFICIAL_AGENT_IDS == frozenset(
+        {"codex", "claude-code", "grok", "kimi-code"}
+    )
+    assert 'state.cockpitMode === "timeline"' in javascript
+    assert 'all_session_timeline' in javascript
+    assert 'const body = typedBody || (state.attachments.length ? t("attachment_only_message")' in javascript
+    assert 'byId("provider-api-key").value = ""' in javascript
+
+
+def test_worktree_diff_reports_real_additions_and_deletions(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "peerbridge-test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "PeerBridge Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    source = tmp_path / "sample.py"
+    excluded = tmp_path / ".env"
+    source.write_text("alpha\nbeta\n", encoding="utf-8")
+    excluded.write_text("PLACEHOLDER=before\n", encoding="utf-8")
+    subprocess.run(["git", "add", "sample.py", ".env"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    source.write_text("alpha\ngamma\n", encoding="utf-8")
+    excluded.write_text("PLACEHOLDER=after\n", encoding="utf-8")
+
+    observed = workbench_module._worktree_diff(tmp_path)
+
+    assert observed["available"] is True
+    assert observed["dirty"] is True
+    assert observed["file_count"] == 1
+    assert observed["additions"] == 1
+    assert observed["deletions"] == 1
+    assert observed["files"][0]["path"] == "sample.py"
+    assert "+gamma" in observed["patch"]
+    assert "-beta" in observed["patch"]
+    assert ".env" not in observed["patch"]
+
+
+def test_worktree_diff_resolves_git_outside_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    trusted = workbench_module._resolve_git_executable(tmp_path)
+    assert trusted is not None
+    fake = tmp_path / ("git.exe" if sys.platform == "win32" else "git")
+    fake.write_bytes(b"not executable")
+    if sys.platform != "win32":
+        fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{tmp_path}{os.pathsep}{trusted.parent}")
+
+    resolved = workbench_module._resolve_git_executable(tmp_path)
+
+    assert resolved == trusted
+    assert resolved != fake
+
+
+def test_worktree_diff_bounds_git_output_before_rendering(tmp_path: Path) -> None:
+    subprocess.run(["git", "init"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(
+        ["git", "config", "user.email", "peerbridge-test@example.invalid"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "PeerBridge Test"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    source = tmp_path / "many-lines.txt"
+    source.write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", source.name], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "base"], cwd=tmp_path, check=True, capture_output=True)
+    source.write_text("x\n" * 300_000, encoding="utf-8")
+
+    observed = workbench_module._worktree_diff(tmp_path)
+
+    assert observed["available"] is True
+    assert observed["patch_truncated"] is True
+    assert len(observed["patch"].encode("utf-8")) <= workbench_module.MAX_WORKTREE_DIFF_BYTES
+    assert observed["patch_sha256"] == ""
+    assert len(observed["bounded_patch_sha256"]) == 64
+
+
+def test_provider_model_options_are_bounded_and_deduplicated() -> None:
+    models, truncated = workbench_module._bounded_model_ids(
+        ["model-0", *[f"model-{index}" for index in range(501)], "model-1"]
+    )
+
+    assert len(models) == workbench_module.MAX_PROVIDER_MODEL_OPTIONS
+    assert len(set(models)) == len(models)
+    assert truncated is True
+
+
+def test_workbench_command_controls_and_frontend_routes_are_not_orphaned() -> None:
+    root = Path(__file__).resolve().parents[1]
+    html = (root / "src" / "peerbridge_mcp" / "workbench" / "index.html").read_text(
+        encoding="utf-8"
+    )
+    javascript = (
+        root / "src" / "peerbridge_mcp" / "workbench" / "app.js"
+    ).read_text(encoding="utf-8")
+    server = (root / "src" / "peerbridge_mcp" / "local_workbench.py").read_text(
+        encoding="utf-8"
+    )
+
+    form_ids = set(re.findall(r'<form[^>]+id="([^"]+)"', html))
+    button_ids = set(re.findall(r'<button[^>]+id="([^"]+)"', html))
+    for element_id in form_ids - {"proof-form"}:
+        assert f'byId("{element_id}")' in javascript, element_id
+    for element_id in button_ids - {"ccswitch-save-route"}:
+        assert element_id in javascript, element_id
+
+    frontend_routes = set(re.findall(r"/api/[a-z0-9_./-]+", javascript))
+    frontend_routes.remove("/api/execution/")
+    frontend_routes.update({"/api/execution/seal", "/api/execution/verify"})
+    server_routes = set(re.findall(r"/api/[a-z0-9_./-]+", server))
+    assert frontend_routes <= server_routes
+    assert {
+        "create_execution_worktree",
+        "decide_permission",
+        "export_proof_bundle",
+        "grant_capability",
+        "list_provider_connections",
+        "register_capability",
+        "save_workflow_schedule",
+        "seal_execution",
+        "set_workflow_schedule_enabled",
+        "upsert_provider_connection",
+        "upsert_route_profile",
+        "verify_audit_chain",
+        "verify_execution_source",
+        "verify_proof_bundle",
+    } <= set(MCP_HUMAN_CLIENT_TOOLS)
 
 
 def test_history_discovery_never_preselects_conversations() -> None:
@@ -1062,6 +1366,47 @@ def test_message_send_checks_origin_and_is_idempotent(
         assert len(calls) == 1
 
 
+def test_workbench_saves_built_in_desktop_appearance(tmp_path: Path) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    payload = {
+        "request_id": "appearance0123456789abcdef012345",
+        "surface": "pixel",
+    }
+    with running_server(tmp_path, db) as (port, _server):
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/appearance/save",
+            headers=auth_headers(port),
+            payload=payload,
+        )
+        assert status == 200
+        response = json.loads(body)
+        assert response["selected"] == "pixel"
+        assert response["restart_required"] is True
+        assert workbench_module.load_preferences(tmp_path)["theme"] == "pixel"
+
+        replay_status, _, replay_body = request(
+            port,
+            "POST",
+            "/api/appearance/save",
+            headers=auth_headers(port),
+            payload=payload,
+        )
+        assert replay_status == 200
+        assert json.loads(replay_body) == response
+
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/bootstrap?room_id=alpha",
+            headers=auth_headers(port),
+        )
+        assert status == 200
+        assert json.loads(body)["appearance"]["selected"] == "pixel"
+
+
 def test_health_exposes_identity_hash_not_access_token(tmp_path: Path) -> None:
     db = tmp_path / "bridge.sqlite3"
     seed(tmp_path, db)
@@ -1225,11 +1570,11 @@ def test_announcement_refresh_updates_redacted_bootstrap_state(
         return tuple(cached)
 
     monkeypatch.setattr(workbench_module, "save_announcement_cache", fake_save_cache)
-    monkeypatch.setattr(
-        workbench_module,
-        "save_announcement_preferences",
-        lambda _root, **_kwargs: preferences,
-    )
+    def fake_save_preferences(_root: Path, **kwargs: object) -> dict[str, object]:
+        preferences.update(kwargs)
+        return preferences
+
+    monkeypatch.setattr(workbench_module, "save_announcement_preferences", fake_save_preferences)
 
     with running_server(tmp_path, db) as (port, _server):
         status, _, body = request(
@@ -1257,6 +1602,58 @@ def test_announcement_refresh_updates_redacted_bootstrap_state(
         assert rows[0]["announcement_id"] == "alpha-52"
         assert rows[0]["title"] == "Alpha 5.2 已推出"
         assert "news.example/v1/announcements" not in body.decode("utf-8")
+
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/announcements/read",
+            headers=auth_headers(port),
+            payload={
+                "request_id": "announcementread0123456789abcdef",
+                "locale": "zh-Hant",
+            },
+        )
+        assert status == 200
+        assert json.loads(body)["status"] == "read"
+        assert preferences["read_ids"]
+
+
+def test_agent_install_request_replay_launches_one_installer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    launches: list[tuple[str, bool]] = []
+    monkeypatch.setattr(workbench_module, "managed_agent_catalog", lambda *_a, **_k: [])
+    monkeypatch.setattr(
+        workbench_module,
+        "installable_agent_spec",
+        lambda agent_id: SimpleNamespace(
+            automatic_install_supported=True,
+            display_name="ACPX",
+            publisher="Agent Client Protocol",
+        ),
+    )
+    monkeypatch.setattr(
+        workbench_module,
+        "launch_agent_installer",
+        lambda agent_id, update=False: launches.append((agent_id, update)) or SimpleNamespace(pid=4242),
+    )
+    payload = {
+        "request_id": "agentinstallreplay0123456789abcdef",
+        "agent_id": "acpx-runtime",
+        "confirmed": True,
+        "update": False,
+    }
+
+    with running_server(tmp_path, db) as (port, _server):
+        first = request(port, "POST", "/api/agent/install", headers=auth_headers(port), payload=payload)
+        second = request(port, "POST", "/api/agent/install", headers=auth_headers(port), payload=payload)
+
+    assert first[0] == 202
+    assert second[0] == 200
+    assert json.loads(first[2]) == json.loads(second[2])
+    assert launches == [("acpx-runtime", False)]
 
 
 def test_room_controls_call_only_the_explicit_human_client_methods(

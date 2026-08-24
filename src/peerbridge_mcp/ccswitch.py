@@ -130,7 +130,18 @@ def _run(args: list[str], *, timeout: int = 20) -> str:
     except OSError:
         raise CcSwitchError("CC Switch CLI could not be started") from None
     if completed.returncode:
-        raise CcSwitchError(f"CC Switch CLI failed ({completed.returncode})")
+        diagnostic = f"{completed.stderr}\n{completed.stdout}".casefold()
+        if "missing api key" in diagnostic or "api_key" in diagnostic and "missing" in diagnostic:
+            message = "CC Switch provider has no saved API key"
+        elif "base_url" in diagnostic and ("missing" in diagnostic or "缺少" in diagnostic):
+            message = "CC Switch provider has no model-discovery endpoint"
+        elif any(marker in diagnostic for marker in ("401", "unauthorized", "invalid api key")):
+            message = "CC Switch provider credential was rejected"
+        elif any(marker in diagnostic for marker in ("429", "rate limit", "quota")):
+            message = "CC Switch provider quota or rate limit was reached"
+        else:
+            message = f"CC Switch CLI failed ({completed.returncode})"
+        raise CcSwitchError(message)
     return completed.stdout
 
 

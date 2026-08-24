@@ -18,6 +18,7 @@
       work_updates: "工作更新", replies: "個回覆", participants: "位參與者", attempt: "嘗試", no_dispatches: "目前沒有派送", no_updates: "目前沒有工作更新",
       dispatch_pending: "待處理", dispatch_claimed: "執行中", dispatch_completed: "已完成", dispatch_failed: "失敗", dispatch_retry: "等待重試", files: "個附件",
       nav_workspace: "工作區", nav_governance: "治理與證據", nav_system: "系統支援", cockpit: "多智能體控制台", review: "互評", change: "變更", trust: "信任與證據", connect: "接入", memory: "記憶", feedback: "意見回饋", announcement: "公告",
+      agent_runtime: "Agent 即時狀態", agent_runtime_hint: "以本機 presence、工作階段與派送事件顯示可觀察活動。", model_route: "模型／路由", current_code_diff: "目前程式碼變更", current_code_diff_hint: "只讀取本專案 Git 工作樹；秘密內容會遮蔽，輸出有大小上限。", recorded_changes: "已記錄變更", code_added: "新增", code_deleted: "刪除", diff_unavailable: "目前無法讀取 Git 變更", diff_clean: "工作樹沒有變更", diff_truncated: "只顯示部分差異", observable_activity: "可觀察活動", activity_offline: "離線", activity_idle: "在線待命", activity_running: "正在執行", activity_searching: "正在搜尋網絡", activity_reasoning: "正在思考", activity_reading: "正在讀取", activity_editing: "正在編輯", activity_waiting: "等待回覆", activity_failed: "執行失敗", activity_completed: "已完成", permission: "權限",
       subject_placeholder: "主旨", automation_mode: "自動模式", automation_off_short: "關閉", automation_once_short: "一輪", automation_discussion_short: "討論", max_rounds: "最多回合", max_messages: "最多訊息", stagnation: "停滯回合", apply: "套用", pause: "暫停", resume: "恢復", continue: "繼續", stop: "停止", attach: "附件", refresh: "重新整理", fullscreen: "專注對話", exit_fullscreen: "退出專注對話", native_compact: "壓縮上下文", native_fork: "建立分支", native_review: "原生審查", native_review_hint: "輸入框可選填審查指示；留空則審查未提交變更。", native_actions: "官方工作階段操作",
       managed_sessions: "受管工作階段", session_activity: "工作階段活動", operations: "執行佇列", review_requests: "互評請求", review_results: "互評結果", recent_events: "最近事件", trust_records: "信任記錄", permissions: "權限決策", provider_connections: "供應商連線", routes: "模型路由", memory_records: "記憶記錄", briefings: "工作簡報",
       private_feedback: "私密送出", feedback_ready: "回饋入口已就緒", feedback_unavailable: "回饋設定尚未完成", feedback_body: "一般診斷會遮蔽秘密；完整憑證只會在明確同意後於本機加密。", feedback_summary_label: "問題摘要", feedback_summary_placeholder: "一句話說明問題", feedback_contact_label: "聯絡方式（選填）", feedback_contact_placeholder: "電郵或其他聯絡方式", feedback_message_label: "詳細內容", feedback_message_placeholder: "說明發生了甚麼、預期結果及重現步驟", feedback_attachment_hint: "可附畫面或診斷檔；最多 5 個，共 16 MiB。", feedback_credential_label: "完整 API Key 診斷（選填）", feedback_credential_body: "只有勾選同意後，內容才會在本機以支援公鑰加密；不會以明文送出。", feedback_credential_placeholder: "只在需要重現 Key 解析問題時填寫", feedback_credential_consent: "我明確同意在本機加密後隨本次回饋送出。", feedback_submit: "私密送出", feedback_submitting: "正在封裝及送出…", feedback_delivered: "已安全送達，案件編號", feedback_saved: "未能連線，已在本機保存封裝回饋，案件編號", feedback_required: "請填寫問題摘要及詳細內容。", feedback_consent_required: "填寫完整憑證時必須明確勾選加密同意。", feedback_encryption_unavailable: "此版本未設定支援公鑰，不能附加完整憑證。", show: "顯示", hide: "隱藏", announcement_status: "公告來源狀態", announcement_unconfigured: "尚未設定公告 HTTPS 來源；本機不會偽造公告。", announcement_disabled: "公告網絡同步已停用；目前顯示本機快取。", announcement_ready: "公告 HTTPS 來源已就緒。", announcement_updated: "公告已同步", no_announcements: "目前沒有公告", no_records: "目前沒有記錄", enabled: "已啟用", disabled: "已停用", unknown: "未提供", role: "角色", role_saved: "角色已更新", automation_saved: "自動模式已更新", action_failed: "操作失敗", remove: "移除", attachment_limit: "最多 5 個附件，每個 8 MiB，總計 16 MiB。", period_today: "今天", period_7d: "近 7 日", period_30d: "近 30 日", period_all: "全部",
@@ -46,6 +47,7 @@
       work_updates: "工作更新", replies: "个回复", participants: "位参与者", attempt: "尝试", no_dispatches: "当前没有派送", no_updates: "当前没有工作更新",
       dispatch_pending: "待处理", dispatch_claimed: "执行中", dispatch_completed: "已完成", dispatch_failed: "失败", dispatch_retry: "等待重试", files: "个附件",
       nav_workspace: "工作区", nav_governance: "治理与证据", nav_system: "系统支持", cockpit: "多智能体控制台", review: "互评", change: "变更", trust: "信任与证据", connect: "接入", memory: "记忆", feedback: "意见反馈", announcement: "公告",
+      agent_runtime: "Agent 实时状态", agent_runtime_hint: "根据本地 presence、工作阶段和派送事件显示可观察活动。", model_route: "模型／路由", current_code_diff: "当前代码变更", current_code_diff_hint: "只读取本项目 Git 工作树；秘密内容会遮蔽，输出有大小上限。", recorded_changes: "已记录变更", code_added: "新增", code_deleted: "删除", diff_unavailable: "当前无法读取 Git 变更", diff_clean: "工作树没有变更", diff_truncated: "仅显示部分差异", observable_activity: "可观察活动", activity_offline: "离线", activity_idle: "在线待命", activity_running: "正在执行", activity_searching: "正在搜索网络", activity_reasoning: "正在思考", activity_reading: "正在读取", activity_editing: "正在编辑", activity_waiting: "等待回复", activity_failed: "执行失败", activity_completed: "已完成", permission: "权限",
       subject_placeholder: "主题", automation_mode: "自动模式", automation_off_short: "关闭", automation_once_short: "一轮", automation_discussion_short: "讨论", max_rounds: "最多轮次", max_messages: "最多消息", stagnation: "停滞轮次", apply: "应用", pause: "暂停", resume: "恢复", continue: "继续", stop: "停止", attach: "附件", refresh: "刷新", fullscreen: "专注对话", exit_fullscreen: "退出专注对话", native_compact: "压缩上下文", native_fork: "建立分支", native_review: "原生审查", native_review_hint: "输入框可选填审查指示；留空则审查未提交变更。", native_actions: "官方工作阶段操作",
       managed_sessions: "受管工作阶段", session_activity: "工作阶段活动", operations: "执行队列", review_requests: "互评请求", review_results: "互评结果", recent_events: "最近事件", trust_records: "信任记录", permissions: "权限决策", provider_connections: "供应商连接", routes: "模型路由", memory_records: "记忆记录", briefings: "工作简报",
       private_feedback: "私密发送", feedback_ready: "反馈入口已就绪", feedback_unavailable: "反馈设置尚未完成", feedback_body: "一般诊断会遮蔽秘密；完整凭证只会在明确同意后于本机加密。", feedback_summary_label: "问题摘要", feedback_summary_placeholder: "用一句话说明问题", feedback_contact_label: "联系方式（选填）", feedback_contact_placeholder: "邮箱或其他联系方式", feedback_message_label: "详细内容", feedback_message_placeholder: "说明发生了什么、预期结果和复现步骤", feedback_attachment_hint: "可附截图或诊断文件；最多 5 个，共 16 MiB。", feedback_credential_label: "完整 API Key 诊断（选填）", feedback_credential_body: "只有勾选同意后，内容才会在本机使用支持公钥加密；不会以明文发送。", feedback_credential_placeholder: "只在需要复现 Key 解析问题时填写", feedback_credential_consent: "我明确同意在本机加密后随本次反馈发送。", feedback_submit: "私密发送", feedback_submitting: "正在封装并发送…", feedback_delivered: "已安全送达，工单编号", feedback_saved: "无法连接，已在本地保存封装反馈，工单编号", feedback_required: "请填写问题摘要和详细内容。", feedback_consent_required: "填写完整凭证时必须明确勾选加密同意。", feedback_encryption_unavailable: "此版本未设置支持公钥，不能附加完整凭证。", show: "显示", hide: "隐藏", announcement_status: "公告来源状态", announcement_unconfigured: "尚未设置公告 HTTPS 来源；本机不会伪造公告。", announcement_disabled: "公告网络同步已停用；当前显示本地缓存。", announcement_ready: "公告 HTTPS 来源已就绪。", announcement_updated: "公告已同步", no_announcements: "当前没有公告", no_records: "当前没有记录", enabled: "已启用", disabled: "已停用", unknown: "未提供", role: "角色", role_saved: "角色已更新", automation_saved: "自动模式已更新", action_failed: "操作失败", remove: "移除", attachment_limit: "最多 5 个附件，每个 8 MiB，总计 16 MiB。", period_today: "今天", period_7d: "近 7 日", period_30d: "近 30 日", period_all: "全部",
@@ -74,6 +76,7 @@
       work_updates: "Work updates", replies: "replies", participants: "participants", attempt: "attempt", no_dispatches: "No dispatches", no_updates: "No work updates",
       dispatch_pending: "Pending", dispatch_claimed: "Running", dispatch_completed: "Completed", dispatch_failed: "Failed", dispatch_retry: "Retry queued", files: "files",
       nav_workspace: "Workspace", nav_governance: "Governance & evidence", nav_system: "System support", cockpit: "Multi-agent cockpit", review: "Peer review", change: "Changes", trust: "Trust & evidence", connect: "Connections", memory: "Memory", feedback: "Feedback", announcement: "Announcements",
+      agent_runtime: "Live agent status", agent_runtime_hint: "Shows observable activity from local presence, sessions, and dispatch events.", model_route: "Model / route", current_code_diff: "Current code changes", current_code_diff_hint: "Reads only this project's Git worktree. Secrets are redacted and output is bounded.", recorded_changes: "Recorded changes", code_added: "added", code_deleted: "deleted", diff_unavailable: "Git changes are currently unavailable", diff_clean: "The worktree is clean", diff_truncated: "Only part of the diff is shown", observable_activity: "Observable activity", activity_offline: "Offline", activity_idle: "Online · idle", activity_running: "Running", activity_searching: "Searching the web", activity_reasoning: "Reasoning", activity_reading: "Reading", activity_editing: "Editing", activity_waiting: "Waiting for a reply", activity_failed: "Failed", activity_completed: "Completed", permission: "Permission",
       subject_placeholder: "Subject", automation_mode: "Automation mode", automation_off_short: "Off", automation_once_short: "One round", automation_discussion_short: "Discussion", max_rounds: "Maximum rounds", max_messages: "Maximum messages", stagnation: "Stagnation rounds", apply: "Apply", pause: "Pause", resume: "Resume", continue: "Continue", stop: "Stop", attach: "Attach", refresh: "Refresh", fullscreen: "Focus chat", exit_fullscreen: "Exit focus chat", native_compact: "Compact context", native_fork: "Fork session", native_review: "Native review", native_review_hint: "Optionally use the input field for review instructions; leave it empty to review uncommitted changes.", native_actions: "Official session actions",
       managed_sessions: "Managed sessions", session_activity: "Session activity", operations: "Execution queue", review_requests: "Review requests", review_results: "Review results", recent_events: "Recent events", trust_records: "Trust records", permissions: "Permission decisions", provider_connections: "Provider connections", routes: "Model routes", memory_records: "Memory records", briefings: "Task briefings",
       private_feedback: "Private submission", feedback_ready: "Feedback entry is ready", feedback_unavailable: "Feedback setup is incomplete", feedback_body: "Normal diagnostics redact secrets; complete credentials are locally encrypted only after explicit consent.", feedback_summary_label: "Issue summary", feedback_summary_placeholder: "Describe the issue in one line", feedback_contact_label: "Contact (optional)", feedback_contact_placeholder: "Email or another contact method", feedback_message_label: "Details", feedback_message_placeholder: "Describe what happened, the expected result, and reproduction steps", feedback_attachment_hint: "Attach a screenshot or diagnostic file; up to 5 files and 16 MiB total.", feedback_credential_label: "Complete API key diagnostic (optional)", feedback_credential_body: "Only after explicit consent is the value encrypted locally to the support public key. Plaintext is never sent.", feedback_credential_placeholder: "Use only when reproducing a key parsing problem", feedback_credential_consent: "I explicitly consent to local encryption and inclusion with this submission.", feedback_submit: "Submit privately", feedback_submitting: "Sealing and submitting…", feedback_delivered: "Delivered securely. Case", feedback_saved: "Connection unavailable; sealed feedback saved locally. Case", feedback_required: "Enter an issue summary and details.", feedback_consent_required: "Explicit encryption consent is required when a complete credential is entered.", feedback_encryption_unavailable: "This build has no support public key, so complete credentials cannot be attached.", show: "Show", hide: "Hide", announcement_status: "Announcement source", announcement_unconfigured: "No announcement HTTPS source is configured; local mode will not fabricate announcements.", announcement_disabled: "Announcement network sync is disabled; showing the local cache.", announcement_ready: "The announcement HTTPS source is ready.", announcement_updated: "Announcements synchronized", no_announcements: "No announcements", no_records: "No records yet", enabled: "Enabled", disabled: "Disabled", unknown: "Not reported", role: "Role", role_saved: "Role updated", automation_saved: "Automation updated", action_failed: "Action failed", remove: "Remove", attachment_limit: "Up to 5 attachments, 8 MiB each and 16 MiB total.", period_today: "Today", period_7d: "Last 7 days", period_30d: "Last 30 days", period_all: "All time",
@@ -394,13 +397,43 @@
     }
   };
 
+  const integrationTranslations = {
+    "zh-Hant": {
+      configure_agent: "設定 Agent", view_terminal: "查看終端", code_files: "個檔案", models_truncated: "模型清單已達顯示上限", activity_stale: "連線已過期", appearance: "外觀", choose_appearance: "選擇外觀", choose_appearance_hint: "選擇 Pixel Control Room 或 Modern Workbench；重新啟動後套用。", pixel_appearance_hint: "原本深色像素風、高密度終端與控制介面。", modern_appearance_hint: "對話優先，整合模型、權限、變更與證據。", save_appearance: "儲存外觀", appearance_saved: "外觀已儲存，重新啟動後套用",
+      ccswitch_title: "CC Switch 一鍵接入", ccswitch_hint: "讀取 CC Switch 已保存的供應商與模型；只有按下確認後才會切換目前供應商。", ccswitch_app: "應用程式", ccswitch_provider: "CC Switch 供應商",
+      discover_first: "先讀取供應商", discover_models_first: "先讀取模型", discover_providers: "讀取供應商", discover_models: "讀取模型", save_route: "建立路由", activate_provider: "切換供應商",
+      provider_setup: "直接 API／中轉／本機供應商", provider_setup_hint: "憑證只保存於本機安全儲存；PeerBridge 資料庫只記錄不可逆指紋與端點雜湊。", connection_id: "連線 ID", route_class: "路由類型", endpoint: "API 端點", official: "官方", relay: "中轉", local: "本機", save_provider: "保存供應商",
+      model_route_setup: "讀取模型並建立路由", model_route_setup_hint: "模型清單由所選供應商即時回報，不會用預設名稱冒充。", provider_saved: "供應商已保存", providers_discovered: "供應商清單已更新", models_discovered: "模型清單已更新", route_saved: "模型路由已建立", provider_activated: "CC Switch 供應商已切換",
+      install_agent: "安裝", update_agent: "更新", install_agent_confirm: "PeerBridge 將啟動供應商的官方安裝程序。是否繼續？", agent_installer_started: "官方 Agent 安裝程序已啟動", clipboard_image_attached: "已從剪貼簿加入圖片", terminal_not_started: "終端尚未啟動", start_terminal: "啟動終端", model: "模型", reasoning_mode: "推理強度", publisher_guide: "官方安裝指南", attachment_only_message: "附件", all_session_timeline: "全部終端時間軸", attachment_type_invalid: "附件格式不受支援", attachment_count_limit: "附件最多 5 個", attachment_file_size_limit: "每個附件不可超過 8 MiB", attachment_total_size_limit: "附件總大小不可超過 16 MiB", verify_audit_chain: "驗證審計鏈", audit_chain_verified: "審計鏈驗證通過", mark_all_read: "全部標為已讀", announcements_marked_read: "公告已標為已讀", usage_truncated: "所選期間的趨勢資料已截斷", schedule_next_run: "下次執行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供應商未設定模型 API 端點", confirm_ccswitch_switch: "確認把 {app} 切換到 {provider}？", bootstrap_failed: "本機資料載入失敗；可按重新整理重試", acpx_runtime: "ACPX 執行環境", acpx_required: "Grok 與 Kimi 的持續工作階段需要 ACPX", install_dependency: "安裝依賴", dispatches: "派送", events: "事件", memories: "記憶", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "請先填寫必要的工作 ID 或證據包路徑", edit_schedule: "編輯排程", start_review_workflow: "派發互評流程", continue_history: "從此歷史繼續", history_continued: "已建立可寫續談房間"
+    },
+    "zh-Hans": {
+      configure_agent: "设置 Agent", view_terminal: "查看终端", code_files: "个文件", models_truncated: "模型列表已达到显示上限", activity_stale: "连接已过期", appearance: "外观", choose_appearance: "选择外观", choose_appearance_hint: "选择 Pixel Control Room 或 Modern Workbench；重启后应用。", pixel_appearance_hint: "原本深色像素风、高密度终端和控制界面。", modern_appearance_hint: "对话优先，整合模型、权限、变更和证据。", save_appearance: "保存外观", appearance_saved: "外观已保存，重启后应用",
+      ccswitch_title: "CC Switch 一键接入", ccswitch_hint: "读取 CC Switch 已保存的供应商和模型；只有确认后才会切换当前供应商。", ccswitch_app: "应用程序", ccswitch_provider: "CC Switch 供应商",
+      discover_first: "先读取供应商", discover_models_first: "先读取模型", discover_providers: "读取供应商", discover_models: "读取模型", save_route: "创建路由", activate_provider: "切换供应商",
+      provider_setup: "直接 API／中转／本地供应商", provider_setup_hint: "凭证只保存在本地安全存储；PeerBridge 数据库仅记录不可逆指纹和端点哈希。", connection_id: "连接 ID", route_class: "路由类型", endpoint: "API 端点", official: "官方", relay: "中转", local: "本地", save_provider: "保存供应商",
+      model_route_setup: "读取模型并创建路由", model_route_setup_hint: "模型清单由所选供应商实时返回，不会使用预设名称冒充。", provider_saved: "供应商已保存", providers_discovered: "供应商列表已更新", models_discovered: "模型列表已更新", route_saved: "模型路由已创建", provider_activated: "CC Switch 供应商已切换",
+      install_agent: "安装", update_agent: "更新", install_agent_confirm: "PeerBridge 将启动供应商的官方安装程序。是否继续？", agent_installer_started: "官方 Agent 安装程序已启动", clipboard_image_attached: "已从剪贴板添加图片", terminal_not_started: "终端尚未启动", start_terminal: "启动终端", model: "模型", reasoning_mode: "推理强度", publisher_guide: "官方安装指南", attachment_only_message: "附件", all_session_timeline: "全部终端时间轴", attachment_type_invalid: "附件格式不受支持", attachment_count_limit: "附件最多 5 个", attachment_file_size_limit: "每个附件不能超过 8 MiB", attachment_total_size_limit: "附件总大小不能超过 16 MiB", verify_audit_chain: "验证审计链", audit_chain_verified: "审计链验证通过", mark_all_read: "全部标为已读", announcements_marked_read: "公告已标为已读", usage_truncated: "所选期间的趋势数据已截断", schedule_next_run: "下次执行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供应商未设置模型 API 端点", confirm_ccswitch_switch: "确认将 {app} 切换到 {provider}？", bootstrap_failed: "本地数据加载失败；可点击刷新重试", acpx_runtime: "ACPX 运行环境", acpx_required: "Grok 和 Kimi 的持续工作阶段需要 ACPX", install_dependency: "安装依赖", dispatches: "派送", events: "事件", memories: "记忆", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "请先填写必要的工作 ID 或证据包路径", edit_schedule: "编辑计划", start_review_workflow: "派发互评流程", continue_history: "从此历史继续", history_continued: "已创建可写续聊房间"
+    },
+    en: {
+      configure_agent: "Configure agent", view_terminal: "View terminal", code_files: "files", models_truncated: "Model list reached the display limit", activity_stale: "Connection is stale", appearance: "Appearance", choose_appearance: "Choose appearance", choose_appearance_hint: "Choose Pixel Control Room or Modern Workbench. The selection applies after restart.", pixel_appearance_hint: "Original dark pixel style with dense terminals and controls.", modern_appearance_hint: "Conversation-first workspace with model, permission, diff, and evidence controls.", save_appearance: "Save appearance", appearance_saved: "Appearance saved; restart to apply",
+      ccswitch_title: "One-click CC Switch integration", ccswitch_hint: "Discover providers and models already saved in CC Switch. The active provider changes only after explicit confirmation.", ccswitch_app: "Application", ccswitch_provider: "CC Switch provider",
+      discover_first: "Discover providers first", discover_models_first: "Discover models first", discover_providers: "Discover providers", discover_models: "Discover models", save_route: "Create route", activate_provider: "Switch provider",
+      provider_setup: "Direct API, relay, or local provider", provider_setup_hint: "Credentials stay in local secure storage. The PeerBridge database stores only irreversible fingerprints and endpoint hashes.", connection_id: "Connection ID", route_class: "Route class", endpoint: "API endpoint", official: "Official", relay: "Relay", local: "Local", save_provider: "Save provider",
+      model_route_setup: "Discover models and create a route", model_route_setup_hint: "The selected provider advertises the model list live; PeerBridge does not invent model names.", provider_saved: "Provider saved", providers_discovered: "Provider list updated", models_discovered: "Model list updated", route_saved: "Model route created", provider_activated: "CC Switch provider changed",
+      install_agent: "Install", update_agent: "Update", install_agent_confirm: "PeerBridge will start the publisher's official installer. Continue?", agent_installer_started: "Official Agent installer started", clipboard_image_attached: "Image attached from clipboard", terminal_not_started: "Terminal not started", start_terminal: "Start terminal", model: "Model", reasoning_mode: "Reasoning effort", publisher_guide: "Official installation guide", attachment_only_message: "Attachment", all_session_timeline: "All-terminal timeline", attachment_type_invalid: "This attachment type is not supported", attachment_count_limit: "Up to 5 attachments", attachment_file_size_limit: "Each attachment must be no larger than 8 MiB", attachment_total_size_limit: "Attachments must total no more than 16 MiB", verify_audit_chain: "Verify audit chain", audit_chain_verified: "Audit chain verified", mark_all_read: "Mark all read", announcements_marked_read: "Announcements marked as read", usage_truncated: "Trend data is truncated for the selected period", schedule_next_run: "Next run", expires: "Expires", consumed: "Consumed", ccswitch_missing_endpoint: "This provider has no model API endpoint", confirm_ccswitch_switch: "Switch {app} to {provider}?", bootstrap_failed: "Local data failed to load. Use Refresh to retry.", acpx_runtime: "ACPX runtime", acpx_required: "Grok and Kimi persistent sessions require ACPX", install_dependency: "Install dependency", dispatches: "Dispatches", events: "Events", memories: "Memories", reason_low: "Low", reason_medium: "Medium", reason_high: "High", reason_xhigh: "Extra high", reason_max: "Maximum", proof_required: "Enter the required task ID or proof-bundle path first", edit_schedule: "Edit schedule", start_review_workflow: "Start review workflow", continue_history: "Continue from this history", history_continued: "Writable continuation room created"
+    }
+  };
+
   const state = {
     token: "", locale: localStorage.getItem("peerbridge.locale") || "zh-Hant", data: null, roomId: "lobby",
     view: "chat", signature: "", etag: "", timer: null, loading: false, older: [], firstRender: true,
     attachments: [], managedAttachments: [], managedTurnAttachments: Object.create(null), feedbackAttachments: [],
-    cockpitMode: "grid", selectedSessionId: "", sessionDetailTab: "terminal", usagePeriod: "30d", chatFocus: false, roomSearch: "",
+    cockpitMode: "grid", selectedSessionId: "", sessionDetailTab: "terminal", usagePeriod: "30d", chatFocus: false, roomSearch: "", ccswitchProviders: [], ccswitchModels: [], providerModels: [], historyContinuationSourceRoom: "",
+    worktreeDiff: null, worktreeDiffLoading: false, agentLaunchSelections: Object.create(null),
     renderSignatures: Object.create(null)
   };
+  const MAX_DIFF_RENDER_LINES = 4000;
+  const MAX_MODEL_OPTIONS = 500;
   const managedImageAttachmentSuffixes = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
   const managedAudioAttachmentSuffixes = new Set([".wav", ".mp3", ".m4a", ".ogg", ".flac"]);
   const managedTextAttachmentSuffixes = new Set([".csv", ".json", ".log", ".md", ".txt"]);
@@ -422,6 +455,7 @@
   const workbenchSessionStorageKey = "peerbridge.workbench.accessToken";
   const byId = (id) => document.getElementById(id);
   const t = (key) => (translations[state.locale] || translations.en)[key]
+    || (integrationTranslations[state.locale] || integrationTranslations.en)[key]
     || (capabilityTranslations[state.locale] || capabilityTranslations.en)[key]
     || (controlTranslations[state.locale] || controlTranslations.en)[key]
     || key;
@@ -433,6 +467,26 @@
         "zh-Hant": "MCP 訊息通道目前無法使用",
         "zh-Hans": "MCP 消息通道当前不可用",
         en: "MCP message path unavailable"
+      },
+      "CC Switch provider has no saved API key": {
+        "zh-Hant": "CC Switch 供應商尚未保存 API Key",
+        "zh-Hans": "CC Switch 供应商尚未保存 API Key",
+        en: "CC Switch provider has no saved API key"
+      },
+      "CC Switch provider has no model-discovery endpoint": {
+        "zh-Hant": "CC Switch 供應商未設定可讀取模型的 API 端點",
+        "zh-Hans": "CC Switch 供应商未设置可读取模型的 API 端点",
+        en: "CC Switch provider has no model-discovery endpoint"
+      },
+      "CC Switch provider credential was rejected": {
+        "zh-Hant": "CC Switch 供應商憑證被拒絕",
+        "zh-Hans": "CC Switch 供应商凭证被拒绝",
+        en: "CC Switch provider credential was rejected"
+      },
+      "CC Switch provider quota or rate limit was reached": {
+        "zh-Hant": "CC Switch 供應商已達配額或速率限制",
+        "zh-Hans": "CC Switch 供应商已达到配额或速率限制",
+        en: "CC Switch provider quota or rate limit was reached"
       }
     };
     if (exact[message]) return exact[message][language];
@@ -453,6 +507,7 @@
   const node = (tag, className, text) => { const el = document.createElement(tag); if (className) el.className = className; if (text !== undefined) el.textContent = text; return el; };
   const compact = (value) => new Intl.NumberFormat(state.locale, { notation: "compact", maximumFractionDigits: 1 }).format(Number(value || 0));
   const timeLabel = (value) => { const d = new Date(value); return Number.isNaN(d.getTime()) ? "" : new Intl.DateTimeFormat(state.locale, { hour: "2-digit", minute: "2-digit" }).format(d); };
+  const epochLabel = (value) => { const d = new Date(Number(value || 0) * 1000); return Number.isNaN(d.getTime()) || Number(value || 0) <= 0 ? "" : new Intl.DateTimeFormat(state.locale, { dateStyle: "short", timeStyle: "short" }).format(d); };
   const initials = (value) => String(value || "?").split(/[-_.]/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase();
   const dispatchLabel = (status) => t(`dispatch_${String(status || "pending").replaceAll("-", "_")}`);
   const dispatchTone = (status) => {
@@ -485,6 +540,113 @@
   const roomRoleValues = () => ["equal-participant", "researcher", "implementer", "reviewer"];
   const roleLabel = (value) => t(`role_${String(value || "equal-participant").replaceAll("-", "_")}`);
   const terminalStatus = (value) => new Set(["complete", "completed", "done", "verified", "closed", "passed", "stopped", "failed", "cancelled", "canceled", "unavailable"]).has(String(value || "").toLowerCase());
+
+  const eventActivity = (event) => {
+    const text = `${event?.kind || ""} ${event?.stream || ""} ${event?.summary || ""} ${event?.state_after || ""}`.toLowerCase();
+    if (/fail|error|rejected|denied/.test(text)) return { key: "activity_failed", tone: "danger" };
+    if (/web|browser|search|crawl|http|url/.test(text)) return { key: "activity_searching", tone: "working" };
+    if (/reason|think|plan|analy/.test(text)) return { key: "activity_reasoning", tone: "working" };
+    if (/edit|write|patch|apply|save|file changed/.test(text)) return { key: "activity_editing", tone: "working" };
+    if (/read|open|inspect|view|find|grep|\brg\b|\bcat\b/.test(text)) return { key: "activity_reading", tone: "working" };
+    if (/wait|pending|queued|retry|blocked/.test(text)) return { key: "activity_waiting", tone: "waiting" };
+    if (/complete|completed|final|done|verified|passed/.test(text)) return { key: "activity_completed", tone: "online" };
+    return { key: "activity_running", tone: "working" };
+  };
+
+  function latestByTime(rows, fields = ["updated_utc", "last_seen_utc", "created_utc", "started_utc"]) {
+    return [...rows].sort((left, right) => {
+      const leftValue = fields.map((field) => Date.parse(left?.[field] || "")).find(Number.isFinite) || 0;
+      const rightValue = fields.map((field) => Date.parse(right?.[field] || "")).find(Number.isFinite) || 0;
+      return rightValue - leftValue;
+    })[0] || null;
+  }
+
+  function recentObservable(row, fields = ["updated_utc", "last_seen_utc", "created_utc", "started_utc"], maxAgeMs = 180000) {
+    if (!row) return false;
+    const timestamp = fields.map((field) => Date.parse(row?.[field] || "")).find(Number.isFinite);
+    return Number.isFinite(timestamp) && Date.now() - timestamp >= 0 && Date.now() - timestamp <= maxAgeMs;
+  }
+
+  function agentRuntime(agentId) {
+    const data = state.data || {};
+    const member = (data.members || []).find((row) => row.agent_id === agentId) || null;
+    const presence = (data.cockpit?.presence || []).find((row) => row.agent_id === agentId) || null;
+    const sessions = (data.cockpit?.sessions || []).filter((row) => (row.owner_agent_id || row.adapter_id) === agentId);
+    const session = latestByTime(sessions);
+    const sessionEvents = (data.cockpit?.events || []).filter((row) => row.session_id && row.session_id === session?.session_id);
+    const event = latestByTime(sessionEvents, ["created_utc"]);
+    const dispatch = latestByTime((data.dispatches || []).filter((row) => row.agent_id === agentId));
+    const work = latestByTime((data.work_updates || []).filter((row) => row.agent_id === agentId));
+    const sessionState = String(session?.state || session?.status || session?.lifecycle_state || "").toLowerCase();
+    const dispatchState = String(dispatch?.status || "").toLowerCase();
+    const workState = String(work?.status || "").toLowerCase();
+    let activity = { key: "activity_offline", tone: "offline" };
+    let summary = "";
+    const sessionFresh = Boolean(session?.managed) || recentObservable(
+      session,
+      ["last_seen_utc", "updated_utc", "started_utc"],
+      180000
+    );
+    const eventFresh = recentObservable(event, ["created_utc"], 180000);
+    if (session && !terminalStatus(sessionState) && sessionFresh) {
+      activity = event && eventFresh ? eventActivity(event) : { key: "activity_running", tone: "working" };
+      summary = event && eventFresh ? event.summary || "" : session.terminal_detail || session.terminal_outcome || "";
+    } else if (session && !terminalStatus(sessionState)) {
+      activity = { key: "activity_stale", tone: "offline" };
+      summary = t("activity_stale");
+    } else if ((recentObservable(dispatch) && ["claimed", "running", "active", "processing"].includes(dispatchState)) || (recentObservable(work) && ["claimed", "running", "active", "review"].includes(workState))) {
+      activity = { key: "activity_running", tone: "working" };
+      summary = work?.summary || dispatch?.error_code || "";
+    } else if (recentObservable(dispatch) && (dispatchState.includes("retry") || ["pending", "queued"].includes(dispatchState))) {
+      activity = { key: "activity_waiting", tone: "waiting" };
+    } else if ((recentObservable(dispatch, ["completed_utc", "updated_utc"]) && ["failed", "dead_letter"].includes(dispatchState)) || sessionState === "failed") {
+      activity = { key: "activity_failed", tone: "danger" };
+      summary = dispatch?.error_code || session?.terminal_outcome || "";
+    } else if (presence || member?.online) {
+      activity = { key: "activity_idle", tone: "online" };
+      if (event) summary = event.summary || "";
+    } else if (session && terminalStatus(sessionState)) {
+      activity = sessionState === "failed" ? { key: "activity_failed", tone: "danger" } : { key: "activity_completed", tone: "online" };
+      summary = session.terminal_outcome || event?.summary || "";
+    }
+    const route = (data.routes || []).find((row) => row.agent_id === agentId && row.enabled !== false) || null;
+    return {
+      agentId,
+      member,
+      presence,
+      session,
+      event,
+      dispatch,
+      activity,
+      summary,
+      model: session?.model_id || presence?.model_id || member?.model_id || route?.model_id || "",
+      reasoning: presence?.reasoning_mode || member?.reasoning_mode || route?.reasoning_mode || "",
+      permission: session?.permission_tier || session?.session_authorization?.permission_tier || "",
+      route: session?.requested_route || member?.route_profile_id || route?.route_id || ""
+    };
+  }
+
+  const managedAgentMatches = (managedAgentId, routeAgentId) => {
+    const left = String(managedAgentId || "").toLowerCase();
+    const right = String(routeAgentId || "").toLowerCase();
+    if (!left || !right) return false;
+    if (left === right) return true;
+    if (left === "claude-code") return right.includes("claude");
+    if (left === "kimi-code") return right.includes("kimi");
+    return right.includes(left);
+  };
+
+  function managedRouteOptions(agentId) {
+    const routes = (state.data?.routes || []).filter((route) => route.enabled !== false && managedAgentMatches(agentId, route.agent_id));
+    const entry = (state.data?.managed_agent_catalog || []).find((row) => row.agent_id === agentId);
+    const rows = routes.map((route) => [
+      route.route_id,
+      [route.model_id, route.reasoning_mode, route.provider_id].filter(Boolean).join(" · ") || route.route_id
+    ]);
+    const observedModel = entry?.receipt?.observed_model || "";
+    if (observedModel && !rows.some(([value]) => value === observedModel)) rows.unshift([observedModel, observedModel]);
+    return [["", t("no_route")], ...rows];
+  }
 
   function replaceSelectOptions(select, rows, selectedValue = "") {
     if (!select) return;
@@ -563,6 +725,7 @@
 
   function applyLocale() {
     document.documentElement.lang = state.locale;
+    if (byId("locale-select")) byId("locale-select").value = state.locale;
     document.querySelectorAll("[data-i18n]").forEach((el) => { el.textContent = t(el.dataset.i18n); });
     document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => { el.placeholder = t(el.dataset.i18nPlaceholder); });
     document.querySelectorAll("[data-i18n-title]").forEach((el) => {
@@ -739,6 +902,7 @@
 
   function renderAgents() {
     const members = state.data?.members || [];
+    const readOnlyRoom = Boolean(state.data?.history_import?.selected);
     const signature = JSON.stringify([
       state.locale,
       state.data?.room_id,
@@ -750,13 +914,22 @@
     state.renderSignatures.agents = signature;
     const list = byId("agent-list"); list.replaceChildren();
     members.forEach((member) => {
+      const runtime = agentRuntime(member.agent_id);
       const row = node("div", "agent-row"); row.append(node("div", "agent-avatar", initials(member.agent_id)));
-      const copy = node("div", "agent-copy"); copy.append(node("strong", "", member.agent_id), node("span", "", [member.model_id, member.reasoning_mode].filter(Boolean).join(" · ") || member.role_label || roleLabel(member.role_id)));
+      const copy = node("div", "agent-copy");
+      copy.append(node("strong", "", member.agent_id));
+      const modelLine = [runtime.model || t("unknown"), runtime.reasoning].filter(Boolean).join(" · ");
+      copy.append(node("span", "", modelLine));
+      const runtimeMeta = node("div", "agent-runtime-meta");
+      runtimeMeta.append(node("span", "", `${t("permission")}: ${runtime.permission ? permissionTierLabel(runtime.permission) : "--"}`));
+      runtimeMeta.append(node("span", "", `${t("role")}: ${member.role_label || roleLabel(member.role_id)}`));
+      copy.append(runtimeMeta);
       row.append(copy);
       if (member.agent_id !== "human-operator") {
         const role = node("select", "role-select"); role.setAttribute("aria-label", `${t("role")}: ${member.agent_id}`);
         roomRoleValues().forEach((value) => { const option = node("option", "", roleLabel(value)); option.value = value; role.append(option); });
         role.value = Array.from(role.options).some((option) => option.value === member.role_id) ? member.role_id : "equal-participant";
+        role.disabled = readOnlyRoom;
         role.addEventListener("change", async () => {
           role.disabled = true;
           try {
@@ -767,7 +940,10 @@
         });
         row.append(role);
       }
-      row.append(node("span", "agent-state" + (member.online ? " online" : ""), member.online ? t("active") : t("waiting"))); list.append(row);
+      const status = node("span", `agent-state ${runtime.activity.tone}`);
+      status.append(node("i", "presence-dot"), node("span", "", t(runtime.activity.key)));
+      status.title = runtime.summary || t(runtime.activity.key);
+      row.append(status); list.append(row);
     });
     byId("seat-count").textContent = `${members.filter((m) => m.online).length} / ${members.length}`;
     const select = byId("recipient"); const selected = select.value || "*"; select.replaceChildren();
@@ -801,8 +977,10 @@
     replaceSelectOptions(byId("seat-role"), roomRoleValues().map((value) => [value, roleLabel(value)]), byId("seat-role").value || "equal-participant");
     const removable = members.filter((member) => member.agent_id !== "human-operator");
     replaceSelectOptions(byId("seat-remove-member"), removable.length ? removable.map((member) => [member.agent_id, member.agent_id]) : [["", t("no_removable_member")]]);
-    byId("seat-add").disabled = !agentIds.length;
-    byId("seat-remove").disabled = !removable.length;
+    const readOnlyRoom = Boolean(state.data?.history_import?.selected);
+    ["seat-agent", "seat-route", "seat-role", "seat-remove-member"].forEach((id) => { byId(id).disabled = readOnlyRoom; });
+    byId("seat-add").disabled = readOnlyRoom || !agentIds.length;
+    byId("seat-remove").disabled = readOnlyRoom || !removable.length;
   }
 
   function renderTasks() {
@@ -816,11 +994,32 @@
   function renderSessionDetails(sessions, events) {
     const workspace = byId("session-workspace");
     workspace.className = `session-workspace mode-${state.cockpitMode}`;
+    byId("session-detail-tabs").hidden = state.cockpitMode === "timeline";
     document.querySelectorAll("[data-cockpit-mode]").forEach((button) => button.classList.toggle("active", button.dataset.cockpitMode === state.cockpitMode));
     document.querySelectorAll("[data-session-tab]").forEach((button) => button.classList.toggle("active", button.dataset.sessionTab === state.sessionDetailTab));
     const selected = sessions.find((entry) => entry.session_id === state.selectedSessionId) || null;
     const detail = byId("session-detail-content"); const eventList = byId("session-event-list");
     detail.replaceChildren(); eventList.replaceChildren();
+    if (state.cockpitMode === "timeline") {
+      byId("session-detail-title").textContent = t("all_session_timeline");
+      byId("session-detail-subtitle").textContent = `${sessions.length} ${t("managed_sessions")}`;
+      byId("session-event-count").textContent = String(events.length);
+      detail.hidden = true; eventList.hidden = false;
+      const sessionNames = new Map(sessions.map((entry) => [entry.session_id, entry.display_name || entry.client_name || entry.owner_agent_id || entry.session_id]));
+      const ordered = [...events].sort((left, right) => {
+        const timeDifference = Date.parse(right.created_utc || "") - Date.parse(left.created_utc || "");
+        return Number.isFinite(timeDifference) && timeDifference !== 0
+          ? timeDifference
+          : Number(right.sequence || 0) - Number(left.sequence || 0);
+      });
+      renderRecordList("session-event-list", ordered, (entry) => ({
+        title: `${sessionNames.get(entry.session_id) || entry.session_id || "Agent"} · ${entry.summary || entry.kind || entry.stream || "--"}`,
+        status: entry.kind,
+        body: [entry.stream, entry.state_after, entry.source_type].filter(Boolean).join(" · "),
+        meta: [entry.sequence, timeLabel(entry.created_utc), (entry.sha256 || "").slice(0, 12)]
+      }));
+      return;
+    }
     if (!selected) {
       byId("session-detail-title").textContent = t("session_details");
       byId("session-detail-subtitle").textContent = t("no_session_selected");
@@ -846,11 +1045,12 @@
     detail.hidden = false; eventList.hidden = true;
     if (state.sessionDetailTab === "terminal") {
       const terminal = node("pre", "session-terminal");
-      terminal.textContent = selectedEvents.slice(0, 40).reverse().map((entry) => {
+      const eventText = selectedEvents.slice(0, 40).reverse().map((entry) => {
         const stamp = timeLabel(entry.created_utc) || "--:--";
         const channel = entry.stream || entry.kind || "event";
         return `[${stamp}] ${channel}\n${entry.summary || entry.state_after || "--"}`;
-      }).join("\n\n") || t("no_records");
+      }).join("\n\n");
+      terminal.textContent = [selected.terminal_detail || selected.terminal_outcome || "", eventText].filter(Boolean).join("\n\n") || t("no_records");
       detail.append(terminal);
       return;
     }
@@ -880,6 +1080,97 @@
     detail.append(evidence);
   }
 
+  function renderAgentRuntimeStrip() {
+    const container = byId("agent-runtime-strip");
+    if (!container) return;
+    container.replaceChildren();
+    const catalog = (state.data?.managed_agent_catalog || []).filter((entry) => entry.primary);
+    const ids = [...new Set([
+      ...catalog.map((entry) => entry.agent_id),
+      ...(state.data?.members || []).map((entry) => entry.agent_id).filter((value) => value !== "human-operator"),
+      ...(state.data?.cockpit?.presence || []).map((entry) => entry.agent_id)
+    ].filter(Boolean))];
+    const runtimes = ids.map(agentRuntime);
+    const working = runtimes.filter((runtime) => runtime.activity.tone === "working").length;
+    const online = runtimes.filter((runtime) => new Set(["working", "online", "waiting"]).has(runtime.activity.tone)).length;
+    byId("agent-runtime-summary").textContent = `${working} ${t("activity_running")} · ${online} / ${runtimes.length}`;
+    if (!runtimes.length) {
+      container.append(node("div", "panel-empty", t("no_records")));
+      return;
+    }
+    runtimes.forEach((runtime) => {
+      const entry = catalog.find((candidate) => candidate.agent_id === runtime.agentId) || null;
+      const card = node("article", `agent-runtime-card ${runtime.activity.tone}`);
+      const heading = node("div", "agent-runtime-heading");
+      const identity = node("div", "agent-runtime-identity");
+      identity.append(node("span", "agent-avatar", initials(entry?.label || runtime.agentId)));
+      const copy = node("div", ""); copy.append(node("strong", "", entry?.label || runtime.agentId), node("small", "", runtime.agentId)); identity.append(copy);
+      const status = node("span", `agent-live-state ${runtime.activity.tone}`);
+      status.append(node("i", "presence-dot"), node("span", "", t(runtime.activity.key)));
+      heading.append(identity, status); card.append(heading);
+
+      const activity = node("p", "agent-observable-activity", runtime.summary || t(runtime.activity.key));
+      activity.title = runtime.summary || t(runtime.activity.key);
+      card.append(activity);
+
+      if (!entry) {
+        const facts = node("div", "agent-runtime-facts");
+        facts.append(
+          node("span", "", t("model")), node("span", "", runtime.model || "--"),
+          node("span", "", t("permission")), node("span", "", runtime.permission ? permissionTierLabel(runtime.permission) : "--")
+        );
+        card.append(facts); container.append(card);
+        return;
+      }
+
+      const controls = node("div", "agent-runtime-controls");
+      const routeLabel = node("label", "compact-field"); routeLabel.append(node("span", "", t("model_route")));
+      const routeSelect = node("select", "agent-route-select");
+      const saved = state.agentLaunchSelections[runtime.agentId] || {};
+      replaceSelectOptions(routeSelect, managedRouteOptions(runtime.agentId), saved.route || runtime.route || runtime.model);
+      routeLabel.append(routeSelect); controls.append(routeLabel);
+
+      const permissionLabel = node("label", "compact-field"); permissionLabel.append(node("span", "", t("permission")));
+      const permissionSelect = node("select", "agent-permission-select");
+      const tiers = entry?.permission_tiers || [];
+      tiers.forEach((tier) => {
+        const option = node("option", "", `${permissionTierLabel(tier.tier_id)} · ${capabilityStatusLabel(tier.status)}`);
+        option.value = tier.tier_id; option.disabled = !tier.launchable; permissionSelect.append(option);
+      });
+      const preferredPermission = saved.permission || runtime.permission || "observe";
+      permissionSelect.value = Array.from(permissionSelect.options).some((option) => option.value === preferredPermission)
+        ? preferredPermission
+        : (Array.from(permissionSelect.options).find((option) => !option.disabled)?.value || "");
+      permissionLabel.append(permissionSelect); controls.append(permissionLabel);
+      const saveSelection = () => { state.agentLaunchSelections[runtime.agentId] = { route: routeSelect.value, permission: permissionSelect.value }; };
+      routeSelect.addEventListener("change", saveSelection); permissionSelect.addEventListener("change", saveSelection);
+
+      const action = node("button", "secondary-button", t(runtime.session ? "view_terminal" : "configure_agent")); action.type = "button";
+      action.disabled = !runtime.session && !entry?.installed;
+      action.addEventListener("click", () => {
+        if (runtime.session) {
+          state.selectedSessionId = runtime.session.session_id;
+          state.cockpitMode = "focus";
+          renderCockpit();
+          byId("session-workspace").scrollIntoView({ behavior: "smooth", block: "start" });
+          return;
+        }
+        saveSelection();
+        byId("managed-agent").value = runtime.agentId;
+        updateManagedRouteOptions(runtime.agentId, routeSelect.value);
+        updateManagedPermissionControls();
+        if (Array.from(byId("managed-permission").options).some((option) => option.value === permissionSelect.value)) {
+          byId("managed-permission").value = permissionSelect.value;
+          updateManagedPermissionControls();
+        }
+        byId("managed-launch-heading").scrollIntoView({ behavior: "smooth", block: "start" });
+        byId("managed-input").focus();
+      });
+      controls.append(action); card.append(controls);
+      container.append(card);
+    });
+  }
+
   function renderCockpit() {
     const cockpit = state.data?.cockpit || {}; const sessions = cockpit.sessions || []; const events = cockpit.events || []; const presence = cockpit.presence || [];
     if (!sessions.some((entry) => entry.session_id === state.selectedSessionId)) state.selectedSessionId = sessions[0]?.session_id || "";
@@ -887,10 +1178,32 @@
     renderMetricStrip("cockpit-metrics", [
       [t("managed_sessions"), sessions.length], [t("connected_agents"), presence.length], [t("session_activity"), events.length], [t("routes"), (state.data?.routes || []).length]
     ]);
+    renderAgentRuntimeStrip();
     byId("session-count").textContent = String(sessions.length); byId("session-event-count").textContent = String(events.length);
     renderManagedControls();
     const sessionList = byId("session-list"); sessionList.replaceChildren();
-    if (!sessions.length) sessionList.append(node("div", "panel-empty", t("no_records")));
+    if (!sessions.length) {
+      const dormantAgents = (state.data?.managed_agent_catalog || []).filter((entry) => entry.primary);
+      if (!dormantAgents.length) sessionList.append(node("div", "panel-empty", t("no_records")));
+      dormantAgents.forEach((entry) => {
+        const card = node("article", "record-row session-row dormant-terminal");
+        const head = node("div", "record-head");
+        head.append(node("strong", "", entry.label || entry.agent_id), node("span", `status-badge ${entry.installed ? "muted" : "danger"}`, t(entry.installed ? "terminal_not_started" : "not_installed")));
+        card.append(head, node("p", "", [entry.publisher, entry.version].filter(Boolean).join(" · ")));
+        const terminal = node("pre", "session-terminal session-terminal-preview", t("terminal_not_started"));
+        card.append(terminal);
+        const actions = node("div", "record-actions");
+        const startButton = node("button", "primary-button", t("start_terminal")); startButton.type = "button"; startButton.disabled = !entry.installed;
+        startButton.addEventListener("click", () => {
+          byId("managed-agent").value = entry.agent_id;
+          updateManagedRouteOptions(entry.agent_id);
+          updateManagedPermissionControls();
+          byId("managed-launch-heading").scrollIntoView({ behavior: "smooth", block: "start" });
+          byId("managed-input").focus();
+        });
+        actions.append(startButton); card.append(actions); sessionList.append(card);
+      });
+    }
     sessions.forEach((entry) => {
       const statusValue = entry.state || entry.status || entry.lifecycle_state || "unknown";
       const row = node("article", `record-row session-row ${entry.session_id === state.selectedSessionId ? "selected" : ""}`);
@@ -900,7 +1213,39 @@
       row.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectSession(); } });
       const head = node("div", "record-head"); head.append(node("strong", "", entry.display_name || entry.client_name || entry.session_id), node("span", `status-badge ${dispatchTone(statusValue)}`, displayValue(statusValue))); row.append(head);
       row.append(node("p", "", [entry.source_type, entry.adapter_id, entry.model_id || entry.requested_route].filter(Boolean).join(" · ")));
+      const permissionEvidence = entry.permission_tier || entry.session_authorization?.permission_tier || "";
+      const sessionRuntimeMeta = node("div", "session-runtime-meta");
+      sessionRuntimeMeta.append(
+        node("span", "", `${t("model")}: ${entry.model_id || entry.requested_route || "--"}`),
+        node("span", "", `${t("permission")}: ${permissionEvidence ? permissionTierLabel(permissionEvidence) : t("unknown")}`)
+      );
+      const latestObservableEvent = latestByTime(events.filter((event) => event.session_id === entry.session_id), ["created_utc"]);
+      const sessionFresh = Boolean(entry.managed) || recentObservable(
+        entry,
+        ["last_seen_utc", "updated_utc", "started_utc"],
+        180000
+      );
+      const eventFresh = recentObservable(latestObservableEvent, ["created_utc"], 180000);
+      const observable = terminalStatus(statusValue)
+        ? { key: statusValue === "failed" ? "activity_failed" : "activity_completed", tone: statusValue === "failed" ? "danger" : "online" }
+        : !sessionFresh
+          ? { key: "activity_stale", tone: "offline" }
+          : (latestObservableEvent && eventFresh ? eventActivity(latestObservableEvent) : { key: "activity_running", tone: "working" });
+      const observableState = node("span", `agent-live-state ${observable.tone}`);
+      observableState.append(node("i", "presence-dot"), node("span", "", t(observable.key)));
+      sessionRuntimeMeta.append(observableState); row.append(sessionRuntimeMeta);
       const meta = node("div", "record-meta"); [entry.owner_agent_id, entry.role_id, timeLabel(entry.updated_utc || entry.last_seen_utc)].filter(Boolean).forEach((value) => meta.append(node("span", "", value))); row.append(meta);
+      if (state.cockpitMode === "grid") {
+        const recentEvents = events.filter((event) => event.session_id === entry.session_id).slice(0, 12).reverse();
+        const terminal = node("pre", "session-terminal session-terminal-preview");
+        const eventText = recentEvents.map((event) => {
+          const stamp = timeLabel(event.created_utc) || "--:--";
+          const channel = event.stream || event.kind || "event";
+          return `[${stamp}] ${channel}\n${event.summary || event.state_after || "--"}`;
+        }).join("\n\n");
+        terminal.textContent = [entry.terminal_detail || entry.terminal_outcome || "", eventText].filter(Boolean).join("\n\n") || t("no_records");
+        row.append(terminal);
+      }
       const multimodal = entry.multimodal_capability || {};
       if (multimodal.attachment_input_supported) {
         const modes = [multimodal.image_input, multimodal.audio_input, multimodal.text_file_input].filter(Boolean).map(displayValue);
@@ -967,6 +1312,14 @@
               attachmentInput.value = "";
               renderTurnAttachments();
             });
+            input.addEventListener("paste", (event) => handleClipboardImages(event, async (files) => {
+              const current = state.managedTurnAttachments[entry.session_id] || [];
+              const next = await readManagedAttachmentFiles(files, current, allowedTurnSuffixes);
+              if (!next) return false;
+              state.managedTurnAttachments[entry.session_id] = next;
+              renderTurnAttachments();
+              return true;
+            }));
             renderTurnAttachments();
             attachmentTools.append(attachmentInput, attachmentButton, attachmentList);
           }
@@ -1076,15 +1429,25 @@
       head.append(node("strong", "", entry.schedule_id), node("span", `status-badge ${entry.enabled ? "success" : "muted"}`, t(entry.enabled ? "enabled" : "disabled"))); row.append(head);
       row.append(node("p", "", entry.task_text || "--"));
       const meta = node("div", "record-meta");
-      [entry.workflow_id, `${Math.max(1, Math.round(Number(entry.interval_seconds || 60) / 60))} ${t("interval_minutes")}`, timeLabel(entry.updated_utc), (entry.sha256 || "").slice(0, 12)].filter(Boolean).forEach((value) => meta.append(node("span", "", value))); row.append(meta);
-      const actions = node("div", "record-actions"); const toggle = node("button", "secondary-button", t(entry.enabled ? "disable" : "enable")); toggle.type = "button";
+      [entry.workflow_id, `${Math.max(1, Math.round(Number(entry.interval_seconds || 60) / 60))} ${t("interval_minutes")}`, entry.next_run_epoch ? `${t("schedule_next_run")}: ${epochLabel(entry.next_run_epoch)}` : "", timeLabel(entry.updated_utc), (entry.sha256 || "").slice(0, 12)].filter(Boolean).forEach((value) => meta.append(node("span", "", value))); row.append(meta);
+      const actions = node("div", "record-actions"); const edit = node("button", "secondary-button", t("edit_schedule")); edit.type = "button"; const toggle = node("button", "secondary-button", t(entry.enabled ? "disable" : "enable")); toggle.type = "button";
+      edit.addEventListener("click", () => {
+        byId("schedule-id").value = entry.schedule_id || "";
+        byId("schedule-workflow").value = entry.workflow_id || byId("schedule-workflow").value;
+        byId("schedule-task").value = entry.task_text || "";
+        byId("schedule-interval").value = String(Math.max(1, Math.round(Number(entry.interval_seconds || 60) / 60)));
+        byId("schedule-delay").value = "0";
+        byId("schedule-enabled").checked = Boolean(entry.enabled);
+        byId("schedule-form").scrollIntoView({ behavior: "smooth", block: "center" });
+        byId("schedule-task").focus();
+      });
       toggle.addEventListener("click", async () => {
         toggle.disabled = true;
         try { await postAction("/api/schedule/enabled", { schedule_id: entry.schedule_id, enabled: !entry.enabled }); toast(t(entry.enabled ? "schedule_disabled" : "schedule_enabled")); }
         catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
         finally { toggle.disabled = false; }
       });
-      actions.append(toggle); row.append(actions); scheduleList.append(row);
+      actions.append(edit, toggle); row.append(actions); scheduleList.append(row);
     });
   }
 
@@ -1119,6 +1482,27 @@
       identity.append(copy);
       heading.append(identity, node("span", `status-badge ${entry.installed ? "success" : "danger"}`, t(entry.installed ? "installed" : "not_installed")));
       card.append(heading);
+      if (entry.automatic_install_supported) {
+        const installActions = node("div", "official-agent-actions");
+        const installButton = node("button", "secondary-button", t(entry.installed ? "update_agent" : "install_agent"));
+        installButton.type = "button";
+        installButton.addEventListener("click", async () => {
+          if (!window.confirm(t("install_agent_confirm"))) return;
+          installButton.disabled = true;
+          try {
+            await postAction("/api/agent/install", { agent_id: entry.agent_id, confirmed: true, update: Boolean(entry.installed) });
+            toast(t("agent_installer_started"));
+          } catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
+          finally { installButton.disabled = false; }
+        });
+        installActions.append(installButton);
+        card.append(installActions);
+      } else if (!entry.installed && entry.docs_url) {
+        const installActions = node("div", "official-agent-actions");
+        const guide = node("a", "secondary-button", t("publisher_guide"));
+        guide.href = entry.docs_url; guide.target = "_blank"; guide.rel = "noopener noreferrer";
+        installActions.append(guide); card.append(installActions);
+      }
 
       const receipt = entry.receipt || null;
       const meta = node("div", "official-agent-meta");
@@ -1168,6 +1552,28 @@
       card.append(mappingAxis);
       container.append(card);
     });
+    const acpxRequired = agents.some((entry) => new Set(["grok", "kimi-code"]).has(entry.agent_id) && !entry.observe_dependencies_ready);
+    if (acpxRequired) {
+      const card = node("article", "official-agent-card dependency-card");
+      const heading = node("div", "official-agent-heading");
+      const identity = node("div", "official-agent-identity");
+      identity.append(node("span", "official-agent-mark", "AX"));
+      const copy = node("div", ""); copy.append(node("strong", "", t("acpx_runtime")), node("small", "", t("acpx_required"))); identity.append(copy);
+      heading.append(identity, node("span", "status-badge danger", t("not_installed"))); card.append(heading);
+      const actions = node("div", "official-agent-actions"); const install = node("button", "secondary-button", t("install_dependency")); install.type = "button";
+      install.addEventListener("click", async () => {
+        if (!window.confirm(t("install_agent_confirm"))) return;
+        install.disabled = true;
+        try { await postAction("/api/agent/install", { agent_id: "acpx-runtime", confirmed: true, update: false }); toast(t("agent_installer_started")); }
+        catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
+        finally { install.disabled = false; }
+      });
+      actions.append(install); card.append(actions); container.append(card);
+    }
+  }
+
+  function updateManagedRouteOptions(agentId = byId("managed-agent").value, selectedValue = "") {
+    replaceSelectOptions(byId("managed-route"), managedRouteOptions(agentId), selectedValue || byId("managed-route").value);
   }
 
   function updateManagedPermissionControls() {
@@ -1219,9 +1625,10 @@
     const agentSelect = byId("managed-agent");
     replaceSelectOptions(agentSelect, agents.map((entry) => [entry.agent_id, entry.label || entry.agent_id]), agentSelect.value);
     replaceSelectOptions(byId("managed-role"), managedRoleValues().map((value) => [value, roleLabel(value)]), byId("managed-role").value || "equal-participant");
+    updateManagedRouteOptions(agentSelect.value);
     renderOfficialAgentCards();
     updateManagedPermissionControls();
-    agentSelect.onchange = () => { updateManagedPermissionControls(); renderOfficialAgentCards(); };
+    agentSelect.onchange = () => { updateManagedRouteOptions(agentSelect.value); updateManagedPermissionControls(); renderOfficialAgentCards(); };
     byId("managed-permission").onchange = updateManagedPermissionControls;
     byId("managed-binding").onchange = updateManagedPermissionControls;
   }
@@ -1242,36 +1649,114 @@
     renderRecordList("peer-call-list", calls, (entry) => ({
       title: entry.question || entry.request_id,
       status: entry.status,
-      body: [entry.requester, "→", entry.recipient].filter(Boolean).join(" "),
-      meta: [entry.task_id, entry.approval_mode, timeLabel(entry.request_utc)]
+      body: [[entry.requester, "→", entry.recipient].filter(Boolean).join(" "), entry.response].filter(Boolean).join("\n"),
+      meta: [entry.task_id, entry.approval_mode, `${entry.artifact_count || 0}/${entry.response_artifact_count || 0} ${t("files")}`, (entry.request_sha256 || "").slice(0, 16), (entry.response_sha256 || "").slice(0, 16), timeLabel(entry.request_utc), timeLabel(entry.response_utc)]
     }));
     renderRecordList("peer-review-list", reviews, (entry) => ({
       title: entry.findings || entry.review_id,
       status: entry.verdict,
       body: entry.reviewer,
-      meta: [entry.task_id, entry.score === null || entry.score === undefined ? "" : `${entry.score}`, timeLabel(entry.review_utc)]
+      meta: [entry.task_id, entry.score === null || entry.score === undefined ? "" : `${entry.score}`, `${entry.artifact_count || 0} ${t("files")}`, (entry.sha256 || "").slice(0, 16), timeLabel(entry.review_utc)]
     }));
+  }
+
+  function renderWorktreeDiff() {
+    const summary = byId("worktree-diff-summary");
+    const files = byId("worktree-diff-files");
+    const viewer = byId("worktree-diff-view");
+    if (!summary || !files || !viewer) return;
+    files.replaceChildren(); viewer.replaceChildren();
+    if (state.worktreeDiffLoading) {
+      summary.textContent = "…";
+      viewer.append(node("div", "panel-empty", "…"));
+      return;
+    }
+    const diff = state.worktreeDiff;
+    if (!diff) {
+      summary.textContent = "--";
+      viewer.append(node("div", "panel-empty", t("diff_unavailable")));
+      return;
+    }
+    if (!diff.available) {
+      summary.textContent = t("diff_unavailable");
+      viewer.append(node("div", "panel-empty", t("diff_unavailable")));
+      return;
+    }
+    summary.textContent = `${diff.file_count || 0} ${t("code_files")} · +${diff.additions || 0} / −${diff.deletions || 0}`;
+    (diff.files || []).forEach((entry) => {
+      const row = node("div", "diff-file-row");
+      row.append(node("span", `diff-file-status status-${String(entry.status || "m").toLowerCase()}`, entry.status || "M"));
+      row.append(node("span", "diff-file-path", entry.path || "--"));
+      const stat = node("span", "diff-file-stat");
+      if (entry.binary) stat.textContent = "BIN";
+      else {
+        stat.append(node("span", "diff-stat-add", `+${entry.additions ?? "?"}`), node("span", "diff-stat-delete", `−${entry.deletions ?? "?"}`));
+      }
+      row.append(stat); files.append(row);
+    });
+    if (!(diff.files || []).length) files.append(node("div", "panel-empty", t("diff_clean")));
+    if (!diff.patch) {
+      viewer.append(node("div", "panel-empty", diff.dirty ? t("diff_unavailable") : t("diff_clean")));
+      return;
+    }
+    const code = node("div", "diff-code");
+    const patchLines = String(diff.patch).split("\n");
+    const visiblePatchLines = patchLines.slice(0, MAX_DIFF_RENDER_LINES);
+    visiblePatchLines.forEach((line) => {
+      let className = "diff-line";
+      if (line.startsWith("diff --git") || line.startsWith("index ")) className += " diff-file-header";
+      else if (line.startsWith("@@")) className += " diff-hunk";
+      else if (line.startsWith("+") && !line.startsWith("+++")) className += " diff-add";
+      else if (line.startsWith("-") && !line.startsWith("---")) className += " diff-delete";
+      else if (line.startsWith("+++ ") || line.startsWith("--- ")) className += " diff-path";
+      code.append(node("div", className, line || " "));
+    });
+    viewer.append(code);
+    if (diff.patch_truncated || diff.files_truncated || patchLines.length > visiblePatchLines.length) {
+      viewer.append(node("div", "diff-truncated", t("diff_truncated")));
+    }
+  }
+
+  async function fetchWorktreeDiff(force = false) {
+    if (state.worktreeDiffLoading || (!force && state.worktreeDiff)) return;
+    state.worktreeDiffLoading = true; renderWorktreeDiff();
+    try {
+      const response = await fetchWithTimeout("/api/worktree/diff", {
+        headers: { Authorization: authorizationValue() },
+        cache: "no-store"
+      }, 15000);
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || String(response.status));
+      state.worktreeDiff = payload;
+    } catch (error) {
+      state.worktreeDiff = { available: false, reason: localizedErrorMessage(error.message), files: [], patch: "" };
+    } finally {
+      state.worktreeDiffLoading = false; renderWorktreeDiff();
+    }
   }
 
   function renderChanges() {
     const rows = state.data?.changes || []; byId("change-summary").textContent = `${rows.length} ${t("records")}`;
+    byId("recorded-change-count").textContent = String(rows.length);
+    renderWorktreeDiff();
     renderRecordList("change-list", rows, (entry) => ({
       title: entry.summary || entry.record_id,
       status: entry.approval_mode,
-      body: entry.test_summary,
-      meta: [entry.actor, entry.task_id, `${entry.changed_path_count || 0} ${t("files")}`, timeLabel(entry.recorded_utc)]
+      body: [entry.test_summary, ...(entry.changed_paths || [])].filter(Boolean).join("\n"),
+      meta: [entry.actor, entry.task_id, `${entry.changed_path_count || 0} ${t("files")}`, `${entry.review_count || 0} ${t("review_results")}`, (entry.sha256 || "").slice(0, 16), timeLabel(entry.recorded_utc)]
     }));
   }
 
   function renderAudit() {
     byId("snapshot-signature").textContent = (state.data?.signature || "").slice(0, 16);
     const grid = byId("audit-grid"); grid.replaceChildren();
-    Object.entries(state.data?.counts || {}).forEach(([key, value]) => { const item = node("div", "audit-item"); item.append(node("span", "", key), node("strong", "", compact(value))); grid.append(item); });
+    Object.entries(state.data?.counts || {}).forEach(([key, value]) => { const item = node("div", "audit-item"); item.append(node("span", "", t(key)), node("strong", "", compact(value))); grid.append(item); });
+    if (!grid.childElementCount) grid.append(node("div", "panel-empty", t("no_records")));
     const rows = state.data?.events || []; byId("audit-event-count").textContent = String(rows.length);
     renderRecordList("audit-event-list", rows, (entry) => ({
       title: entry.event_type || entry.event_id,
       body: entry.actor,
-      meta: [entry.task_id, entry.sequence, timeLabel(entry.created_utc), (entry.chain_sha256 || "").slice(0, 12)]
+      meta: [entry.task_id, entry.sequence, timeLabel(entry.created_utc), (entry.payload_sha256 || "").slice(0, 12), (entry.prev_chain_sha256 || "").slice(0, 12), (entry.chain_sha256 || "").slice(0, 16)]
     }));
   }
 
@@ -1298,7 +1783,7 @@
       title: entry.action || entry.decision_id,
       status: entry.decision,
       body: entry.reason,
-      meta: [entry.agent_id, entry.task_id, entry.decided_by, timeLabel(entry.created_utc)]
+      meta: [entry.agent_id, entry.task_id, entry.decided_by, entry.expires_epoch ? `${t("expires")}: ${epochLabel(entry.expires_epoch)}` : "", entry.consumed_utc ? `${t("consumed")}: ${timeLabel(entry.consumed_utc)}` : "", (entry.sha256 || "").slice(0, 16), timeLabel(entry.created_utc)]
     }));
     renderRecordList("capability-list", capabilities, (entry) => ({
       title: entry.display_name || entry.capability_id,
@@ -1334,14 +1819,23 @@
         finally { seal.disabled = false; verify.disabled = false; }
       };
       seal.addEventListener("click", () => run("seal")); verify.addEventListener("click", () => run("verify"));
-      if (!new Set(["sealed", "verified"]).has(String(entry.state || "").toLowerCase())) actions.append(seal);
-      actions.append(verify); row.append(actions); executionList.append(row);
+      const executionState = String(entry.state || "").toLowerCase();
+      if (!new Set(["sealed", "verified"]).has(executionState)) actions.append(seal);
+      if (new Set(["sealed", "verified"]).has(executionState)) actions.append(verify);
+      if (actions.childElementCount) row.append(actions); executionList.append(row);
     });
   }
 
   function renderConnections() {
     const connections = state.data?.connections || []; const routes = state.data?.routes || [];
+    const enabledConnections = connections.filter((entry) => entry.enabled);
     byId("connect-summary").textContent = `${connections.filter((row) => row.enabled).length} / ${connections.length}`; byId("connection-count").textContent = String(connections.length); byId("route-count").textContent = String(routes.length);
+    replaceSelectOptions(
+      byId("provider-route-connection"),
+      enabledConnections.length
+        ? enabledConnections.map((entry) => [entry.connection_id, `${entry.display_name || entry.connection_id} · ${entry.route_class || "--"}`])
+        : [["", t("no_records")]]
+    );
     renderRecordList("connection-list", connections, (entry) => ({
       title: entry.display_name || entry.connection_id,
       status: entry.enabled ? t("enabled") : t("disabled"),
@@ -1367,8 +1861,8 @@
     }));
     renderRecordList("briefing-list", briefings, (entry) => ({
       title: entry.task_id || entry.briefing_id,
-      body: entry.agent_id,
-      meta: [entry.room_id, `${entry.memory_count || 0} ${t("memory_records")}`, timeLabel(entry.created_utc)]
+      body: [entry.agent_id, ...(entry.memory_bindings || []).map((binding) => `${binding.record_type || "--"} · ${binding.memory_id || "--"} · ${(binding.memory_sha256 || "").slice(0, 12)}`)].filter(Boolean).join("\n"),
+      meta: [entry.room_id, `${entry.memory_count || 0} ${t("memory_records")}`, (entry.sha256 || "").slice(0, 16), timeLabel(entry.created_utc)]
     }));
   }
 
@@ -1382,7 +1876,7 @@
       ["reasoning_tokens", t("reasoning"), "var(--amber)"]
     ];
     const width = 720; const height = 230; const left = 42; const right = 14; const top = 18; const bottom = 34;
-    const values = rows.flatMap((row) => metrics.map(([key]) => Number(row[key] || 0)));
+    const values = rows.flatMap((row) => metrics.map(([key]) => row[key] === null || row[key] === undefined ? null : Number(row[key]))).filter((value) => Number.isFinite(value));
     const maximum = Math.max(1, ...values);
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img"); svg.setAttribute("aria-label", t("token_trend"));
@@ -1391,12 +1885,19 @@
       const line = document.createElementNS(svg.namespaceURI, "line"); line.setAttribute("x1", String(left)); line.setAttribute("x2", String(width - right)); line.setAttribute("y1", String(y)); line.setAttribute("y2", String(y)); line.setAttribute("class", "usage-grid-line"); svg.append(line);
     }
     metrics.forEach(([key, label, color]) => {
-      const points = rows.map((row, index) => {
+      const segments = []; let segment = [];
+      rows.forEach((row, index) => {
+        if (row[key] === null || row[key] === undefined || !Number.isFinite(Number(row[key]))) {
+          if (segment.length) segments.push(segment);
+          segment = [];
+          return;
+        }
         const x = left + ((width - left - right) * (rows.length === 1 ? 0.5 : index / (rows.length - 1)));
-        const y = top + (height - top - bottom) * (1 - (Number(row[key] || 0) / maximum));
-        return `${x.toFixed(2)},${y.toFixed(2)}`;
+        const y = top + (height - top - bottom) * (1 - (Number(row[key]) / maximum));
+        segment.push(`${x.toFixed(2)},${y.toFixed(2)}`);
       });
-      const path = document.createElementNS(svg.namespaceURI, "polyline"); path.setAttribute("points", points.join(" ")); path.setAttribute("fill", "none"); path.setAttribute("stroke", color); path.setAttribute("stroke-width", "2"); path.setAttribute("vector-effect", "non-scaling-stroke"); path.setAttribute("aria-label", label); svg.append(path);
+      if (segment.length) segments.push(segment);
+      segments.forEach((points) => { const path = document.createElementNS(svg.namespaceURI, "polyline"); path.setAttribute("points", points.join(" ")); path.setAttribute("fill", "none"); path.setAttribute("stroke", color); path.setAttribute("stroke-width", "2"); path.setAttribute("vector-effect", "non-scaling-stroke"); path.setAttribute("aria-label", label); svg.append(path); });
     });
     [0, Math.floor((rows.length - 1) / 2), rows.length - 1].filter((value, index, values) => values.indexOf(value) === index).forEach((index) => {
       const x = left + ((width - left - right) * (rows.length === 1 ? 0.5 : index / (rows.length - 1)));
@@ -1413,16 +1914,18 @@
     const periodLabels = { today: t("period_today"), "7d": t("period_7d"), "30d": t("period_30d"), all: t("period_all") };
     const selector = byId("usage-periods"); selector.replaceChildren();
     Object.entries(periodLabels).forEach(([key, label]) => {
-      const row = periods[key] || {}; const button = node("button", `usage-period-button${key === state.usagePeriod ? " active" : ""}`); button.type = "button"; button.setAttribute("role", "tab"); button.setAttribute("aria-selected", String(key === state.usagePeriod)); button.append(node("span", "", label), node("strong", "", compact(row.total_tokens || 0)), node("small", "", `${compact(row.reported_calls || 0)} ${state.locale === "en" ? "calls" : state.locale === "zh-Hans" ? "次调用" : "次呼叫"}`)); button.addEventListener("click", () => { state.usagePeriod = key; renderUsage(); }); selector.append(button);
+      const row = periods[key] || {}; const button = node("button", `usage-period-button${key === state.usagePeriod ? " active" : ""}`); button.type = "button"; button.setAttribute("role", "tab"); button.setAttribute("aria-selected", String(key === state.usagePeriod)); button.append(node("span", "", label), node("strong", "", row.total_tokens === null || row.total_tokens === undefined ? "--" : compact(row.total_tokens)), node("small", "", `${row.reported_calls === null || row.reported_calls === undefined ? "--" : compact(row.reported_calls)} ${state.locale === "en" ? "calls" : state.locale === "zh-Hans" ? "次调用" : "次呼叫"}`)); button.addEventListener("click", () => { state.usagePeriod = key; renderUsage(); }); selector.append(button);
     });
     const values = [
-      [t("input"), Number(selected.input_tokens || 0)], [t("output"), Number(selected.output_tokens || 0)], [t("cache"), Number(selected.cached_input_tokens || 0)], [t("reasoning"), Number(selected.reasoning_tokens || 0)]
+      [t("input"), selected.input_tokens === null || selected.input_tokens === undefined ? null : Number(selected.input_tokens)], [t("output"), selected.output_tokens === null || selected.output_tokens === undefined ? null : Number(selected.output_tokens)], [t("cache"), selected.cached_input_tokens === null || selected.cached_input_tokens === undefined ? null : Number(selected.cached_input_tokens)], [t("reasoning"), selected.reasoning_tokens === null || selected.reasoning_tokens === undefined ? null : Number(selected.reasoning_tokens)]
     ];
-    const max = Math.max(1, ...values.map((row) => row[1])); const bars = byId("usage-bars"); bars.replaceChildren();
-    values.forEach(([label, value]) => { const row = node("div", "usage-row"); const track = node("div", "bar-track"); const fill = node("div", "bar-fill"); fill.style.width = `${Math.max(0, (value / max) * 100)}%`; track.append(fill); row.append(node("span", "", label), track, node("strong", "usage-value", compact(value))); bars.append(row); });
-    byId("usage-total").textContent = `${periodLabels[state.usagePeriod] || ""} · ${t("total")} ${compact(selected.total_tokens || 0)}`;
-    const providers = byId("usage-providers"); providers.replaceChildren(); (selected.providers || []).forEach((provider) => { const row = node("div", "usage-model"); row.append(node("strong", "", provider.provider_id || "--"), node("span", "", `${compact(provider.provider_calls || 0)} ${state.locale === "en" ? "calls" : state.locale === "zh-Hans" ? "次调用" : "次呼叫"}`), node("span", "", compact(provider.total_tokens || 0))); providers.append(row); }); if (!providers.childElementCount) providers.append(node("div", "panel-empty", t("no_records")));
-    const models = byId("usage-models"); models.replaceChildren(); (selected.models || []).forEach((model) => { const row = node("div", "usage-model"); row.append(node("strong", "", model.model_id || "--"), node("span", "", model.provider_id || "--"), node("span", "", compact(model.total_tokens || 0))); models.append(row); }); if (!models.childElementCount) models.append(node("div", "panel-empty", t("no_records")));
+    const max = Math.max(1, ...values.map((row) => row[1]).filter((value) => Number.isFinite(value))); const bars = byId("usage-bars"); bars.replaceChildren();
+    values.forEach(([label, value]) => { const row = node("div", "usage-row"); const track = node("div", "bar-track"); const fill = node("div", "bar-fill"); fill.style.width = `${Number.isFinite(value) ? Math.max(0, (value / max) * 100) : 0}%`; track.append(fill); row.append(node("span", "", label), track, node("strong", "usage-value", Number.isFinite(value) ? compact(value) : "--")); bars.append(row); });
+    byId("usage-total").textContent = `${periodLabels[state.usagePeriod] || ""} · ${t("total")} ${selected.total_tokens === null || selected.total_tokens === undefined ? "--" : compact(selected.total_tokens)}`;
+    const providers = byId("usage-providers"); providers.replaceChildren(); (selected.providers || []).forEach((provider) => { const row = node("div", "usage-model"); row.append(node("strong", "", provider.provider_id || "--"), node("span", "", `${provider.provider_calls === null || provider.provider_calls === undefined ? "--" : compact(provider.provider_calls)} ${state.locale === "en" ? "calls" : state.locale === "zh-Hans" ? "次调用" : "次呼叫"}`), node("span", "", provider.total_tokens === null || provider.total_tokens === undefined ? "--" : compact(provider.total_tokens))); providers.append(row); }); if (!providers.childElementCount) providers.append(node("div", "panel-empty", t("no_records")));
+    const models = byId("usage-models"); models.replaceChildren(); (selected.models || []).forEach((model) => { const row = node("div", "usage-model"); row.append(node("strong", "", model.model_id || "--"), node("span", "", model.provider_id || "--"), node("span", "", model.total_tokens === null || model.total_tokens === undefined ? "--" : compact(model.total_tokens))); models.append(row); }); if (!models.childElementCount) models.append(node("div", "panel-empty", t("no_records")));
+    byId("usage-truncation").hidden = !selected.trend_truncated;
+    byId("usage-truncation").textContent = selected.trend_truncated ? t("usage_truncated") : "";
     renderUsageTrend(selected.trend || []);
   }
 
@@ -1451,6 +1954,7 @@
     const unread = rows.filter((entry) => !entry.read).length;
     const unreadBadge = byId("announcement-unread");
     const announcementButton = byId("announcement-button");
+    byId("mark-announcements-read").disabled = unread === 0;
     unreadBadge.hidden = unread === 0;
     unreadBadge.textContent = "";
     unreadBadge.title = unread ? `${t("announcement")} · ${unread}` : "";
@@ -1550,6 +2054,7 @@
     byId("announcement-button").classList.toggle("active", state.view === "announcement");
     const room = state.data.rooms.find((row) => row.room_id === state.data.room_id);
     byId("room-title").textContent = room?.name || state.data.room_id; byId("room-context").textContent = `${state.data.scope} · ${state.data.members.length} ${t("agents")}`; byId("scope-label").textContent = state.data.scope; byId("scope-chip").textContent = state.data.scope; byId("header-scope").textContent = state.data.scope;
+    byId("appearance-current").textContent = state.data?.appearance?.selected === "pixel" ? "Pixel" : "Modern";
     const historyRecord = state.data.history_import?.selected || null;
     const historyNotice = byId("history-notice"); historyNotice.hidden = !historyRecord;
     if (historyRecord) {
@@ -1589,8 +2094,13 @@
       }
       if (!response.ok) throw new Error(String(response.status)); const payload = await response.json();
       state.etag = response.headers.get("ETag") || ""; state.roomId = payload.room_id; const changed = payload.signature !== state.signature; state.data = payload; state.signature = payload.signature;
-      if (changed || force) render(); setConnection(true);
-    } catch (_error) { setConnection(false); }
+      if (changed || force) render(); setConnection(true); byId("connection-error").hidden = true;
+    } catch (error) {
+      setConnection(false);
+      const panel = byId("connection-error");
+      panel.textContent = `${t("bootstrap_failed")}${error?.message ? ` · ${localizedErrorMessage(error.message)}` : ""}`;
+      panel.hidden = false;
+    }
     finally { state.loading = false; }
   }
 
@@ -1611,6 +2121,34 @@
     });
   }
 
+  function clipboardImageFiles(event) {
+    const clipboard = event?.clipboardData;
+    if (!clipboard) return [];
+    let files = Array.from(clipboard.files || []).filter((file) => String(file.type || "").toLowerCase().startsWith("image/"));
+    if (!files.length) {
+      files = Array.from(clipboard.items || [])
+        .filter((item) => item.kind === "file" && String(item.type || "").toLowerCase().startsWith("image/"))
+        .map((item) => item.getAsFile())
+        .filter(Boolean);
+    }
+    const extensions = { "image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp" };
+    return files.map((file, index) => {
+      const lowerName = String(file.name || "").toLowerCase();
+      if (Array.from(managedImageAttachmentSuffixes).some((suffix) => lowerName.endsWith(suffix))) return file;
+      const suffix = extensions[String(file.type || "").toLowerCase()] || ".png";
+      return new File([file], `clipboard-image-${Date.now()}-${index + 1}${suffix}`, { type: file.type || "image/png", lastModified: file.lastModified || Date.now() });
+    });
+  }
+
+  async function handleClipboardImages(event, addFiles) {
+    const files = clipboardImageFiles(event);
+    if (!files.length) return false;
+    event.preventDefault();
+    const added = await addFiles(files);
+    if (added !== false) toast(t("clipboard_image_attached"));
+    return true;
+  }
+
   function renderAttachmentCollection(list, attachments, onRemove) {
     list.replaceChildren();
     attachments.forEach((attachment, index) => {
@@ -1622,16 +2160,21 @@
     });
   }
 
-  async function readManagedAttachmentFiles(files, currentRows = [], allowedSuffixes = managedAttachmentSuffixes) {
-    const selected = Array.from(files || []); if (!selected.length) return null;
-    const combined = [...currentRows.map((row) => ({ size: row.size })), ...selected];
-    const invalidType = selected.some((file) => {
+  function attachmentValidationError(selected, currentRows, allowedSuffixes = null) {
+    if (allowedSuffixes && selected.some((file) => {
       const index = file.name.lastIndexOf(".");
       return !allowedSuffixes.has(index >= 0 ? file.name.slice(index).toLowerCase() : "");
-    });
-    if (invalidType || combined.length > 5 || selected.some((file) => file.size > 8 * 1024 * 1024) || combined.reduce((sum, file) => sum + file.size, 0) > 16 * 1024 * 1024) {
-      toast(t("attachment_limit")); return null;
-    }
+    })) return "attachment_type_invalid";
+    if (currentRows.length + selected.length > 5) return "attachment_count_limit";
+    if (selected.some((file) => file.size > 8 * 1024 * 1024)) return "attachment_file_size_limit";
+    if ([...currentRows, ...selected].reduce((sum, file) => sum + Number(file.size || 0), 0) > 16 * 1024 * 1024) return "attachment_total_size_limit";
+    return "";
+  }
+
+  async function readManagedAttachmentFiles(files, currentRows = [], allowedSuffixes = managedAttachmentSuffixes) {
+    const selected = Array.from(files || []); if (!selected.length) return null;
+    const validationError = attachmentValidationError(selected, currentRows, allowedSuffixes);
+    if (validationError) { toast(t(validationError)); return null; }
     try { return [...currentRows, ...await Promise.all(selected.map(readAttachment))]; }
     catch (error) { toast(`${t("action_failed")}: ${error.message}`); return null; }
   }
@@ -1648,16 +2191,15 @@
     if (next) state.managedAttachments = next;
     byId("managed-attachment-input").value = "";
     renderManagedAttachments();
+    return Boolean(next);
   }
 
   async function addAttachments(files) {
-    const selected = Array.from(files || []); if (!selected.length) return;
-    const combined = [...state.attachments.map((row) => ({ size: row.size })), ...selected];
-    if (combined.length > 5 || selected.some((file) => file.size > 8 * 1024 * 1024) || combined.reduce((sum, file) => sum + file.size, 0) > 16 * 1024 * 1024) {
-      toast(t("attachment_limit")); return;
-    }
-    try { state.attachments.push(...await Promise.all(selected.map(readAttachment))); renderAttachments(); }
-    catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
+    const selected = Array.from(files || []); if (!selected.length) return false;
+    const validationError = attachmentValidationError(selected, state.attachments, managedAttachmentSuffixes);
+    if (validationError) { toast(t(validationError)); return false; }
+    try { state.attachments.push(...await Promise.all(selected.map(readAttachment))); renderAttachments(); return true; }
+    catch (error) { toast(`${t("action_failed")}: ${error.message}`); return false; }
     finally { byId("attachment-input").value = ""; }
   }
 
@@ -1673,17 +2215,12 @@
   }
 
   async function addFeedbackAttachments(files) {
-    const selected = Array.from(files || []); if (!selected.length) return;
+    const selected = Array.from(files || []); if (!selected.length) return false;
     const allowed = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".json", ".log", ".txt"]);
-    const combined = [...state.feedbackAttachments.map((row) => ({ size: row.size })), ...selected];
-    const invalidType = selected.some((file) => {
-      const index = file.name.lastIndexOf("."); return !allowed.has(index >= 0 ? file.name.slice(index).toLowerCase() : "");
-    });
-    if (invalidType || combined.length > 5 || selected.some((file) => file.size > 8 * 1024 * 1024) || combined.reduce((sum, file) => sum + file.size, 0) > 16 * 1024 * 1024) {
-      toast(t("attachment_limit")); return;
-    }
-    try { state.feedbackAttachments.push(...await Promise.all(selected.map(readAttachment))); renderFeedbackAttachments(); }
-    catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
+    const validationError = attachmentValidationError(selected, state.feedbackAttachments, allowed);
+    if (validationError) { toast(t(validationError)); return false; }
+    try { state.feedbackAttachments.push(...await Promise.all(selected.map(readAttachment))); renderFeedbackAttachments(); return true; }
+    catch (error) { toast(`${t("action_failed")}: ${error.message}`); return false; }
     finally { byId("feedback-attachment-input").value = ""; }
   }
 
@@ -1732,8 +2269,36 @@
     finally { button.disabled = !(state.data?.announcement_state?.configured && state.data?.announcement_state?.network_enabled); }
   }
 
+  async function markAnnouncementsRead() {
+    const button = byId("mark-announcements-read"); button.disabled = true;
+    try {
+      await postAction("/api/announcements/read", { locale: state.locale });
+      toast(t("announcements_marked_read"));
+    } catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
+    finally { button.disabled = false; }
+  }
+
+  async function verifyAuditChain() {
+    const button = byId("audit-verify"); const status = byId("audit-verify-status"); button.disabled = true; status.textContent = "…";
+    try {
+      await postAction("/api/audit/verify", {});
+      status.textContent = t("audit_chain_verified"); toast(t("audit_chain_verified"));
+    } catch (error) { status.textContent = `${t("action_failed")}: ${error.message}`; toast(status.textContent); }
+    finally { button.disabled = false; }
+  }
+
+  function openReviewWorkflow() {
+    state.view = "work";
+    render();
+    byId("workflow-template").value = "implement-review";
+    renderWorkflowControls();
+    byId("workflow-task").focus();
+    byId("work-view").scrollTo({ top: 0, left: 0, behavior: "auto" });
+    closeMobilePanels();
+  }
+
   async function sendMessage(event) {
-    event.preventDefault(); const body = byId("message-body").value.trim(); if (!body || !state.data?.operator_active) return;
+    event.preventDefault(); const typedBody = byId("message-body").value.trim(); const body = typedBody || (state.attachments.length ? t("attachment_only_message") : ""); if (!body || !state.data?.operator_active) return;
     const button = byId("send-button"); button.disabled = true; byId("send-status").textContent = "…";
     try {
       const fallbackSubject = state.locale === "en" ? "Human intervention" : state.locale === "zh-Hans" ? "人工介入" : "人工介入";
@@ -1788,16 +2353,57 @@
 
   function closeMobilePanels() { byId("sidebar").classList.remove("open"); byId("inspector").classList.remove("open"); }
 
+  function startHistoryContinuation() {
+    if (!state.data?.history_import?.selected) return;
+    state.historyContinuationSourceRoom = state.data.room_id;
+    const sourceName = state.data.rooms.find((room) => room.room_id === state.data.room_id)?.name || t("imported_room");
+    byId("new-room-id").value = `continue-${Date.now().toString(36)}`;
+    byId("new-room-name").value = `${sourceName} · ${t("continue_history")}`.slice(0, 120);
+    const dialog = byId("new-room-dialog");
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+    byId("new-room-name").focus();
+  }
+
   async function createRoom(event) {
     event.preventDefault(); const roomId = byId("new-room-id").value.trim(); const name = byId("new-room-name").value.trim();
     if (!roomId || !name) return;
     const button = byId("new-room-submit"); button.disabled = true;
     try {
-      await postAction("/api/room/create", { room_id: roomId, name });
+      const sourceRoomId = state.historyContinuationSourceRoom;
+      await postAction(sourceRoomId ? "/api/history/continue" : "/api/room/create", sourceRoomId ? { source_room_id: sourceRoomId, room_id: roomId, name } : { room_id: roomId, name });
       state.roomId = roomId; state.older = []; state.signature = ""; state.firstRender = true; state.etag = "";
-      byId("new-room-dialog").close(); byId("new-room-form").reset(); await fetchState(true); toast(t("room_created"));
+      state.historyContinuationSourceRoom = ""; byId("new-room-dialog").close(); byId("new-room-form").reset(); await fetchState(true); toast(t(sourceRoomId ? "history_continued" : "room_created"));
     } catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
     finally { button.disabled = false; }
+  }
+
+  function openAppearanceDialog() {
+    const selected = state.data?.appearance?.selected || "modern";
+    const radio = document.querySelector(`input[name="appearance-surface"][value="${selected}"]`);
+    if (radio) radio.checked = true;
+    byId("appearance-status").textContent = "";
+    const dialog = byId("appearance-dialog");
+    if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", "");
+  }
+
+  async function saveAppearance(event) {
+    event.preventDefault();
+    const selected = document.querySelector('input[name="appearance-surface"]:checked')?.value;
+    if (!selected) return;
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    byId("appearance-status").textContent = "…";
+    try {
+      const response = await postAction("/api/appearance/save", { surface: selected });
+      if (state.data) state.data.appearance = { ...(state.data.appearance || {}), selected: response.selected || selected };
+      byId("appearance-current").textContent = selected === "pixel" ? "Pixel" : "Modern";
+      byId("appearance-status").textContent = t("appearance_saved");
+      toast(t("appearance_saved"));
+    } catch (error) {
+      byId("appearance-status").textContent = `${t("action_failed")}: ${error.message}`;
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function importHistory(event) {
@@ -1907,6 +2513,7 @@
 
   async function addSeat() {
     const button = byId("seat-add"); const agentId = byId("seat-agent").value; if (!agentId || !state.data) { toast(t("no_available_agent")); return; }
+    if (state.data.history_import?.selected) return toast(t("history_read_only"));
     button.disabled = true;
     try {
       await postAction("/api/room/member", { action: "join", room_id: state.data.room_id, agent_id: agentId, route_profile_id: byId("seat-route").value, role_id: byId("seat-role").value, role_label: "" });
@@ -1917,6 +2524,7 @@
 
   async function removeSeat() {
     const button = byId("seat-remove"); const agentId = byId("seat-remove-member").value; if (!agentId || !state.data) { toast(t("no_removable_member")); return; }
+    if (state.data.history_import?.selected) return toast(t("history_read_only"));
     button.disabled = true;
     try { await postAction("/api/room/member", { action: "leave", room_id: state.data.room_id, agent_id: agentId, route_profile_id: "", role_id: "equal-participant", role_label: "" }); toast(t("seat_removed")); }
     catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
@@ -1988,6 +2596,120 @@
     }
   }
 
+  function fillModelSelect(selectId, models, truncated = false) {
+    const modelRows = Array.isArray(models) ? models : [];
+    const boundedModels = [...new Set(modelRows.map((model) => String(model || "")).filter(Boolean))].slice(0, MAX_MODEL_OPTIONS);
+    const select = byId(selectId);
+    replaceSelectOptions(
+      select,
+      boundedModels.length ? boundedModels.map((model) => [model, model]) : [["", t("discover_models_first")]]
+    );
+    if (truncated || modelRows.length > boundedModels.length) {
+      const marker = node("option", "", `… ${t("models_truncated")}`);
+      marker.disabled = true;
+      select.append(marker);
+    }
+  }
+
+  async function discoverCcSwitchProviders() {
+    const button = byId("ccswitch-discover"); button.disabled = true;
+    byId("ccswitch-status").textContent = "…";
+    try {
+      const result = await postAction("/api/ccswitch/providers", { app: byId("ccswitch-app").value });
+      state.ccswitchProviders = result.providers || [];
+      replaceSelectOptions(
+        byId("ccswitch-provider"),
+        state.ccswitchProviders.length
+          ? state.ccswitchProviders.map((entry) => [entry.provider_id, `${entry.current ? "● " : ""}${entry.name || entry.provider_id}`])
+          : [["", t("no_records")]]
+      );
+      state.ccswitchModels = [];
+      fillModelSelect("ccswitch-model", []);
+      byId("ccswitch-status").textContent = t("providers_discovered");
+      toast(t("providers_discovered"));
+    } catch (error) { byId("ccswitch-status").textContent = `${t("action_failed")}: ${error.message}`; toast(byId("ccswitch-status").textContent); }
+    finally { button.disabled = false; }
+  }
+
+  async function discoverCcSwitchModels() {
+    const providerId = byId("ccswitch-provider").value;
+    if (!providerId) return toast(t("discover_first"));
+    const provider = state.ccswitchProviders.find((entry) => entry.provider_id === providerId);
+    if (provider && !provider.has_endpoint) return toast(t("ccswitch_missing_endpoint"));
+    const button = byId("ccswitch-models"); button.disabled = true;
+    byId("ccswitch-status").textContent = "…";
+    try {
+      const result = await postAction("/api/ccswitch/models", { app: byId("ccswitch-app").value, provider_id: providerId }, { timeoutMs: 70000 });
+      state.ccswitchModels = Array.isArray(result.models) ? result.models.slice(0, MAX_MODEL_OPTIONS) : [];
+      fillModelSelect("ccswitch-model", state.ccswitchModels, Boolean(result.models_truncated));
+      byId("ccswitch-status").textContent = result.models_truncated ? `${t("models_discovered")} · ${t("models_truncated")}` : t("models_discovered");
+      toast(t("models_discovered"));
+    } catch (error) { byId("ccswitch-status").textContent = `${t("action_failed")}: ${error.message}`; toast(byId("ccswitch-status").textContent); }
+    finally { button.disabled = false; }
+  }
+
+  async function saveCcSwitchRoute(event) {
+    return submitGovernedForm(event, "ccswitch-status", "route_saved", () => postAction("/api/ccswitch/route", {
+      app: byId("ccswitch-app").value,
+      provider_id: byId("ccswitch-provider").value,
+      model_id: byId("ccswitch-model").value,
+      agent_id: byId("ccswitch-agent").value.trim(),
+      reasoning_mode: byId("ccswitch-reasoning").value
+    }, { timeoutMs: 70000 }));
+  }
+
+  async function activateCcSwitchProvider() {
+    const providerId = byId("ccswitch-provider").value;
+    if (!providerId) return toast(t("discover_first"));
+    const provider = state.ccswitchProviders.find((entry) => entry.provider_id === providerId);
+    const confirmation = t("confirm_ccswitch_switch").replace("{app}", byId("ccswitch-app").selectedOptions[0]?.textContent || byId("ccswitch-app").value).replace("{provider}", provider?.name || providerId);
+    if (!window.confirm(confirmation)) return;
+    const button = byId("ccswitch-activate"); button.disabled = true;
+    try {
+      await postAction("/api/ccswitch/switch", { app: byId("ccswitch-app").value, provider_id: providerId, confirmed: true });
+      byId("ccswitch-status").textContent = t("provider_activated"); toast(t("provider_activated"));
+      await discoverCcSwitchProviders();
+    } catch (error) { byId("ccswitch-status").textContent = `${t("action_failed")}: ${error.message}`; toast(byId("ccswitch-status").textContent); }
+    finally { button.disabled = false; }
+  }
+
+  async function saveProviderConnection(event) {
+    return submitGovernedForm(event, "provider-save-status", "provider_saved", async () => {
+      await postAction("/api/provider/save", {
+        connection_id: byId("provider-connection-id").value.trim(),
+        display_name: byId("provider-display-name").value.trim(),
+        route_class: byId("provider-route-class").value,
+        endpoint: byId("provider-endpoint").value.trim(),
+        api_key: byId("provider-route-class").value === "local" ? "" : byId("provider-api-key").value
+      });
+      byId("provider-api-key").value = "";
+    });
+  }
+
+  async function discoverProviderModels() {
+    const connectionId = byId("provider-route-connection").value;
+    if (!connectionId) return toast(t("no_records"));
+    const button = byId("provider-discover-models"); button.disabled = true;
+    byId("provider-route-status").textContent = "…";
+    try {
+      const result = await postAction("/api/provider/discover", { connection_id: connectionId, timeout_seconds: 20 }, { timeoutMs: 30000 });
+      state.providerModels = Array.isArray(result.models) ? result.models.slice(0, MAX_MODEL_OPTIONS) : [];
+      fillModelSelect("provider-route-model", state.providerModels, Boolean(result.models_truncated));
+      byId("provider-route-status").textContent = result.models_truncated ? `${t("models_discovered")} · ${t("models_truncated")}` : t("models_discovered"); toast(t("models_discovered"));
+    } catch (error) { byId("provider-route-status").textContent = `${t("action_failed")}: ${error.message}`; toast(byId("provider-route-status").textContent); }
+    finally { button.disabled = false; }
+  }
+
+  async function saveProviderRoute(event) {
+    return submitGovernedForm(event, "provider-route-status", "route_saved", () => postAction("/api/provider/route", {
+      connection_id: byId("provider-route-connection").value,
+      agent_id: byId("provider-route-agent").value.trim(),
+      model_id: byId("provider-route-model").value,
+      reasoning_mode: byId("provider-route-reasoning").value,
+      inference_timeout_seconds: 20
+    }, { timeoutMs: 30000 }));
+  }
+
   async function saveSchedule(event) {
     return submitGovernedForm(event, "schedule-status", "schedule_saved", () => postAction("/api/schedule/save", {
       schedule_id: byId("schedule-id").value.trim(),
@@ -2036,7 +2758,7 @@
 
   async function authorizeAgentIdentity(event) {
     event.preventDefault();
-    const status = byId("identity-authorize-status");
+    const status = byId("identity-authorize-status"); const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true;
     status.textContent = "…";
     try {
       const result = await postAction("/api/identity/authorize", {
@@ -2050,12 +2772,12 @@
     } catch (error) {
       status.textContent = `${t("action_failed")}: ${error.message}`;
       toast(status.textContent);
-    }
+    } finally { button.disabled = false; }
   }
 
   async function revokeAgentIdentity(event) {
     event.preventDefault();
-    const status = byId("identity-revoke-status");
+    const status = byId("identity-revoke-status"); const button = event.currentTarget.querySelector('button[type="submit"]'); button.disabled = true;
     status.textContent = "…";
     try {
       await postAction("/api/identity/revoke", {
@@ -2069,7 +2791,7 @@
     } catch (error) {
       status.textContent = `${t("action_failed")}: ${error.message}`;
       toast(status.textContent);
-    }
+    } finally { button.disabled = false; }
   }
 
   async function createExecution(event) {
@@ -2083,6 +2805,7 @@
 
   async function exportProof() {
     const button = byId("proof-export"); const status = byId("proof-status"); const taskId = byId("proof-task").value.trim();
+    if (!taskId) { status.textContent = t("proof_required"); toast(status.textContent); return; }
     button.disabled = true; status.textContent = "…";
     try {
       const response = await postAction("/api/proof/export", { task_id: taskId });
@@ -2095,6 +2818,7 @@
 
   async function verifyProof() {
     const button = byId("proof-verify"); const status = byId("proof-status"); const bundlePath = byId("proof-path").value.trim();
+    if (!bundlePath) { status.textContent = t("proof_required"); toast(status.textContent); return; }
     button.disabled = true; status.textContent = "…";
     try {
       await postAction("/api/proof/verify", { bundle_path: bundlePath });
@@ -2107,7 +2831,8 @@
     document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", () => {
       state.view = button.dataset.view;
       render();
-      document.querySelector(".workspace")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+      if (state.view === "change") fetchWorktreeDiff(false);
+      document.querySelector(".content-view.active-view")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
       closeMobilePanels();
     }));
     byId("chat-home").addEventListener("click", () => { state.view = "chat"; render(); });
@@ -2125,20 +2850,26 @@
       renderCockpit();
     }));
     byId("composer").addEventListener("submit", sendMessage); byId("message-body").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); byId("composer").requestSubmit(); } });
+    byId("message-body").addEventListener("paste", (event) => handleClipboardImages(event, addAttachments));
     byId("attachment-button").addEventListener("click", () => byId("attachment-input").click());
     byId("attachment-input").addEventListener("change", (event) => addAttachments(event.target.files));
     byId("feedback-form").addEventListener("submit", submitFeedback);
     byId("feedback-attachment-button").addEventListener("click", () => byId("feedback-attachment-input").click());
     byId("feedback-attachment-input").addEventListener("change", (event) => addFeedbackAttachments(event.target.files));
+    byId("feedback-message").addEventListener("paste", (event) => handleClipboardImages(event, addFeedbackAttachments));
     byId("feedback-credential-toggle").addEventListener("click", () => {
       const input = byId("feedback-credential"); const visible = input.type === "text"; input.type = visible ? "password" : "text"; byId("feedback-credential-toggle").textContent = t(visible ? "show" : "hide");
     });
-    byId("new-room").addEventListener("click", () => { const dialog = byId("new-room-dialog"); if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", ""); byId("new-room-id").focus(); });
+    byId("new-room").addEventListener("click", () => { state.historyContinuationSourceRoom = ""; const dialog = byId("new-room-dialog"); if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", ""); byId("new-room-id").focus(); });
+    byId("continue-history").addEventListener("click", startHistoryContinuation);
     byId("new-room-form").addEventListener("submit", createRoom);
-    ["new-room-close", "new-room-cancel"].forEach((id) => byId(id).addEventListener("click", () => byId("new-room-dialog").close()));
+    ["new-room-close", "new-room-cancel"].forEach((id) => byId(id).addEventListener("click", () => { state.historyContinuationSourceRoom = ""; byId("new-room-dialog").close(); }));
     byId("import-history").addEventListener("click", () => { const dialog = byId("history-dialog"); updateHistorySourceControls(); if (typeof dialog.showModal === "function") dialog.showModal(); else dialog.setAttribute("open", ""); byId("history-provider").focus(); });
     byId("history-form").addEventListener("submit", importHistory);
     ["history-close", "history-cancel"].forEach((id) => byId(id).addEventListener("click", () => byId("history-dialog").close()));
+    byId("appearance-button").addEventListener("click", openAppearanceDialog);
+    byId("appearance-form").addEventListener("submit", saveAppearance);
+    ["appearance-close", "appearance-cancel"].forEach((id) => byId(id).addEventListener("click", () => byId("appearance-dialog").close()));
     byId("history-provider").addEventListener("change", updateHistorySourceControls);
     byId("native-history-discover").addEventListener("click", discoverNativeHistory);
     byId("history-file").addEventListener("change", () => {
@@ -2150,6 +2881,7 @@
     });
     byId("seat-add").addEventListener("click", addSeat); byId("seat-remove").addEventListener("click", removeSeat);
     byId("managed-session-form").addEventListener("submit", startManagedSession);
+    byId("managed-input").addEventListener("paste", (event) => handleClipboardImages(event, addManagedAttachments));
     byId("managed-attachment-button").addEventListener("click", () => byId("managed-attachment-input").click());
     byId("managed-attachment-input").addEventListener("change", (event) => addManagedAttachments(event.target.files));
     byId("refresh-agent-capabilities").addEventListener("click", refreshAgentCapabilities);
@@ -2159,6 +2891,18 @@
     byId("capability-grant-form").addEventListener("submit", grantCapability);
     byId("identity-authorize-form").addEventListener("submit", authorizeAgentIdentity);
     byId("identity-revoke-form").addEventListener("submit", revokeAgentIdentity);
+    byId("ccswitch-form").addEventListener("submit", saveCcSwitchRoute);
+    byId("ccswitch-discover").addEventListener("click", discoverCcSwitchProviders);
+    byId("ccswitch-models").addEventListener("click", discoverCcSwitchModels);
+    byId("ccswitch-activate").addEventListener("click", activateCcSwitchProvider);
+    byId("ccswitch-app").addEventListener("change", () => { state.ccswitchProviders = []; state.ccswitchModels = []; replaceSelectOptions(byId("ccswitch-provider"), [["", t("discover_first")]]); fillModelSelect("ccswitch-model", []); });
+    byId("ccswitch-provider").addEventListener("change", () => { state.ccswitchModels = []; fillModelSelect("ccswitch-model", []); byId("ccswitch-status").textContent = ""; });
+    byId("provider-connection-form").addEventListener("submit", saveProviderConnection);
+    byId("provider-route-form").addEventListener("submit", saveProviderRoute);
+    byId("provider-discover-models").addEventListener("click", discoverProviderModels);
+    byId("provider-route-connection").addEventListener("change", () => { state.providerModels = []; fillModelSelect("provider-route-model", []); byId("provider-route-status").textContent = ""; });
+    byId("provider-route-class").addEventListener("change", () => { const local = byId("provider-route-class").value === "local"; byId("provider-api-key").disabled = local; byId("provider-api-key").required = !local; });
+    byId("provider-key-toggle").addEventListener("click", () => { const input = byId("provider-api-key"); const visible = input.type === "text"; input.type = visible ? "password" : "text"; byId("provider-key-toggle").textContent = t(visible ? "show" : "hide"); });
     byId("permission-form").addEventListener("submit", decidePermission);
     byId("execution-form").addEventListener("submit", createExecution);
     byId("proof-export").addEventListener("click", exportProof);
@@ -2181,8 +2925,12 @@
     }));
     byId("refresh-button").addEventListener("click", () => fetchState(true)); byId("chat-focus-button").addEventListener("click", () => setChatFocus(!state.chatFocus)); byId("sidebar-toggle").addEventListener("click", () => byId("sidebar").classList.toggle("open")); byId("inspector-toggle").addEventListener("click", () => byId("inspector").classList.toggle("open")); byId("inspector-close").addEventListener("click", () => byId("inspector").classList.remove("open"));
     byId("refresh-announcements").addEventListener("click", refreshAnnouncements);
+    byId("mark-announcements-read").addEventListener("click", markAnnouncementsRead);
+    byId("audit-verify").addEventListener("click", verifyAuditChain);
+    byId("worktree-diff-refresh").addEventListener("click", () => fetchWorktreeDiff(true));
+    byId("start-review-workflow").addEventListener("click", openReviewWorkflow);
     bindPanelResize("sidebar-resizer", "sidebar", "--sidebar", 190, 320, 1); bindPanelResize("inspector-resizer", "inspector", "--inspector", 260, 420, -1);
-    byId("locale-button").addEventListener("click", () => { const order = ["zh-Hant", "zh-Hans", "en"]; state.locale = order[(order.indexOf(state.locale) + 1) % order.length]; localStorage.setItem("peerbridge.locale", state.locale); applyLocale(); });
+    byId("locale-select").addEventListener("change", (event) => { state.locale = event.target.value; localStorage.setItem("peerbridge.locale", state.locale); applyLocale(); });
     byId("load-older").addEventListener("click", async () => { const before = state.data?.page?.oldest_sequence; if (!before) return; try { const response = await fetch(`/api/bootstrap?room_id=${encodeURIComponent(state.roomId)}&before_sequence=${before}`, { headers: { Authorization: authorizationValue() }, cache: "no-store" }); if (!response.ok) throw new Error(String(response.status)); const payload = await response.json(); state.older = [...payload.messages, ...state.older]; state.data.page.has_older = payload.page.has_older; renderMessages(); } catch (error) { toast(error.message); } });
     document.addEventListener("keydown", (event) => { if (event.key !== "Escape") return; if (state.chatFocus) setChatFocus(false); const search = byId("room-search-popover"); if (!search.hidden) { search.hidden = true; byId("room-search-button").setAttribute("aria-expanded", "false"); } });
   }

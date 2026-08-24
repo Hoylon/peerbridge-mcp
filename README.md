@@ -64,10 +64,27 @@ Each MCP client launches its own stdio server process with a distinct `--agent-i
 Those processes coordinate through one project-local `.peerbridge/peerbridge.sqlite3`
 database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state changes.
 
+## Local desktop surfaces
+
+PeerBridge is one local desktop product, not a hosted web service. Both desktop surfaces
+use the same local Python, SQLite, and MCP core:
+
+- **Modern Workbench** renders HTML/CSS inside the packaged native WebView2 window. Its
+  loopback HTTP server accepts only the current process capability token and is never a
+  public website.
+- **Pixel Control Room** is the original Tk desktop surface.
+
+A fresh workspace shows a local two-preview chooser before the Control Room opens. The
+selection is stored in `.peerbridge/ui-preferences.json`; later launches open that surface
+directly until the operator changes Appearance and restarts.
+
 ## Features
 
 - In-app Agent Cockpit with Grid, Focus, and Timeline views plus stable per-session
   Terminal, Activity, Answer, and Evidence tabs.
+- Primary Agent controls show the real model/route, governed permission tier, and evidence-
+  derived offline, online, working, or waiting state before a session starts. Observable
+  events distinguish commands, reads, edits, web searches, waits, completion, and failure.
 - Persistent official runtime profiles for Codex app-server, Claude Code stream-json, and
   installed Kimi Code or Grok through ACPX. Observe and Review remain read-only; Edit and
   Full development require an active human-approved governed Git worktree. Edit keeps normal
@@ -82,6 +99,9 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
   operator checks; JSON/JSONL file import remains available for every provider.
 - Observable output only: PeerBridge never labels hidden chain-of-thought or uncaptured
   external terminal history as visible.
+- A bounded read-only Git worktree viewer shows per-file additions/deletions and a colored
+  unified diff while excluding credential/runtime pathspecs and redacting secrets and
+  machine-private absolute paths.
 - Implement + Review, Investigate + Debate, Read-only Audit, and Release Gate templates on a
   durable local operation queue with cancellation, timeout, retry, scheduling, and recovery.
 - Human-approved isolated Git worktrees, versioned Skill/MCP capability grants, typed
@@ -95,6 +115,8 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
   room never removes it from the library or another room.
 - Durable multi-room conversations with independent membership sessions, inbox cursors,
   reply boundaries, and room-bound collaboration receipts.
+- Imported Agent histories remain immutable source rooms. **Continue from history** creates
+  a normal writable room with a bounded source-conversation ID and SHA-bound context message.
 - Provider-neutral Memory Ledger with owner-only Private, membership-bound Room, and
   human-approved Project records, each SHA-bound to its explicit source evidence.
 - Per-consumer receipts and contiguous durable cursors.
@@ -113,6 +135,11 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 - Native WebView2 Modern Workbench is the default Windows desktop, with all twelve Control
   Room pages and human MCP message composition. The Pixel Control Room remains available as
   the explicit `--legacy-pixel` compatibility surface.
+- Fresh workspaces show a local first-run Pixel/Modern preview chooser. The selected desktop
+  surface is saved locally, can be changed later, and never downloads third-party theme code.
+- The Multi-Agent Console uses a terminal-first grid for Codex, Claude Code, Grok, and Kimi,
+  with per-session follow-up input, attachments, observable output, lifecycle controls, Focus,
+  and an all-session Timeline. Chat and Agent composers accept selected files or pasted images.
 - The coordination core has no runtime dependencies beyond Python's standard library;
   optional encrypted feedback uses the `feedback` extra (`cryptography`).
 - Dual-era MCP support: legacy initialization and the `2026-07-28` discovery model.
@@ -201,9 +228,11 @@ application or adapter. `provider-id` is an operator-supplied non-secret route l
 and `model-id` identifies the selected model. A Grok or DeepSeek official website and a
 relay route are separate identities even when they expose the same model family.
 
-Direct OpenAI-compatible endpoints do not require CC Switch. On the **Safe
-connections** page, save the API base URL and API key into Windows Credential Manager,
-then register one route per logical Agent. The API key never enters SQLite or an MCP
+Direct OpenAI-compatible endpoints do not require CC Switch. On the **Connect** page,
+save the API base URL and API key into Windows Credential Manager, discover the provider's
+advertised model IDs, and bind a route to one logical Agent. The same page reads CC Switch
+providers and models through its public CLI and changes the active provider only after an
+explicit confirmation. The API key never enters SQLite or an MCP
 message. Some relays accept one requested model ID but report a stable deployment
 alias in responses. In that case set **EXPECTED RESPONSE MODEL** explicitly. For
 example, a route may request `grok-4.6` while requiring the response to report

@@ -80,6 +80,34 @@ try {
     if ([int]$payload.launcher_pid -ne $launcher.Id) {
         throw 'Source launcher PID does not match the process that was started.'
     }
+    if ($payload.status -eq 'existing-instance') {
+        if (
+            $payload.requested_runtime_kind -ne 'source' -or
+            -not [string]::Equals([string]$payload.requested_runtime_path, $expectedRuntime, [StringComparison]::OrdinalIgnoreCase) -or
+            [string]$payload.requested_runtime_sha256 -ne $expectedHash -or
+            [string]::IsNullOrWhiteSpace([string]$payload.requested_version)
+        ) {
+            throw 'Source launcher did not bind the existing-instance receipt to this requested build.'
+        }
+        $runningPath = [System.IO.Path]::GetFullPath([string]$payload.runtime_path)
+        if (
+            [int]$payload.existing_pid -le 0 -or
+            -not (Test-Path -LiteralPath $runningPath -PathType Leaf) -or
+            (Get-FileHash -LiteralPath $runningPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne [string]$payload.runtime_sha256
+        ) {
+            throw 'Existing Control Room process identity could not be verified.'
+        }
+        if (-not [bool]$payload.same_runtime) {
+            throw 'A different PeerBridge build is still running. Close it before starting this build.'
+        }
+        $launcher.WaitForExit(5000) | Out-Null
+        $launcher.Refresh()
+        if (-not $launcher.HasExited -or $launcher.ExitCode -ne 0) {
+            throw 'Source launcher did not exit cleanly after activating the existing control room.'
+        }
+        exit 0
+    }
+
     if ($payload.runtime_kind -ne 'source') {
         throw 'Source launcher attempted to use a frozen runtime.'
     }
@@ -91,15 +119,6 @@ try {
     }
     if ([string]::IsNullOrWhiteSpace([string]$payload.version)) {
         throw 'Source launcher did not report its package version.'
-    }
-
-    if ($payload.status -eq 'existing-instance') {
-        $launcher.WaitForExit(5000) | Out-Null
-        $launcher.Refresh()
-        if (-not $launcher.HasExited -or $launcher.ExitCode -ne 0) {
-            throw 'Source launcher did not exit cleanly after activating the existing control room.'
-        }
-        exit 0
     }
 
     $supervisorPid = [int]$payload.supervisor_pid

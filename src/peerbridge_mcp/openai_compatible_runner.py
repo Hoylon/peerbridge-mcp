@@ -7,6 +7,7 @@ never prompts, completions, tool arguments/results, endpoints, or API keys.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import ipaddress
 import json
@@ -24,8 +25,15 @@ from urllib import request as urllib_request
 from urllib.parse import urlsplit
 
 from . import __version__, credentials
+from .attachments import AttachmentError
 from .bridge import ROUTE_CLASSES, SAFE_ID, sha256_bytes, stable_sha256
 from .child_environment import build_local_child_environment
+from .multimodal import (
+    MAX_INLINE_TEXT_ATTACHMENT_BYTES,
+    attachment_delivery_receipt,
+    extract_verified_attachments,
+    read_verified_attachment_payload,
+)
 from .protocol import PROTOCOL_VERSION
 from .process_control import (
     attach_process_tree,
@@ -48,13 +56,14 @@ DEFAULT_ALLOWED_TOOLS = (
     "bridge_status",
     "hash_artifact",
     "list_memories",
-    "list_rooms",
-    "list_route_profiles",
-    "read_memory",
     "room_members",
     "verify_audit_chain",
 )
+ROOM_RUNNER_CAPABILITY_TOOLS = tuple(
+    sorted({*DEFAULT_ALLOWED_TOOLS, REGISTRY_TOOL})
+)
 _MAX_HTTP_BODY_BYTES = 16 * 1024 * 1024
+_MAX_MCP_RESPONSE_BYTES = 4 * 1024 * 1024
 _MAX_TOOL_ARGUMENT_CHARS = 1_000_000
 _MAX_TOOL_RESULT_CHARS = 4_000_000
 _MAX_CUMULATIVE_TOOL_ARGUMENT_CHARS = 8_000_000
@@ -231,8 +240,8 @@ class StdioMCPTransport:
     def __init__(self, command: Sequence[str], *, cwd: Path) -> None:
         self._command = tuple(str(item) for item in command)
         self._cwd = Path(cwd)
-        self._process: subprocess.Popen[str] | None = None
-        self._responses: queue.Queue[str | None] = queue.Queue()
+        self._process: subprocess.Popen[bytes] | None = None
+        self._responses: queue.Queue[bytes | MCPTransportError | None] = queue.Queue()
         self._reader: threading.Thread | None = None
         self._request_id = 0
         self._lock = threading.Lock()
@@ -252,10 +261,8 @@ class StdioMCPTransport:
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
-                text=True,
-                encoding="utf-8",
-                errors="strict",
-                bufsize=1,
+                text=False,
+                bufsize=0,
                 **process_group_popen_kwargs(),
             )
             attach_process_tree(self._process)
@@ -270,7 +277,16 @@ class StdioMCPTransport:
             self._responses.put(None)
             return
         try:
-            for line in process.stdout:
+            while True:
+                line = process.stdout.readline(_MAX_MCP_RESPONSE_BYTES + 1)
+                if not line:
+                    return
+                if len(line) > _MAX_MCP_RESPONSE_BYTES:
+                    self._responses.put(
+                        MCPTransportError("local MCP response exceeded the frame limit")
+                    )
+                    terminate_process_tree(process, wait_seconds=2)
+                    return
                 self._responses.put(line)
         finally:
             self._responses.put(None)
@@ -280,7 +296,7 @@ class StdioMCPTransport:
         if process is None or process.poll() is not None or process.stdin is None:
             raise MCPTransportError("local MCP server is not running")
         try:
-            process.stdin.write(_json_dumps(payload) + "\n")
+            process.stdin.write((_json_dumps(payload) + "\n").encode("utf-8"))
             process.stdin.flush()
         except (BrokenPipeError, OSError, UnicodeError):
             raise MCPTransportError("local MCP server transport failed") from None
@@ -305,7 +321,9 @@ class StdioMCPTransport:
                 raise MCPTransportError("local MCP server request timed out") from None
             if line is None:
                 raise MCPTransportError("local MCP server exited unexpectedly")
-            response = _parse_json_object(line.encode("utf-8"), "MCP response")
+            if isinstance(line, MCPTransportError):
+                raise line
+            response = _parse_json_object(line, "MCP response")
             if response.get("id") != request_id:
                 raise MCPTransportError("local MCP response ID mismatch")
             if "error" in response:
@@ -362,6 +380,7 @@ class RunnerConfig:
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     agent_id: str = "openai-compatible-runner"
     db_path: Path | None = None
+    identity_capability_path: Path | None = None
     timeout_seconds: float = 60.0
     max_http_attempts: int = 3
     retry_backoff_seconds: float = 0.25
@@ -381,7 +400,8 @@ class RunnerConfig:
             f"reasoning_mode={self.reasoning_mode!r}, "
             f"route_profile_id={self.route_profile_id!r}, "
             f"room_id={self.room_id!r}, "
-            f"session_id={self.session_id!r})"
+            f"session_id={self.session_id!r}, "
+            f"identity_capability_bound={self.identity_capability_path is not None!r})"
         )
 
 
@@ -687,6 +707,13 @@ def _validated_config(config: RunnerConfig) -> tuple[str, ...]:
 
 def _mcp_command(config: RunnerConfig, transport_tools: Sequence[str]) -> tuple[str, ...]:
     root = Path(config.project_root).resolve()
+    if config.identity_capability_path is None:
+        raise ConfigurationError(
+            "a pre-issued Agent identity capability is required for stdio MCP"
+        )
+    identity_capability = Path(config.identity_capability_path)
+    if not identity_capability.is_absolute() or not identity_capability.is_file():
+        raise ConfigurationError("Agent identity capability is unavailable")
     command = [
         sys.executable,
         "-m",
@@ -696,6 +723,8 @@ def _mcp_command(config: RunnerConfig, transport_tools: Sequence[str]) -> tuple[
         str(root),
         "--agent-id",
         config.agent_id,
+        "--identity-capability",
+        str(identity_capability.resolve()),
         "--scope",
         config.scope,
         "--session-id",
@@ -830,6 +859,7 @@ class OpenAICompatibleRunner:
         self._runtime_admitted = bool(runtime_admitted)
         self._provider_calls: list[dict[str, Any]] = []
         self._tool_input_schemas: dict[str, dict[str, Any]] = {}
+        self._operation_key_seed: str | None = None
         self._mcp = (
             mcp_transport
             if mcp_transport is not None
@@ -978,14 +1008,25 @@ class OpenAICompatibleRunner:
         if body is not None:
             headers["Content-Type"] = "application/json"
             encoded = _json_dumps(body).encode("utf-8")
-            headers["Idempotency-Key"] = uuid.uuid4().hex
+            headers["Idempotency-Key"] = stable_sha256(
+                {
+                    "operation_key_seed": self._operation_key_seed,
+                    "method": method.upper(),
+                    "request_body_sha256": stable_sha256(body),
+                }
+            )
         operation = (
             "models"
             if url.rstrip("/").endswith("/models")
             else "chat.completions"
         )
+        max_attempts = (
+            self.config.max_http_attempts
+            if method.upper() in {"GET", "HEAD"}
+            else 1
+        )
         response: HTTPResponse | None = None
-        for attempt in range(1, self.config.max_http_attempts + 1):
+        for attempt in range(1, max_attempts + 1):
             self._check_cancelled()
             try:
                 response = self._http.request(
@@ -1003,13 +1044,23 @@ class OpenAICompatibleRunner:
                     raise ProviderHTTPError(
                         f"provider returned HTTP status {response.status}",
                         status_code=response.status,
-                        retryable=response.status in {408, 429, 500, 502, 503, 504},
+                        retryable=(
+                            method.upper() in {"GET", "HEAD"}
+                            and response.status in {408, 429, 500, 502, 503, 504}
+                        ),
                     )
                 break
             except RunCancelledError:
                 raise
             except ProviderHTTPError as exc:
-                if not exc.retryable or attempt >= self.config.max_http_attempts:
+                self._check_cancelled()
+                if method.upper() not in {"GET", "HEAD"} and exc.retryable:
+                    raise ProviderHTTPError(
+                        str(exc),
+                        status_code=exc.status_code,
+                        retryable=False,
+                    ) from exc
+                if not exc.retryable or attempt >= max_attempts:
                     raise
                 self._retry_wait(attempt)
             except Exception:
@@ -1092,7 +1143,11 @@ class OpenAICompatibleRunner:
         if self.config.response_model is not None:
             accepted_response_models.add(self.config.response_model)
         if observed_model not in accepted_response_models:
-            raise RouteMismatchError("chat completion model identity mismatch")
+            expected = ", ".join(sorted(accepted_response_models))
+            raise RouteMismatchError(
+                "chat completion model identity mismatch: "
+                f"observed={observed_model}; expected={expected}"
+            )
         choices = payload.get("choices")
         if not isinstance(choices, list) or len(choices) != 1:
             raise ProviderHTTPError("provider returned an invalid choices array")
@@ -1268,15 +1323,77 @@ class OpenAICompatibleRunner:
         """Run real inference and return output separately from its sanitized receipt."""
         if not isinstance(messages, Sequence) or isinstance(messages, (str, bytes)):
             raise ConfigurationError("messages must be a sequence of JSON objects")
-        conversation: list[dict[str, Any]] = []
-        for message in messages:
-            if not isinstance(message, Mapping):
-                raise ConfigurationError("messages must contain only JSON objects")
-            conversation.append(dict(message))
+        try:
+            conversation, attachments = extract_verified_attachments(
+                self.config.project_root,
+                messages,
+            )
+        except AttachmentError:
+            raise
         if not conversation:
             raise ConfigurationError("at least one input message is required")
+        if attachments:
+            user_indexes = [
+                index
+                for index, message in enumerate(conversation)
+                if message.get("role") == "user"
+            ]
+            if not user_indexes:
+                raise ConfigurationError("attachment delivery requires a user message")
+            user_index = user_indexes[-1]
+            content = conversation[user_index].get("content")
+            if not isinstance(content, str):
+                raise ConfigurationError(
+                    "attachment delivery requires text user content"
+                )
+            parts: list[dict[str, Any]] = [{"type": "text", "text": content}]
+            for attachment in attachments:
+                payload = read_verified_attachment_payload(attachment)
+                if attachment.kind == "image":
+                    encoded = base64.b64encode(payload).decode("ascii")
+                    parts.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": (
+                                    f"data:{attachment.media_type};base64,{encoded}"
+                                ),
+                                "detail": "auto",
+                            },
+                        }
+                    )
+                    continue
+                if attachment.kind == "audio":
+                    raise ConfigurationError(
+                        "this OpenAI-compatible route does not advertise native audio input"
+                    )
+                if len(payload) > MAX_INLINE_TEXT_ATTACHMENT_BYTES:
+                    raise ConfigurationError(
+                        "text attachment is too large for inline provider delivery"
+                    )
+                text = payload.decode("utf-8-sig")
+                parts.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            "[PeerBridge verified text attachment "
+                            f"{attachment.relative_path}; sha256={attachment.sha256}]\n"
+                            f"{text}"
+                        ),
+                    }
+                )
+            conversation[user_index]["content"] = parts
         _json_dumps(conversation)
         run_message_id = _safe_id(message_id or uuid.uuid4().hex, "message_id")
+        self._operation_key_seed = stable_sha256(
+            {
+                "scope": self.config.scope,
+                "message_id": run_message_id,
+                "route_profile_id": self.config.route_profile_id,
+                "route_profile_sha256": self.config.route_profile_sha256,
+                "model": self.config.model,
+            }
+        )
         self._provider_calls = []
         input_messages_sha = stable_sha256(conversation)
         trace: list[dict[str, Any]] = []
@@ -1515,6 +1632,14 @@ class OpenAICompatibleRunner:
             "raw_content_recorded": False,
             "credential_contents_recorded": False,
         }
+        if attachments:
+            receipt["attachment_delivery"] = attachment_delivery_receipt(
+                provider_id=self.config.provider_id,
+                protocol="openai-compatible-chat-completions",
+                delivery_mode="native_image_data_uri_and_bounded_text_inline",
+                status="provider_request_completed",
+                attachments=attachments,
+            )
         receipt["receipt_sha256"] = stable_sha256(receipt)
         return InferenceResult(assistant_message=final_assistant, receipt=receipt)
 
@@ -1542,6 +1667,7 @@ __all__ = [
     "CancellationToken",
     "CredentialUnavailableError",
     "DEFAULT_ALLOWED_TOOLS",
+    "ROOM_RUNNER_CAPABILITY_TOOLS",
     "HTTPResponse",
     "HTTPTransport",
     "InferenceResult",

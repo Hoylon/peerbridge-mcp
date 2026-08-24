@@ -132,6 +132,86 @@ $runtimeLicenseManifestPath = Join-Path $runtimeLicenseRoot 'LICENSES_MANIFEST.j
 $runtimeLicenseManifestName = 'THIRD_PARTY_LICENSES_MANIFEST.json'
 $retainedRuntimeLicenseManifest = Join-Path $OutputRoot $runtimeLicenseManifestName
 Copy-Item -LiteralPath $runtimeLicenseManifestPath -Destination $retainedRuntimeLicenseManifest
+try {
+    $runtimeLicenseManifest = Get-Content `
+        -LiteralPath $runtimeLicenseManifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
+} catch {
+    throw 'Windows runtime-license manifest is not valid UTF-8 JSON.'
+}
+if ($runtimeLicenseManifest.schema -ne 'peerbridge.windows-runtime-licenses.v1') {
+    throw 'Windows runtime-license manifest has an unsupported schema.'
+}
+
+$supportRoot = Join-Path $stageRoot '_internal\peerbridge_mcp\release_support'
+$supportConfigPath = Join-Path $supportRoot 'support.json'
+$supportPublicKeyPath = Join-Path $supportRoot 'peerbridge-support-public.pub'
+foreach ($supportPath in @($supportConfigPath, $supportPublicKeyPath)) {
+    if (-not (Test-Path -LiteralPath $supportPath -PathType Leaf)) {
+        throw "Portable support trust anchor is missing: $supportPath"
+    }
+}
+try {
+    $supportConfig = Get-Content -LiteralPath $supportConfigPath -Raw -Encoding UTF8 |
+        ConvertFrom-Json
+} catch {
+    throw 'Portable support configuration is not valid UTF-8 JSON.'
+}
+$expectedSupportFields = @(
+    'endpoint',
+    'endpoint_transport',
+    'privacy_url',
+    'public_key_path',
+    'public_key_sha256',
+    'recipient_label',
+    'schema',
+    'support_email'
+) | Sort-Object
+$supportFields = @($supportConfig.PSObject.Properties.Name | Sort-Object)
+if (@(Compare-Object -ReferenceObject $expectedSupportFields -DifferenceObject $supportFields).Count -ne 0) {
+    throw 'Portable support configuration fields are invalid.'
+}
+$supportPublicKeySha256 = (
+    Get-FileHash -LiteralPath $supportPublicKeyPath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+if (
+    $supportConfig.schema -ne 'peerbridge.feedback-config.v1' -or
+    $supportConfig.endpoint_transport -ne 'json-base64-v1' -or
+    $supportConfig.public_key_path -ne 'peerbridge-support-public.pub' -or
+    ([string]$supportConfig.public_key_sha256).ToLowerInvariant() -cne $supportPublicKeySha256 -or
+    $null -ne $supportConfig.support_email
+) {
+    throw 'Portable support configuration does not bind the packaged public key.'
+}
+$supportEndpoint = $null
+if (
+    -not [System.Uri]::TryCreate(
+        [string]$supportConfig.endpoint,
+        [System.UriKind]::Absolute,
+        [ref]$supportEndpoint
+    ) -or
+    $supportEndpoint.Scheme -cne 'https' -or
+    -not [string]::IsNullOrEmpty($supportEndpoint.UserInfo) -or
+    -not [string]::IsNullOrEmpty($supportEndpoint.Query) -or
+    -not [string]::IsNullOrEmpty($supportEndpoint.Fragment) -or
+    $supportEndpoint.AbsolutePath -cne '/v1/feedback'
+) {
+    throw 'Portable support endpoint is invalid.'
+}
+$sourceSupportRoot = Join-Path $projectRoot 'src\peerbridge_mcp\release_support'
+foreach ($supportName in @('support.json', 'peerbridge-support-public.pub')) {
+    $sourceSupportPath = Join-Path $sourceSupportRoot $supportName
+    $packagedSupportPath = Join-Path $supportRoot $supportName
+    if (
+        -not (Test-Path -LiteralPath $sourceSupportPath -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $sourceSupportPath -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath $packagedSupportPath -Algorithm SHA256).Hash
+    ) {
+        throw "Portable support trust anchor differs from source: $supportName"
+    }
+}
+$supportConfigSha256 = (
+    Get-FileHash -LiteralPath $supportConfigPath -Algorithm SHA256
+).Hash.ToLowerInvariant()
 
 $sourceEpoch = 0L
 if ($env:SOURCE_DATE_EPOCH -match '^\d+$') {
@@ -160,6 +240,50 @@ $relationships = @(
         relatedSpdxElement = 'SPDXRef-Package-PeerBridge-MCP'
     }
 )
+$componentPackages = @()
+$componentIds = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::Ordinal
+)
+foreach ($component in @($runtimeLicenseManifest.components)) {
+    $componentId = [string]$component.spdx_id
+    $componentName = [string]$component.name
+    $componentVersion = [string]$component.version
+    $componentLicense = [string]$component.license_declared
+    $componentPurl = [string]$component.package_url
+    if (
+        $componentId -cnotmatch '^SPDXRef-[A-Za-z0-9.-]+$' -or
+        -not $componentIds.Add($componentId) -or
+        [string]::IsNullOrWhiteSpace($componentName) -or
+        [string]::IsNullOrWhiteSpace($componentVersion) -or
+        [string]::IsNullOrWhiteSpace($componentLicense) -or
+        $componentPurl -cnotmatch '^pkg:[A-Za-z0-9.+-]+/[A-Za-z0-9._%+-]+@[A-Za-z0-9._%+-]+$'
+    ) {
+        throw "Runtime component cannot be represented in SPDX: $componentName"
+    }
+    $componentPackages += [ordered]@{
+        name = $componentName
+        SPDXID = $componentId
+        versionInfo = $componentVersion
+        downloadLocation = 'NOASSERTION'
+        filesAnalyzed = $false
+        licenseConcluded = 'NOASSERTION'
+        licenseDeclared = $componentLicense
+        copyrightText = 'NOASSERTION'
+        primaryPackagePurpose = 'LIBRARY'
+        externalRefs = @(
+            [ordered]@{
+                referenceCategory = 'PACKAGE-MANAGER'
+                referenceType = 'purl'
+                referenceLocator = $componentPurl
+            }
+        )
+    }
+    $relationships += [ordered]@{
+        spdxElementId = 'SPDXRef-Package-PeerBridge-MCP'
+        relationshipType = 'DEPENDS_ON'
+        relatedSpdxElement = $componentId
+    }
+}
 foreach ($file in @(Get-ChildItem -LiteralPath $stageRoot -File -Recurse | Sort-Object FullName)) {
     $relative = Get-RelativePortablePath -BasePath $stageRoot -FullPath $file.FullName
     $sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -182,6 +306,19 @@ foreach ($file in @(Get-ChildItem -LiteralPath $stageRoot -File -Recurse | Sort-
 }
 $verificationCode = Get-StringDigest -Value (($verificationHashes | Sort-Object) -join '') -Algorithm 'SHA1'
 $inventoryDigest = Get-StringDigest -Value ($inventoryLines -join "`n") -Algorithm 'SHA256'
+$peerbridgePackage = [ordered]@{
+    name = 'peerbridge-mcp'
+    SPDXID = 'SPDXRef-Package-PeerBridge-MCP'
+    versionInfo = $version
+    downloadLocation = 'NOASSERTION'
+    filesAnalyzed = $true
+    packageVerificationCode = [ordered]@{ packageVerificationCodeValue = $verificationCode }
+    licenseConcluded = 'NOASSERTION'
+    licenseDeclared = 'Apache-2.0'
+    copyrightText = 'NOASSERTION'
+    primaryPackagePurpose = 'APPLICATION'
+}
+$spdxPackages = @($peerbridgePackage) + @($componentPackages)
 $sbom = [ordered]@{
     spdxVersion = 'SPDX-2.3'
     dataLicense = 'CC0-1.0'
@@ -191,21 +328,9 @@ $sbom = [ordered]@{
     creationInfo = [ordered]@{
         created = $createdUtc
         creators = @('Tool: scripts/package_windows_portable.ps1')
-        comment = 'Alpha file inventory; third-party attribution remains qualified by THIRD_PARTY_NOTICES.md.'
+        comment = 'Alpha file and runtime-component inventory; third-party attribution remains qualified by THIRD_PARTY_NOTICES.md.'
     }
-    packages = @(
-        [ordered]@{
-            name = 'peerbridge-mcp'
-            SPDXID = 'SPDXRef-Package-PeerBridge-MCP'
-            versionInfo = $version
-            downloadLocation = 'NOASSERTION'
-            filesAnalyzed = $true
-            packageVerificationCode = [ordered]@{ packageVerificationCodeValue = $verificationCode }
-            licenseConcluded = 'NOASSERTION'
-            licenseDeclared = 'Apache-2.0'
-            copyrightText = 'NOASSERTION'
-        }
-    )
+    packages = $spdxPackages
     files = $spdxFiles
     relationships = $relationships
 }
@@ -223,6 +348,11 @@ if (-not (Test-Path -LiteralPath $zipPath -PathType Leaf)) {
 
 $archiveSha256 = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 $sbomSha256 = (Get-FileHash -LiteralPath $sbomPath -Algorithm SHA256).Hash.ToLowerInvariant()
+$runtimePath = Join-Path $stageRoot 'PeerBridgeControlRoom.exe'
+if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+    throw 'Portable runtime executable is missing from the staged package.'
+}
+$runtimeSha256 = (Get-FileHash -LiteralPath $runtimePath -Algorithm SHA256).Hash.ToLowerInvariant()
 $runtimeLicenseManifestSha256 = (
     Get-FileHash -LiteralPath $runtimeLicenseManifestPath -Algorithm SHA256
 ).Hash.ToLowerInvariant()
@@ -244,6 +374,11 @@ $provenance = [ordered]@{
     archive_sha256 = $archiveSha256
     sbom_name = [System.IO.Path]::GetFileName($sbomPath)
     sbom_sha256 = $sbomSha256
+    runtime_name = [System.IO.Path]::GetFileName($runtimePath)
+    runtime_bytes = (Get-Item -LiteralPath $runtimePath).Length
+    runtime_sha256 = $runtimeSha256
+    support_config_sha256 = $supportConfigSha256
+    support_public_key_sha256 = $supportPublicKeySha256
     runtime_license_manifest_name = $runtimeLicenseManifestName
     runtime_license_manifest_sha256 = $runtimeLicenseManifestSha256
     packager_sha256 = (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -265,5 +400,8 @@ $provenance = [ordered]@{
     Bytes = (Get-Item -LiteralPath $zipPath).Length
     Sha256 = $archiveSha256
     SbomSha256 = $sbomSha256
+    RuntimeSha256 = $runtimeSha256
+    SupportConfigSha256 = $supportConfigSha256
+    SupportPublicKeySha256 = $supportPublicKeySha256
     LicenseManifestSha256 = $runtimeLicenseManifestSha256
 } | ConvertTo-Json

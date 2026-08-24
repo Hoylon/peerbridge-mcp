@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import hmac
 import json
 import os
 import re
 import secrets
 import sqlite3
+import stat
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -18,9 +21,14 @@ from .attachments import (
     CHAT_ATTACHMENT_ROOT,
     CHAT_ATTACHMENT_SUFFIXES,
     MAX_CHAT_ATTACHMENT_BYTES,
+    MAX_CHAT_ATTACHMENT_COUNT,
+)
+from .inference_receipts import (
+    InferenceReceiptError,
+    validate_inference_receipt,
 )
 from .secret_scan import contains_secret, contains_secret_bytes
-from .usage import UsageError, unavailable_usage, validate_usage
+from .usage import UsageError, unavailable_usage, usage_from_receipt, validate_usage
 
 
 ZERO_SHA256 = "0" * 64
@@ -32,12 +40,24 @@ MAX_DISPATCH_ATTEMPTS = 5
 DEFAULT_DISPATCH_RETRY_SECONDS = 15
 MAX_DISPATCH_RETRY_SECONDS = 86_400
 MAX_TEXT_CHARS = 50_000
-SCHEMA_VERSION = "17"
+MAX_ROUTE_INFERENCE_TIMEOUT_SECONDS = 300
+SCHEMA_VERSION = "27"
 DEFAULT_ROOM_ID = "lobby"
 HUMAN_OPERATOR_ID = "human-operator"
+CONTROL_ROOM_WORKFLOW_ID = "control-room-workflow"
+RELEASE_GATE_ARTIFACT_ROOT = ".peerbridge-artifacts/release-gates"
+DEFAULT_ROOM_ROLE = "equal-participant"
+ROOM_MEMBER_ROLES = {
+    DEFAULT_ROOM_ROLE,
+    "researcher",
+    "implementer",
+    "reviewer",
+    "custom",
+}
 ROUTE_CLASSES = {"official", "relay", "local"}
 SECRET_BACKENDS = {"windows-credential-manager", "cc-switch", "native-acp"}
 MEMORY_VISIBILITIES = {"private", "room", "project"}
+MEMORY_RECORD_TYPES = {"FACT", "DECISION", "CONSTRAINT", "PREFERENCE", "DEPRECATED"}
 ROOM_AUTOMATION_MODES = {"off", "once", "discussion"}
 DISCUSSION_STATUSES = {"active", "paused", "waiting_human", "completed", "stopped"}
 DISCUSSION_SIGNALS = {"CONTINUE", "CONSENSUS", "BLOCKED"}
@@ -47,10 +67,94 @@ DEFAULT_DISCUSSION_STAGNATION_ROUNDS = 2
 MAX_DISCUSSION_ROUNDS = 20
 MAX_DISCUSSION_MESSAGES = 200
 MAX_DISCUSSION_CONTEXT_CHARS = 100_000
+DEFAULT_ROOM_CONTEXT_MESSAGES = 24
+MAX_ROOM_CONTEXT_MESSAGES = 100
+DEFAULT_ROOM_CONTEXT_CHARS = 24_000
+MAX_ROOM_CONTEXT_CHARS = 100_000
+MAX_ROOM_CONTEXT_MESSAGE_CHARS = 8_000
+MAX_ROOM_FANOUT_RECIPIENTS = 32
+MAX_MEMORY_ARTIFACTS = 20
+MAX_MEMORY_ARTIFACT_BYTES = 16 * 1024 * 1024
+MAX_MEMORY_ARTIFACT_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_SCOPE_MESSAGE_ROWS = 200_000
+MAX_SCOPE_MESSAGE_BYTES = 256 * 1024 * 1024
+MAX_SCOPE_EVENT_ROWS = 1_000_000
+MAX_SCOPE_EVENT_BYTES = 1024 * 1024 * 1024
+MAX_MCP_HASH_BYTES = 256 * 1024 * 1024
+MAX_MCP_HASH_SECONDS = 15.0
+MAX_PROOF_FILES = 100
+MAX_PROOF_TOTAL_BYTES = 256 * 1024 * 1024
+MAX_PROOF_HASH_SECONDS = 15.0
+MAX_TASK_PATHS = 100
+MAX_REQUIRED_PEERS = 32
+MAX_ACTIVE_TASK_PATH_ROWS = 10_000
+MAX_MCP_AUDIT_EVENTS = MAX_SCOPE_EVENT_ROWS
+MAX_MCP_AUDIT_SECONDS = 60.0
 DISCUSSION_ORCHESTRATOR_ID = "peerbridge-orchestrator"
 DISCUSSION_COORDINATOR_ID = "mailbox-supervisor"
+RESERVED_INTERNAL_AGENT_IDS = frozenset(
+    {
+        CONTROL_ROOM_WORKFLOW_ID,
+        "control-room-migrator",
+        DISCUSSION_COORDINATOR_ID,
+        DISCUSSION_ORCHESTRATOR_ID,
+    }
+)
+GOVERNANCE_OPERATION_PAYLOAD_FIELDS = (
+    "scope",
+    "operation_id",
+    "workflow_id",
+    "requested_by",
+    "task_text",
+    "working_directory",
+    "resource_key",
+    "permission_decision_id",
+    "bound_discussion_id",
+    "status",
+    "attempt_count",
+    "max_attempts",
+    "timeout_seconds",
+    "not_before_epoch",
+    "lease_owner",
+    "lease_token_sha256",
+    "lease_expires_epoch",
+    "attempt_deadline_epoch",
+    "cancellation_requested",
+    "terminal_outcome",
+    "terminal_detail",
+    "created_utc",
+    "updated_utc",
+)
+TRUSTED_INFERENCE_RECEIPT_PAYLOAD_FIELDS = (
+    "scope",
+    "message_id",
+    "agent_id",
+    "session_id",
+    "attempt_count",
+    "lease_token_sha256",
+    "source_content_sha256",
+    "source_route_request_sha256",
+    "receipt_schema",
+    "inference_receipt_sha256",
+    "assistant_message_sha256",
+    "assistant_content_sha256",
+    "reply_body_sha256",
+    "inference_usage_sha256",
+    "route_profile_id",
+    "route_profile_sha256",
+    "connection_id",
+    "connection_sha256",
+    "provider_id",
+    "model_id",
+    "response_model_id",
+    "reasoning_mode",
+    "route_class",
+    "room_id",
+    "recorded_utc",
+)
 
 SAFE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
+SAFE_MODEL_ID = re.compile(r"[A-Za-z0-9_.:/-]{1,500}\Z")
 PATCH_DESTRUCTIVE = re.compile(
     r"(?im)^---\s+/dev/null|^\+\+\+\s+/dev/null|^diff --git\s+.*(?:\.git/|\.peerbridge/)"
 )
@@ -59,7 +163,6 @@ SENSITIVE_PARTS = {
     ".aws",
     ".ssh",
     ".azure",
-    ".config/gcloud",
     ".docker",
     ".git-credentials",
     ".netrc",
@@ -76,6 +179,7 @@ SENSITIVE_PARTS = {
     "secret",
     "private_key",
 }
+SENSITIVE_PATH_PREFIXES = ((".config", "gcloud"),)
 SENSITIVE_SUFFIXES = {
     ".der",
     ".jks",
@@ -135,9 +239,21 @@ def stable_sha256(value: Any) -> str:
     return sha256_bytes(encoded)
 
 
+def governance_operation_payload(
+    row: sqlite3.Row | dict[str, Any],
+) -> dict[str, Any]:
+    return {key: row[key] for key in GOVERNANCE_OPERATION_PAYLOAD_FIELDS}
+
+
+def trusted_inference_receipt_payload(
+    row: sqlite3.Row | dict[str, Any],
+) -> dict[str, Any]:
+    return {key: row[key] for key in TRUSTED_INFERENCE_RECEIPT_PAYLOAD_FIELDS}
+
+
 def _require_identifier(value: Any, label: str) -> str:
     text = str(value or "").strip()
-    if not SAFE_ID.fullmatch(text):
+    if not SAFE_ID.fullmatch(text) or text in {".", ".."}:
         raise BridgeError(
             f"{label} must contain only letters, digits, dot, underscore, colon or dash"
         )
@@ -149,6 +265,18 @@ def _optional_identifier(value: Any, label: str) -> str | None:
     return _require_identifier(text, label) if text else None
 
 
+def _optional_model_identifier(value: Any, label: str) -> str | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if not SAFE_MODEL_ID.fullmatch(text):
+        raise BridgeError(
+            f"{label} must contain only letters, digits, dot, underscore, colon, "
+            "slash or dash"
+        )
+    return text
+
+
 def _optional_route_class(value: Any, label: str = "route_class") -> str | None:
     text = str(value or "").strip().lower()
     if not text:
@@ -156,6 +284,21 @@ def _optional_route_class(value: Any, label: str = "route_class") -> str | None:
     if text not in ROUTE_CLASSES:
         raise BridgeError(f"{label} must be official, relay or local")
     return text
+
+
+def _optional_inference_timeout_seconds(value: Any) -> int | None:
+    if value is None or str(value).strip() == "":
+        return None
+    text = str(value).strip()
+    if not re.fullmatch(r"[0-9]+", text):
+        raise BridgeError("inference_timeout_seconds must be an integer")
+    timeout_seconds = int(text)
+    if not 1 <= timeout_seconds <= MAX_ROUTE_INFERENCE_TIMEOUT_SECONDS:
+        raise BridgeError(
+            "inference_timeout_seconds must be between 1 and "
+            f"{MAX_ROUTE_INFERENCE_TIMEOUT_SECONDS}"
+        )
+    return timeout_seconds
 
 
 def _require_sha256(value: Any, label: str) -> str:
@@ -185,6 +328,13 @@ def _json_list(value: Any, label: str) -> list[Any]:
 
 
 def _path_parts_are_sensitive(path: Path) -> bool:
+    lowered_parts = tuple(part.lower().rstrip(" .") for part in path.parts)
+    if any(
+        lowered_parts[index : index + len(prefix)] == prefix
+        for prefix in SENSITIVE_PATH_PREFIXES
+        for index in range(0, len(lowered_parts) - len(prefix) + 1)
+    ):
+        return True
     for part in path.parts:
         lowered = part.lower()
         basename = lowered.split(":", 1)[0].rstrip(" .")
@@ -198,6 +348,34 @@ def _path_parts_are_sensitive(path: Path) -> bool:
         ):
             return True
     return False
+
+
+def _is_link_or_reparse(path: Path) -> bool:
+    try:
+        metadata = os.lstat(path)
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+    attributes = int(getattr(metadata, "st_file_attributes", 0) or 0)
+    reparse = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0) or 0)
+    return stat.S_ISLNK(metadata.st_mode) or bool(attributes & reparse)
+
+
+def _reject_reparse_ancestry(root: Path, target: Path, label: str) -> None:
+    lexical_root = Path(root).absolute()
+    lexical_target = Path(target).absolute()
+    try:
+        relative = lexical_target.relative_to(lexical_root)
+    except ValueError as exc:
+        raise BridgeError(f"{label} escapes local state") from exc
+    current = lexical_root
+    if _is_link_or_reparse(current):
+        raise BridgeError(f"{label} crosses a link or reparse point")
+    for part in relative.parts:
+        current = current / part
+        if _is_link_or_reparse(current):
+            raise BridgeError(f"{label} crosses a link or reparse point")
 
 
 class Bridge:
@@ -220,10 +398,33 @@ class Bridge:
         presence_ttl_seconds: int = DEFAULT_PRESENCE_TTL_SECONDS,
         protected_paths: Iterable[str] = (),
     ) -> None:
-        self.root = Path(project_root).resolve()
+        lexical_root = Path(project_root).absolute()
+        lexical_db = Path(db_path).absolute()
+        self.root = lexical_root.resolve()
         if not self.root.is_dir():
             raise BridgeError(f"project root does not exist: {self.root}")
-        self.db_path = Path(db_path).resolve()
+        lexical_default_state = lexical_root / ".peerbridge"
+        try:
+            lexical_db.relative_to(lexical_default_state)
+            uses_default_state = True
+        except ValueError:
+            uses_default_state = False
+        if uses_default_state:
+            if _is_link_or_reparse(lexical_default_state):
+                raise BridgeError(
+                    "default .peerbridge state must not be a link or reparse point"
+                )
+            _reject_reparse_ancestry(
+                lexical_default_state,
+                lexical_db,
+                "default .peerbridge database",
+            )
+            resolved_state = lexical_default_state.resolve()
+            try:
+                resolved_state.relative_to(self.root)
+            except ValueError as exc:
+                raise BridgeError("default .peerbridge state escapes the project root") from exc
+        self.db_path = lexical_db.resolve()
         self.agent_id = _require_identifier(agent_id, "agent_id")
         self.scope = _require_identifier(scope, "scope")
         self.session_id = _require_identifier(
@@ -246,8 +447,12 @@ class Bridge:
         self.protected_paths = tuple(
             sorted({self._normalize_path(item) for item in [*defaults, *protected_paths]})
         )
+        _reject_reparse_ancestry(self.state_root, self.db_path, "PeerBridge database")
+        _reject_reparse_ancestry(self.state_root, self.draft_root, "PeerBridge drafts")
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.draft_root.mkdir(parents=True, exist_ok=True)
+        _reject_reparse_ancestry(self.state_root, self.db_path, "PeerBridge database")
+        _reject_reparse_ancestry(self.state_root, self.draft_root, "PeerBridge drafts")
         self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
@@ -260,6 +465,15 @@ class Bridge:
         connection.execute("PRAGMA busy_timeout=10000")
         connection.execute("PRAGMA foreign_keys=ON")
         return connection
+
+    def checkpoint_wal(self) -> tuple[int, int, int]:
+        """Merge committed WAL pages after an owned writer shuts down."""
+
+        with self._connect() as connection:
+            row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if row is None:
+            raise BridgeError("SQLite WAL checkpoint returned no result")
+        return int(row[0]), int(row[1]), int(row[2])
 
     def _init_db(self) -> None:
         with self._connect() as connection:
@@ -301,6 +515,7 @@ class Bridge:
                     discussion_id TEXT,
                     discussion_round INTEGER,
                     discussion_role TEXT,
+                    visibility TEXT NOT NULL DEFAULT 'direct',
                     created_utc TEXT NOT NULL,
                     acknowledged_utc TEXT,
                     content_sha256 TEXT NOT NULL
@@ -316,6 +531,14 @@ class Bridge:
                     acknowledged_utc TEXT NOT NULL,
                     PRIMARY KEY(scope, message_id, agent_id),
                     FOREIGN KEY(message_id) REFERENCES messages(message_id)
+                );
+                CREATE TABLE IF NOT EXISTS scope_storage_usage (
+                    scope TEXT PRIMARY KEY,
+                    message_rows INTEGER NOT NULL,
+                    message_bytes INTEGER NOT NULL,
+                    event_rows INTEGER NOT NULL DEFAULT 0,
+                    event_bytes INTEGER NOT NULL DEFAULT 0,
+                    updated_utc TEXT NOT NULL
                 );
                 CREATE TABLE IF NOT EXISTS message_route_receipts (
                     scope TEXT NOT NULL,
@@ -358,6 +581,40 @@ class Bridge:
                     ON message_dispatches(scope, agent_id, status, lease_expires_epoch);
                 CREATE INDEX IF NOT EXISTS idx_message_dispatches_scope_updated
                     ON message_dispatches(scope, updated_utc DESC, message_id);
+                CREATE TABLE IF NOT EXISTS trusted_inference_receipts (
+                    scope TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    lease_token_sha256 TEXT NOT NULL,
+                    source_content_sha256 TEXT NOT NULL,
+                    source_route_request_sha256 TEXT,
+                    receipt_schema TEXT NOT NULL,
+                    inference_receipt_sha256 TEXT NOT NULL,
+                    assistant_message_sha256 TEXT NOT NULL,
+                    assistant_content_sha256 TEXT NOT NULL,
+                    reply_body_sha256 TEXT NOT NULL,
+                    inference_usage_sha256 TEXT NOT NULL,
+                    route_profile_id TEXT,
+                    route_profile_sha256 TEXT,
+                    connection_id TEXT,
+                    connection_sha256 TEXT,
+                    provider_id TEXT,
+                    model_id TEXT,
+                    response_model_id TEXT,
+                    reasoning_mode TEXT,
+                    route_class TEXT,
+                    room_id TEXT NOT NULL,
+                    recorded_utc TEXT NOT NULL,
+                    binding_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, message_id, agent_id, attempt_count),
+                    FOREIGN KEY(message_id) REFERENCES messages(message_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_trusted_inference_receipt_sha
+                    ON trusted_inference_receipts(
+                        scope, message_id, agent_id, inference_receipt_sha256
+                    );
                 CREATE TABLE IF NOT EXISTS inference_usage (
                     scope TEXT NOT NULL,
                     message_id TEXT NOT NULL,
@@ -418,6 +675,7 @@ class Bridge:
                     provider_id TEXT,
                     model_id TEXT,
                     response_model_id TEXT,
+                    inference_timeout_seconds INTEGER,
                     reasoning_mode TEXT,
                     route_class TEXT NOT NULL,
                     enabled INTEGER NOT NULL,
@@ -477,6 +735,23 @@ class Bridge:
                     PRIMARY KEY(scope, room_id, agent_id),
                     FOREIGN KEY(scope, room_id) REFERENCES rooms(scope, room_id)
                 );
+                CREATE TABLE IF NOT EXISTS room_member_roles (
+                    scope TEXT NOT NULL,
+                    room_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    room_session_id TEXT NOT NULL,
+                    role_id TEXT NOT NULL,
+                    role_label TEXT,
+                    updated_by TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    role_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, room_id, agent_id),
+                    FOREIGN KEY(scope, room_id, agent_id)
+                        REFERENCES room_memberships(scope, room_id, agent_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_room_member_roles_session
+                    ON room_member_roles(scope, room_session_id);
                 CREATE TABLE IF NOT EXISTS room_automation_policies (
                     scope TEXT NOT NULL,
                     room_id TEXT NOT NULL,
@@ -522,12 +797,16 @@ class Bridge:
                     visibility TEXT NOT NULL,
                     room_id TEXT,
                     owner_agent_id TEXT NOT NULL,
+                    record_type TEXT NOT NULL DEFAULT 'FACT',
+                    authority_id TEXT,
                     title TEXT NOT NULL,
                     body TEXT NOT NULL,
                     source_message_id TEXT,
                     source_message_sha256 TEXT,
                     artifact_bindings_json TEXT NOT NULL,
                     parent_memory_id TEXT,
+                    supersedes_memory_id TEXT,
+                    applicability_json TEXT NOT NULL DEFAULT '[]',
                     status TEXT NOT NULL,
                     created_utc TEXT NOT NULL,
                     revoked_utc TEXT,
@@ -554,6 +833,7 @@ class Bridge:
                     created_utc TEXT NOT NULL,
                     updated_utc TEXT NOT NULL,
                     task_sha256 TEXT NOT NULL,
+                    task_revision INTEGER NOT NULL DEFAULT 1,
                     approval_mode TEXT NOT NULL,
                     required_peer TEXT,
                     review_quorum INTEGER NOT NULL DEFAULT 1,
@@ -601,6 +881,8 @@ class Bridge:
                     artifact_paths_json TEXT NOT NULL,
                     request_utc TEXT NOT NULL,
                     request_sha256 TEXT NOT NULL,
+                    task_revision INTEGER NOT NULL,
+                    task_sha256 TEXT NOT NULL,
                     status TEXT NOT NULL,
                     approval_mode TEXT NOT NULL,
                     response TEXT,
@@ -624,6 +906,8 @@ class Bridge:
                     artifact_paths_json TEXT NOT NULL,
                     review_utc TEXT NOT NULL,
                     review_sha256 TEXT NOT NULL,
+                    task_revision INTEGER NOT NULL,
+                    task_sha256 TEXT NOT NULL,
                     UNIQUE(scope, request_id, reviewer),
                     FOREIGN KEY(request_id) REFERENCES peer_calls(request_id)
                 );
@@ -665,6 +949,82 @@ class Bridge:
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_presence_scope_time
                     ON agent_presence(scope, last_seen_epoch);
+                CREATE TABLE IF NOT EXISTS authorized_sessions (
+                    scope TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_session_id TEXT NOT NULL,
+                    source_conversation_id TEXT NOT NULL,
+                    adapter_id TEXT NOT NULL,
+                    owner_agent_id TEXT NOT NULL,
+                    owner_bridge_session_id TEXT NOT NULL,
+                    room_id TEXT,
+                    room_session_id TEXT,
+                    display_name TEXT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    client_version TEXT,
+                    requested_route TEXT,
+                    observed_route TEXT,
+                    observed_route_source TEXT,
+                    model_id TEXT,
+                    model_source TEXT,
+                    role_id TEXT NOT NULL,
+                    role_label TEXT,
+                    state TEXT NOT NULL,
+                    supports_events INTEGER NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    started_utc TEXT NOT NULL,
+                    ended_utc TEXT,
+                    last_seen_utc TEXT NOT NULL,
+                    last_seen_epoch REAL NOT NULL,
+                    latest_sequence INTEGER NOT NULL,
+                    session_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, source_type, source_session_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_authorized_sessions_scope_seen
+                    ON authorized_sessions(scope, last_seen_epoch DESC);
+                CREATE INDEX IF NOT EXISTS idx_authorized_sessions_room_session
+                    ON authorized_sessions(scope, room_session_id, last_seen_epoch DESC);
+                CREATE TABLE IF NOT EXISTS authorized_session_events (
+                    scope TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    source_session_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    adapter_event_id TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    stream TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    summary TEXT,
+                    state_after TEXT NOT NULL,
+                    secret_redacted INTEGER NOT NULL,
+                    event_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, source_type, source_session_id, sequence),
+                    UNIQUE(scope, source_type, source_session_id, adapter_event_id),
+                    FOREIGN KEY(scope, source_type, source_session_id)
+                        REFERENCES authorized_sessions(
+                            scope, source_type, source_session_id
+                        )
+                );
+                CREATE INDEX IF NOT EXISTS idx_authorized_session_events_retained
+                    ON authorized_session_events(
+                        scope, source_type, source_session_id, sequence DESC
+                    );
+                CREATE TABLE IF NOT EXISTS agent_identity_capabilities (
+                    scope TEXT NOT NULL,
+                    capability_id TEXT NOT NULL,
+                    workspace_root_key TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    secret_file_relpath TEXT NOT NULL,
+                    token_sha256 TEXT NOT NULL,
+                    capability_sha256 TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    revoked_utc TEXT,
+                    PRIMARY KEY(scope, capability_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_identity_capabilities_agent
+                    ON agent_identity_capabilities(
+                        scope, workspace_root_key, agent_id, revoked_utc, created_utc
+                    );
                 CREATE TABLE IF NOT EXISTS events (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     event_id TEXT NOT NULL UNIQUE,
@@ -691,6 +1051,181 @@ class Bridge:
                 );
                 CREATE INDEX IF NOT EXISTS idx_mcp_mutation_receipts_scope_actor
                     ON mcp_mutation_receipts(scope, actor, created_utc DESC);
+                CREATE TABLE IF NOT EXISTS governance_operations (
+                    scope TEXT NOT NULL,
+                    operation_id TEXT NOT NULL,
+                    workflow_id TEXT NOT NULL,
+                    requested_by TEXT NOT NULL,
+                    task_text TEXT NOT NULL,
+                    working_directory TEXT NOT NULL,
+                    resource_key TEXT NOT NULL,
+                    permission_decision_id TEXT,
+                    bound_discussion_id TEXT,
+                    status TEXT NOT NULL,
+                    attempt_count INTEGER NOT NULL,
+                    max_attempts INTEGER NOT NULL,
+                    timeout_seconds INTEGER NOT NULL,
+                    not_before_epoch REAL NOT NULL,
+                    lease_owner TEXT,
+                    lease_token_sha256 TEXT,
+                    lease_expires_epoch REAL,
+                    attempt_deadline_epoch REAL,
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0,
+                    terminal_outcome TEXT,
+                    terminal_detail TEXT,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    operation_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, operation_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_governance_operations_due
+                    ON governance_operations(
+                        scope, status, not_before_epoch, created_utc, operation_id
+                    );
+                CREATE INDEX IF NOT EXISTS idx_governance_operations_resource
+                    ON governance_operations(
+                        scope, resource_key, status, lease_expires_epoch
+                    );
+                CREATE TABLE IF NOT EXISTS workflow_schedules (
+                    scope TEXT NOT NULL,
+                    schedule_id TEXT NOT NULL,
+                    workflow_id TEXT NOT NULL,
+                    requested_by TEXT NOT NULL,
+                    task_text TEXT NOT NULL,
+                    working_directory TEXT NOT NULL,
+                    resource_key TEXT NOT NULL,
+                    permission_decision_id TEXT,
+                    interval_seconds INTEGER NOT NULL,
+                    next_run_epoch REAL NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    last_materialized_epoch REAL,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    schedule_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, schedule_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_workflow_schedules_due
+                    ON workflow_schedules(scope, enabled, next_run_epoch);
+                CREATE TABLE IF NOT EXISTS capability_registry (
+                    scope TEXT NOT NULL,
+                    capability_id TEXT NOT NULL,
+                    registry_version TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    display_name TEXT NOT NULL,
+                    source_sha256 TEXT NOT NULL,
+                    sensitivity TEXT NOT NULL,
+                    enabled INTEGER NOT NULL,
+                    registered_by TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    capability_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, capability_id, registry_version)
+                );
+                CREATE TABLE IF NOT EXISTS capability_grants (
+                    scope TEXT NOT NULL,
+                    grant_id TEXT NOT NULL,
+                    principal_type TEXT NOT NULL,
+                    principal_id TEXT NOT NULL,
+                    capability_id TEXT NOT NULL,
+                    registry_version TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    decided_by TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    revoked_utc TEXT,
+                    grant_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, grant_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_capability_grants_principal
+                    ON capability_grants(
+                        scope, principal_type, principal_id, capability_id,
+                        created_utc DESC
+                    );
+                CREATE TABLE IF NOT EXISTS permission_decisions (
+                    scope TEXT NOT NULL,
+                    decision_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    resource_key TEXT NOT NULL,
+                    decision TEXT NOT NULL,
+                    decided_by TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    expires_epoch REAL NOT NULL,
+                    consumed_utc TEXT,
+                    created_utc TEXT NOT NULL,
+                    decision_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, decision_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_permission_decisions_lookup
+                    ON permission_decisions(
+                        scope, task_id, agent_id, action, resource_key,
+                        created_utc DESC
+                    );
+                CREATE TABLE IF NOT EXISTS execution_bindings (
+                    scope TEXT NOT NULL,
+                    binding_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    permission_decision_id TEXT NOT NULL,
+                    repository_root TEXT NOT NULL,
+                    worktree_path TEXT NOT NULL,
+                    base_commit_id TEXT NOT NULL,
+                    base_diff_sha256 TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    final_commit_id TEXT,
+                    final_diff_sha256 TEXT,
+                    created_utc TEXT NOT NULL,
+                    updated_utc TEXT NOT NULL,
+                    binding_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, binding_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_execution_bindings_task
+                    ON execution_bindings(scope, task_id, created_utc DESC);
+                CREATE TABLE IF NOT EXISTS task_briefings (
+                    scope TEXT NOT NULL,
+                    briefing_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    agent_id TEXT NOT NULL,
+                    room_id TEXT,
+                    applicability_json TEXT NOT NULL,
+                    memory_bindings_json TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    briefing_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, briefing_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_task_briefings_task
+                    ON task_briefings(scope, task_id, created_utc DESC);
+                CREATE TABLE IF NOT EXISTS decision_conflict_findings (
+                    scope TEXT NOT NULL,
+                    finding_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    reviewer TEXT NOT NULL,
+                    briefing_id TEXT NOT NULL,
+                    memory_ids_json TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    finding_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, finding_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_decision_conflict_findings_task
+                    ON decision_conflict_findings(scope, task_id, created_utc DESC);
+                CREATE TABLE IF NOT EXISTS trust_records (
+                    scope TEXT NOT NULL,
+                    record_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    actor TEXT NOT NULL,
+                    stage TEXT NOT NULL,
+                    statement TEXT NOT NULL,
+                    source_bindings_json TEXT NOT NULL,
+                    related_record_ids_json TEXT NOT NULL,
+                    created_utc TEXT NOT NULL,
+                    trust_sha256 TEXT NOT NULL,
+                    PRIMARY KEY(scope, record_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_trust_records_task
+                    ON trust_records(scope, task_id, created_utc, record_id);
                 CREATE INDEX IF NOT EXISTS idx_events_scope_time
                     ON events(scope, sequence);
                 CREATE INDEX IF NOT EXISTS idx_events_scope_created
@@ -717,11 +1252,86 @@ class Bridge:
                 "14",
                 "15",
                 "16",
+                "17",
+                "18",
+                "19",
+                "20",
+                "21",
+                "22",
+                "23",
+                "24",
+                "25",
+                "26",
                 SCHEMA_VERSION,
             }:
                 raise BridgeError(
                     f"unsupported database schema {row['value']}; expected {SCHEMA_VERSION}"
                 )
+            storage_columns = {
+                item["name"]
+                for item in connection.execute(
+                    "PRAGMA table_info(scope_storage_usage)"
+                )
+            }
+            for column in ("event_rows", "event_bytes"):
+                if column not in storage_columns:
+                    connection.execute(
+                        f"ALTER TABLE scope_storage_usage "
+                        f"ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"
+                    )
+            governance_columns = {
+                item["name"]
+                for item in connection.execute(
+                    "PRAGMA table_info(governance_operations)"
+                )
+            }
+            missing_governance_columns = {
+                key
+                for key in ("attempt_deadline_epoch", "bound_discussion_id")
+                if key not in governance_columns
+            }
+            if missing_governance_columns:
+                legacy_fields = tuple(
+                    key
+                    for key in GOVERNANCE_OPERATION_PAYLOAD_FIELDS
+                    if key in governance_columns
+                )
+                legacy_operations = connection.execute(
+                    "SELECT * FROM governance_operations"
+                ).fetchall()
+                for operation in legacy_operations:
+                    legacy_payload = {key: operation[key] for key in legacy_fields}
+                    if stable_sha256(legacy_payload) != operation["operation_sha256"]:
+                        raise BridgeError(
+                            "legacy governance operation SHA-256 does not match its state"
+                        )
+                if "attempt_deadline_epoch" in missing_governance_columns:
+                    connection.execute(
+                        "ALTER TABLE governance_operations "
+                        "ADD COLUMN attempt_deadline_epoch REAL"
+                    )
+                if "bound_discussion_id" in missing_governance_columns:
+                    connection.execute(
+                        "ALTER TABLE governance_operations "
+                        "ADD COLUMN bound_discussion_id TEXT"
+                    )
+                for operation in connection.execute(
+                    "SELECT * FROM governance_operations"
+                ).fetchall():
+                    connection.execute(
+                        "UPDATE governance_operations SET operation_sha256=? "
+                        "WHERE scope=? AND operation_id=?",
+                        (
+                            stable_sha256(governance_operation_payload(operation)),
+                            operation["scope"],
+                            operation["operation_id"],
+                        ),
+                    )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_governance_operations_discussion "
+                "ON governance_operations(scope, bound_discussion_id) "
+                "WHERE bound_discussion_id IS NOT NULL"
+            )
             task_columns = {
                 item["name"] for item in connection.execute("PRAGMA table_info(tasks)")
             }
@@ -736,6 +1346,34 @@ class Bridge:
             if "review_quorum" not in task_columns:
                 connection.execute(
                     "ALTER TABLE tasks ADD COLUMN review_quorum INTEGER NOT NULL DEFAULT 1"
+                )
+            if "task_revision" not in task_columns:
+                connection.execute(
+                    "ALTER TABLE tasks ADD COLUMN task_revision INTEGER NOT NULL DEFAULT 1"
+                )
+            peer_call_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(peer_calls)")
+            }
+            if "task_revision" not in peer_call_columns:
+                connection.execute(
+                    "ALTER TABLE peer_calls ADD COLUMN task_revision INTEGER NOT NULL DEFAULT 0"
+                )
+            if "task_sha256" not in peer_call_columns:
+                connection.execute(
+                    "ALTER TABLE peer_calls ADD COLUMN task_sha256 TEXT NOT NULL DEFAULT ''"
+                )
+            peer_review_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(peer_reviews)")
+            }
+            if "task_revision" not in peer_review_columns:
+                connection.execute(
+                    "ALTER TABLE peer_reviews ADD COLUMN task_revision INTEGER NOT NULL DEFAULT 0"
+                )
+            if "task_sha256" not in peer_review_columns:
+                connection.execute(
+                    "ALTER TABLE peer_reviews ADD COLUMN task_sha256 TEXT NOT NULL DEFAULT ''"
                 )
             presence_columns = {
                 item["name"]
@@ -767,6 +1405,7 @@ class Bridge:
                 "discussion_id",
                 "discussion_round",
                 "discussion_role",
+                "visibility",
             ):
                 if column not in message_columns:
                     if column == "room_id":
@@ -776,6 +1415,10 @@ class Bridge:
                     elif column == "discussion_round":
                         connection.execute(
                             "ALTER TABLE messages ADD COLUMN discussion_round INTEGER"
+                        )
+                    elif column == "visibility":
+                        connection.execute(
+                            "ALTER TABLE messages ADD COLUMN visibility TEXT NOT NULL DEFAULT 'direct'"
                         )
                     else:
                         connection.execute(f"ALTER TABLE messages ADD COLUMN {column} TEXT")
@@ -810,6 +1453,11 @@ class Bridge:
             if "response_model_id" not in route_profile_columns:
                 connection.execute(
                     "ALTER TABLE route_profiles ADD COLUMN response_model_id TEXT"
+                )
+            if "inference_timeout_seconds" not in route_profile_columns:
+                connection.execute(
+                    "ALTER TABLE route_profiles "
+                    "ADD COLUMN inference_timeout_seconds INTEGER"
                 )
             usage_columns = {
                 item["name"]
@@ -864,6 +1512,24 @@ class Bridge:
                             migrated_discussion["discussion_id"],
                         ),
                     )
+            memory_columns = {
+                item["name"]
+                for item in connection.execute("PRAGMA table_info(memories)")
+            }
+            for column, declaration in (
+                ("record_type", "TEXT NOT NULL DEFAULT 'FACT'"),
+                ("authority_id", "TEXT"),
+                ("supersedes_memory_id", "TEXT"),
+                ("applicability_json", "TEXT NOT NULL DEFAULT '[]'"),
+            ):
+                if column not in memory_columns:
+                    connection.execute(
+                        f"ALTER TABLE memories ADD COLUMN {column} {declaration}"
+                    )
+            connection.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_supersession "
+                "ON memories(scope, supersedes_memory_id, created_utc)"
+            )
             connection.execute(
                 "CREATE INDEX IF NOT EXISTS idx_messages_room_inbox "
                 "ON messages(scope, room_id, recipient, sequence)"
@@ -876,6 +1542,73 @@ class Bridge:
                 "CREATE INDEX IF NOT EXISTS idx_room_memberships_agent "
                 "ON room_memberships(scope, agent_id, status, room_id)"
             )
+            for membership in connection.execute(
+                "SELECT * FROM room_memberships"
+            ).fetchall():
+                existing_role = connection.execute(
+                    """SELECT * FROM room_member_roles
+                       WHERE scope=? AND room_id=? AND agent_id=?""",
+                    (
+                        membership["scope"],
+                        membership["room_id"],
+                        membership["agent_id"],
+                    ),
+                ).fetchone()
+                role_id = (
+                    str(existing_role["role_id"])
+                    if existing_role is not None
+                    else DEFAULT_ROOM_ROLE
+                )
+                role_label = (
+                    existing_role["role_label"]
+                    if existing_role is not None
+                    else None
+                )
+                created_utc = (
+                    str(existing_role["created_utc"])
+                    if existing_role is not None
+                    else str(membership["joined_utc"])
+                )
+                updated_by = (
+                    str(existing_role["updated_by"])
+                    if existing_role is not None
+                    else "peerbridge-schema-migration"
+                )
+                role_payload = self._room_role_payload(
+                    scope=str(membership["scope"]),
+                    room_id=str(membership["room_id"]),
+                    agent_id=str(membership["agent_id"]),
+                    room_session_id=str(membership["room_session_id"]),
+                    role_id=role_id,
+                    role_label=role_label,
+                    updated_by=updated_by,
+                )
+                connection.execute(
+                    """INSERT INTO room_member_roles(
+                           scope, room_id, agent_id, room_session_id, role_id,
+                           role_label, updated_by, created_utc, updated_utc,
+                           role_sha256
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(scope, room_id, agent_id) DO UPDATE SET
+                           room_session_id=excluded.room_session_id,
+                           role_id=excluded.role_id,
+                           role_label=excluded.role_label,
+                           updated_by=excluded.updated_by,
+                           updated_utc=excluded.updated_utc,
+                           role_sha256=excluded.role_sha256""",
+                    (
+                        membership["scope"],
+                        membership["room_id"],
+                        membership["agent_id"],
+                        membership["room_session_id"],
+                        role_id,
+                        role_label,
+                        updated_by,
+                        created_utc,
+                        membership["updated_utc"],
+                        stable_sha256(role_payload),
+                    ),
+                )
             for existing_room in connection.execute(
                 "SELECT scope, room_id, created_utc FROM rooms"
             ).fetchall():
@@ -990,10 +1723,96 @@ class Bridge:
                    WHERE required_peer IS NOT NULL AND required_peer != ''"""
             )
             connection.execute(
+                """INSERT OR IGNORE INTO scope_storage_usage(
+                       scope, message_rows, message_bytes, event_rows, event_bytes,
+                       updated_utc
+                    )
+                    SELECT scope, COUNT(*),
+                           COALESCE(SUM(length(CAST(body AS BLOB))), 0), 0, 0, ?
+                      FROM messages GROUP BY scope""",
+                (utc_now(),),
+            )
+            connection.execute(
+                """UPDATE scope_storage_usage
+                      SET message_rows=(
+                              SELECT COUNT(*) FROM messages m
+                               WHERE m.scope=scope_storage_usage.scope
+                          ),
+                          message_bytes=(
+                              SELECT COALESCE(SUM(
+                                  length(CAST(body AS BLOB))
+                                  + length(CAST(subject AS BLOB))
+                                  + length(CAST(artifact_paths_json AS BLOB))
+                                  + length(CAST(COALESCE(route_request_sha256, '') AS BLOB))
+                                  + length(CAST(COALESCE(reply_to, '') AS BLOB))
+                              ), 0)
+                                FROM messages m
+                               WHERE m.scope=scope_storage_usage.scope
+                          ),
+                          updated_utc=?""",
+                (utc_now(),),
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO scope_storage_usage(
+                       scope, message_rows, message_bytes, event_rows, event_bytes,
+                       updated_utc
+                   )
+                   SELECT DISTINCT scope, 0, 0, 0, 0, ? FROM events""",
+                (utc_now(),),
+            )
+            connection.execute(
+                """UPDATE scope_storage_usage
+                      SET event_rows=(
+                              SELECT COUNT(*) FROM events e
+                               WHERE e.scope=scope_storage_usage.scope
+                          ),
+                          event_bytes=(
+                              SELECT COALESCE(SUM(length(CAST(payload_json AS BLOB))), 0)
+                                FROM events e
+                               WHERE e.scope=scope_storage_usage.scope
+                          ),
+                          updated_utc=?""",
+                (utc_now(),),
+            )
+            connection.execute(
                 """INSERT INTO metadata(key, value) VALUES ('schema_version', ?)
                    ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
                 (SCHEMA_VERSION,),
             )
+
+    def _reserve_event_storage(
+        self, connection: sqlite3.Connection, payload_bytes: int
+    ) -> None:
+        payload_bytes = int(payload_bytes)
+        if payload_bytes < 0:
+            raise BridgeError("event storage reservation is invalid")
+        now = utc_now()
+        connection.execute(
+            """INSERT OR IGNORE INTO scope_storage_usage(
+                   scope, message_rows, message_bytes, event_rows, event_bytes,
+                   updated_utc
+               ) VALUES (?, 0, 0, 0, 0, ?)""",
+            (self.scope, now),
+        )
+        updated = connection.execute(
+            """UPDATE scope_storage_usage
+                  SET event_rows=event_rows+1,
+                      event_bytes=event_bytes+?,
+                      updated_utc=?
+                WHERE scope=?
+                  AND event_rows+1<=?
+                  AND event_bytes+?<=?""",
+            (
+                payload_bytes,
+                now,
+                self.scope,
+                MAX_SCOPE_EVENT_ROWS,
+                payload_bytes,
+                MAX_SCOPE_EVENT_BYTES,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise BridgeError("durable event storage quota exceeded")
 
     def _event(
         self,
@@ -1024,6 +1843,9 @@ class Bridge:
         }
         payload_json = json.dumps(
             full_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        self._reserve_event_storage(
+            connection, len(payload_json.encode("utf-8"))
         )
         payload_sha = sha256_bytes(payload_json.encode("utf-8"))
         envelope = {
@@ -1188,14 +2010,29 @@ class Bridge:
         return prefix == "." or path == prefix or path.startswith(prefix + "/")
 
     @staticmethod
-    def _hash_file_streaming(path: Path, *, prefix_bytes: int = 0) -> dict[str, Any]:
+    def _hash_file_streaming(
+        path: Path,
+        *,
+        prefix_bytes: int = 0,
+        max_bytes: int | None = None,
+        max_seconds: float | None = None,
+    ) -> dict[str, Any]:
         """Hash a stable file without allocating its full contents."""
         before = path.stat()
+        if max_bytes is not None and before.st_size > int(max_bytes):
+            raise BridgeError("artifact exceeds the interactive hash byte budget")
         hasher = hashlib.sha256()
         prefix = bytearray()
         total = 0
+        deadline = (
+            time.monotonic() + float(max_seconds)
+            if max_seconds is not None
+            else None
+        )
         with path.open("rb") as handle:
             while True:
+                if deadline is not None and time.monotonic() > deadline:
+                    raise BridgeError("artifact hashing exceeded the interactive time budget")
                 chunk = handle.read(1024 * 1024)
                 if not chunk:
                     break
@@ -1215,22 +2052,82 @@ class Bridge:
             "identity": identity_after,
         }
 
+    def _hash_proof_files(self, paths: Iterable[str]) -> dict[str, dict[str, Any]]:
+        ordered = list(dict.fromkeys(paths))
+        if not ordered or len(ordered) > MAX_PROOF_FILES:
+            raise BridgeError("proof file count exceeds the bounded proof budget")
+        deadline = time.monotonic() + MAX_PROOF_HASH_SECONDS
+        total_bytes = 0
+        result: dict[str, dict[str, Any]] = {}
+        for path in ordered:
+            resolved = self._resolve_path(path, must_exist=True)
+            try:
+                size = int(resolved.stat().st_size)
+            except OSError as exc:
+                raise BridgeError(f"proof artifact cannot be inspected: {path}") from exc
+            total_bytes += size
+            if total_bytes > MAX_PROOF_TOTAL_BYTES:
+                raise BridgeError("proof artifacts exceed the cumulative byte budget")
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BridgeError("proof hashing exceeded the cumulative time budget")
+            result[path] = self._hash_file_streaming(
+                resolved,
+                max_bytes=MAX_MCP_HASH_BYTES,
+                max_seconds=remaining,
+            )
+        return result
+
     def _is_protected(self, normalized: str) -> bool:
         path = Path(normalized)
         if _path_parts_are_sensitive(path):
             return True
         return any(self._path_overlaps(normalized, item) for item in self.protected_paths)
 
-    def _clean_artifacts(self, values: Any) -> list[str]:
+    def _is_within_protected(self, normalized: str) -> bool:
+        path = Path(normalized)
+        if _path_parts_are_sensitive(path):
+            return True
+        return any(
+            self._path_within(normalized, item) for item in self.protected_paths
+        )
+
+    def _clean_artifacts(
+        self,
+        values: Any,
+        *,
+        max_count: int | None = None,
+        reject_duplicates: bool = False,
+    ) -> list[str]:
+        raw_values = _json_list(values, "artifact_paths")
+        if max_count is not None and len(raw_values) > int(max_count):
+            raise BridgeError("artifact_paths exceeds the attachment count limit")
         clean: list[str] = []
-        for value in _json_list(values, "artifact_paths"):
+        seen: set[str] = set()
+        for value in raw_values:
             normalized = self._normalize_path(value)
+            if reject_duplicates and normalized in seen:
+                raise BridgeError("artifact_paths contains duplicate normalized paths")
+            if normalized in seen:
+                continue
+            seen.add(normalized)
             staged_chat_attachment = normalized.startswith(CHAT_ATTACHMENT_ROOT + "/")
-            if self._is_protected(normalized) and not staged_chat_attachment:
+            relative = Path(normalized)
+            release_gate_manifest = bool(
+                len(relative.parts) == 4
+                and Path(*relative.parts[:2]).as_posix()
+                == RELEASE_GATE_ARTIFACT_ROOT
+                and re.fullmatch(r"[0-9a-f]{64}", relative.parts[2])
+                and relative.parts[3] == "source.json"
+            )
+            if (
+                self._is_protected(normalized)
+                and not staged_chat_attachment
+                and not release_gate_manifest
+            ):
                 raise BridgeError(f"protected or sensitive artifact is not exposed: {normalized}")
             resolved = self._resolve_path(normalized, must_exist=True)
             if staged_chat_attachment:
-                relative = Path(normalized)
                 digest = relative.stem.lower()
                 valid_shape = (
                     relative.parent.as_posix() == CHAT_ATTACHMENT_ROOT
@@ -1242,12 +2139,17 @@ class Bridge:
                     raise BridgeError(
                         "staged chat attachment is not a valid content-addressed file"
                     )
+            if release_gate_manifest and resolved.stat().st_size > 64 * 1024:
+                raise BridgeError("release gate manifest exceeds the bounded size")
             clean.append(resolved.relative_to(self.root).as_posix())
         return clean
 
     def _clean_task_paths(self, values: Any, access: str) -> list[str]:
+        raw_values = _json_list(values, f"{access}_paths")
+        if len(raw_values) > MAX_TASK_PATHS:
+            raise BridgeError(f"{access}_paths exceeds the task path limit")
         clean: list[str] = []
-        for value in _json_list(values, f"{access}_paths"):
+        for value in raw_values:
             normalized = self._normalize_path(value)
             if access == "write" and self._is_protected(normalized):
                 raise BridgeError(f"write scope is protected or sensitive: {normalized}")
@@ -1356,6 +2258,8 @@ class Bridge:
             raise BridgeError("task lease has expired")
         if row["claimed_by"] != self.agent_id:
             raise BridgeError(f"task is leased by {row['claimed_by']}")
+        if row["claimed_session_id"] != self.session_id:
+            raise BridgeError("task lease belongs to another agent session")
         if not secrets.compare_digest(
             row["lease_token_sha256"], sha256_bytes(token.encode("utf-8"))
         ):
@@ -1410,15 +2314,20 @@ class Bridge:
     def upsert_route_profile(self, args: dict[str, Any]) -> dict[str, Any]:
         route_id = _require_identifier(args.get("route_id"), "route_id")
         agent_id = _require_identifier(args.get("agent_id"), "agent_id")
+        if agent_id in RESERVED_INTERNAL_AGENT_IDS and self.agent_id != agent_id:
+            raise BridgeError("reserved internal Agent cannot be configured as a route")
         if self.agent_id not in {HUMAN_OPERATOR_ID, agent_id}:
             raise BridgeError(
                 "only the human operator or route owner can register a route profile"
             )
         client_name = _optional_identifier(args.get("client_name"), "client_name")
         provider_id = _optional_identifier(args.get("provider_id"), "provider_id")
-        model_id = _optional_identifier(args.get("model_id"), "model_id")
-        response_model_id = _optional_identifier(
+        model_id = _optional_model_identifier(args.get("model_id"), "model_id")
+        response_model_id = _optional_model_identifier(
             args.get("response_model_id"), "response_model_id"
+        )
+        inference_timeout_seconds = _optional_inference_timeout_seconds(
+            args.get("inference_timeout_seconds")
         )
         reasoning_mode = _optional_identifier(
             args.get("reasoning_mode"), "reasoning_mode"
@@ -1440,6 +2349,7 @@ class Bridge:
             "provider_id": provider_id,
             "model_id": model_id,
             "response_model_id": response_model_id,
+            "inference_timeout_seconds": inference_timeout_seconds,
             "reasoning_mode": reasoning_mode,
             "route_class": route_class,
             "enabled": enabled,
@@ -1467,10 +2377,10 @@ class Bridge:
             connection.execute(
                 """INSERT INTO route_profiles(
                     scope, route_id, agent_id, client_name, provider_id, model_id,
-                    response_model_id,
+                    response_model_id, inference_timeout_seconds,
                     reasoning_mode, route_class, enabled, created_utc, updated_utc,
                     profile_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     self.scope,
                     route_id,
@@ -1479,6 +2389,7 @@ class Bridge:
                     provider_id,
                     model_id,
                     response_model_id,
+                    inference_timeout_seconds,
                     reasoning_mode,
                     route_class,
                     int(enabled),
@@ -1516,6 +2427,10 @@ class Bridge:
             raise BridgeError(
                 "secret_backend must be windows-credential-manager, cc-switch or native-acp"
             )
+        if secret_backend == "cc-switch" and route_class != "relay":
+            raise BridgeError("cc-switch provider connections must use relay route_class")
+        if secret_backend == "native-acp" and route_class != "official":
+            raise BridgeError("native-acp provider connections must use official route_class")
         stored_credential_target = _require_identifier(
             args.get("credential_target"), "credential_target"
         )
@@ -1659,6 +2574,7 @@ class Bridge:
         include_disabled_routes = bool(args.get("include_disabled_routes", False))
         cutoff = time.time() - self.presence_ttl_seconds
         with self._connect() as connection:
+            visible_room_ids = self._visible_room_ids_locked(connection, self.agent_id)
             rows = connection.execute(
                 """SELECT agent_id FROM agent_presence WHERE scope=?
                    UNION SELECT agent_id FROM route_profiles WHERE scope=?
@@ -1701,6 +2617,7 @@ class Bridge:
                            ORDER BY room_id""",
                         (self.scope, agent_id),
                     ).fetchall()
+                    if str(item["room_id"]) in visible_room_ids
                 ]
                 catalog_payload = {
                     "scope": self.scope,
@@ -1728,6 +2645,8 @@ class Bridge:
         room_id = _require_identifier(args.get("room_id"), "room_id")
         if room_id == DEFAULT_ROOM_ID:
             raise BridgeError("the built-in lobby room already exists")
+        if room_id.startswith("history."):
+            raise BridgeError("history.* room IDs are reserved for read-only imports")
         name = _require_text(args.get("name"), "name", limit=200)
         now = utc_now()
         payload = {
@@ -1822,9 +2741,124 @@ class Bridge:
         self, connection: sqlite3.Connection, room_id: str
     ) -> sqlite3.Row:
         room = self._room(connection, room_id)
-        if self.agent_id not in {str(room["created_by"]), "human-operator"}:
+        if self.agent_id == HUMAN_OPERATOR_ID:
+            return room
+        if self.agent_id != str(room["created_by"]):
             raise BridgeError("only the room creator or human operator may manage seats")
+        if self._active_room_member(connection, room_id, self.agent_id) is None:
+            raise BridgeError("room creator must remain an active member to manage seats")
         return room
+
+    @staticmethod
+    def _normalize_room_role(
+        role_id: Any,
+        role_label: Any = None,
+    ) -> tuple[str, str | None]:
+        normalized = str(role_id or DEFAULT_ROOM_ROLE).strip().lower()
+        if normalized not in ROOM_MEMBER_ROLES:
+            raise BridgeError(
+                "role_id must be equal-participant, researcher, implementer, "
+                "reviewer or custom"
+            )
+        label_text = str(role_label or "").strip()
+        if normalized == "custom":
+            return normalized, _require_text(
+                label_text,
+                "role_label",
+                limit=80,
+            )
+        if label_text:
+            raise BridgeError("role_label is only valid for a custom role")
+        return normalized, None
+
+    @staticmethod
+    def _room_role_payload(
+        *,
+        scope: str,
+        room_id: str,
+        agent_id: str,
+        room_session_id: str,
+        role_id: str,
+        role_label: str | None,
+        updated_by: str,
+    ) -> dict[str, Any]:
+        return {
+            "scope": scope,
+            "room_id": room_id,
+            "agent_id": agent_id,
+            "room_session_id": room_session_id,
+            "role_id": role_id,
+            "role_label": role_label,
+            "updated_by": updated_by,
+        }
+
+    def _upsert_room_role(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        room_id: str,
+        agent_id: str,
+        room_session_id: str,
+        role_id: str | None,
+        role_label: str | None,
+        now: str,
+    ) -> dict[str, Any]:
+        existing = connection.execute(
+            """SELECT * FROM room_member_roles
+               WHERE scope=? AND room_id=? AND agent_id=?""",
+            (self.scope, room_id, agent_id),
+        ).fetchone()
+        if role_id is None and existing is not None:
+            normalized_role = str(existing["role_id"])
+            normalized_label = existing["role_label"]
+            created_utc = str(existing["created_utc"])
+        else:
+            normalized_role, normalized_label = self._normalize_room_role(
+                role_id,
+                role_label,
+            )
+            created_utc = str(existing["created_utc"]) if existing is not None else now
+        payload = self._room_role_payload(
+            scope=self.scope,
+            room_id=room_id,
+            agent_id=agent_id,
+            room_session_id=room_session_id,
+            role_id=normalized_role,
+            role_label=(str(normalized_label) if normalized_label is not None else None),
+            updated_by=self.agent_id,
+        )
+        role_sha = stable_sha256(payload)
+        connection.execute(
+            """INSERT INTO room_member_roles(
+                   scope, room_id, agent_id, room_session_id, role_id,
+                   role_label, updated_by, created_utc, updated_utc, role_sha256
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(scope, room_id, agent_id) DO UPDATE SET
+                   room_session_id=excluded.room_session_id,
+                   role_id=excluded.role_id,
+                   role_label=excluded.role_label,
+                   updated_by=excluded.updated_by,
+                   updated_utc=excluded.updated_utc,
+                   role_sha256=excluded.role_sha256""",
+            (
+                self.scope,
+                room_id,
+                agent_id,
+                room_session_id,
+                normalized_role,
+                normalized_label,
+                self.agent_id,
+                created_utc,
+                now,
+                role_sha,
+            ),
+        )
+        return {
+            **payload,
+            "created_utc": created_utc,
+            "updated_utc": now,
+            "role_sha256": role_sha,
+        }
 
     @staticmethod
     def _bounded_integer(
@@ -1866,6 +2900,11 @@ class Bridge:
     def get_room_automation(self, args: dict[str, Any]) -> dict[str, Any]:
         room_id = _require_identifier(args.get("room_id"), "room_id")
         with self._connect() as connection:
+            if self.agent_id not in {
+                HUMAN_OPERATOR_ID,
+                CONTROL_ROOM_WORKFLOW_ID,
+            }:
+                self._require_room_member(connection, room_id, self.agent_id)
             policy = self._room_policy(connection, room_id)
             active = connection.execute(
                 """SELECT * FROM room_discussions
@@ -2012,6 +3051,8 @@ class Bridge:
         agent_id: str,
         route_profile_id: str | None,
         now: str,
+        role_id: str | None = None,
+        role_label: str | None = None,
     ) -> dict[str, Any]:
         existing = connection.execute(
             "SELECT room_session_id, joined_utc, route_profile_id, status "
@@ -2058,14 +3099,40 @@ class Bridge:
                 membership_sha,
             ),
         )
-        return {**payload, "membership_sha256": membership_sha, "updated_utc": now}
+        role = self._upsert_room_role(
+            connection,
+            room_id=room_id,
+            agent_id=agent_id,
+            room_session_id=room_session_id,
+            role_id=role_id,
+            role_label=role_label,
+            now=now,
+        )
+        return {
+            **payload,
+            "membership_sha256": membership_sha,
+            "updated_utc": now,
+            "role_id": role["role_id"],
+            "role_label": role["role_label"],
+            "role_sha256": role["role_sha256"],
+        }
 
     def join_room(self, args: dict[str, Any]) -> dict[str, Any]:
         room_id = _require_identifier(args.get("room_id"), "room_id")
         agent_id = _require_identifier(args.get("agent_id", self.agent_id), "agent_id")
+        if agent_id in RESERVED_INTERNAL_AGENT_IDS and self.agent_id != agent_id:
+            raise BridgeError("reserved internal Agent cannot be added as a room seat")
         route_profile_id = _optional_identifier(
             args.get("route_profile_id"), "route_profile_id"
         )
+        role_supplied = "role_id" in args or "role_label" in args
+        role_id: str | None = None
+        role_label: str | None = None
+        if role_supplied:
+            role_id, role_label = self._normalize_room_role(
+                args.get("role_id"),
+                args.get("role_label"),
+            )
         now = utc_now()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -2086,6 +3153,8 @@ class Bridge:
                 agent_id=agent_id,
                 route_profile_id=route_profile_id,
                 now=now,
+                role_id=role_id,
+                role_label=role_label,
             )
             event = self._event(
                 connection,
@@ -2094,9 +3163,103 @@ class Bridge:
                     "room_id": room_id,
                     "agent_id": agent_id,
                     "membership_sha256": membership["membership_sha256"],
+                    "role_id": membership["role_id"],
+                    "role_sha256": membership["role_sha256"],
                 },
             )
         return {**membership, "audit_chain_sha256": event["chain_sha256"]}
+
+    def set_room_member_role(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        agent_id = _require_identifier(args.get("agent_id"), "agent_id")
+        role_id, role_label = self._normalize_room_role(
+            args.get("role_id"),
+            args.get("role_label"),
+        )
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._require_room_manager(connection, room_id)
+            membership = connection.execute(
+                """SELECT * FROM room_memberships
+                   WHERE scope=? AND room_id=? AND agent_id=?""",
+                (self.scope, room_id, agent_id),
+            ).fetchone()
+            materialized = False
+            if membership is None:
+                if room_id != DEFAULT_ROOM_ID:
+                    raise BridgeError("agent is not an active room member")
+                created = self._upsert_room_membership(
+                    connection,
+                    room_id=room_id,
+                    agent_id=agent_id,
+                    route_profile_id=None,
+                    now=now,
+                    role_id=role_id,
+                    role_label=role_label,
+                )
+                membership = connection.execute(
+                    """SELECT * FROM room_memberships
+                       WHERE scope=? AND room_id=? AND agent_id=?""",
+                    (self.scope, room_id, agent_id),
+                ).fetchone()
+                assert membership is not None
+                previous_role_sha = None
+                role = {
+                    "scope": self.scope,
+                    "room_id": room_id,
+                    "agent_id": agent_id,
+                    "room_session_id": created["room_session_id"],
+                    "role_id": created["role_id"],
+                    "role_label": created["role_label"],
+                    "updated_by": self.agent_id,
+                    "created_utc": now,
+                    "updated_utc": now,
+                    "role_sha256": created["role_sha256"],
+                }
+                materialized = True
+            else:
+                if membership["status"] != "active":
+                    raise BridgeError("agent is not an active room member")
+                previous = connection.execute(
+                    """SELECT * FROM room_member_roles
+                       WHERE scope=? AND room_id=? AND agent_id=?""",
+                    (self.scope, room_id, agent_id),
+                ).fetchone()
+                previous_role_sha = (
+                    str(previous["role_sha256"]) if previous is not None else None
+                )
+                role = self._upsert_room_role(
+                    connection,
+                    room_id=room_id,
+                    agent_id=agent_id,
+                    room_session_id=str(membership["room_session_id"]),
+                    role_id=role_id,
+                    role_label=role_label,
+                    now=now,
+                )
+            event = self._event(
+                connection,
+                "room.member_role_updated",
+                {
+                    "room_id": room_id,
+                    "agent_id": agent_id,
+                    "room_session_id": str(membership["room_session_id"]),
+                    "role_id": role["role_id"],
+                    "role_label": role["role_label"],
+                    "previous_role_sha256": previous_role_sha,
+                    "role_sha256": role["role_sha256"],
+                    "membership_materialized": materialized,
+                    "authority_effect": "none",
+                },
+            )
+        return {
+            **role,
+            "membership_sha256": str(membership["membership_sha256"]),
+            "membership_status": str(membership["status"]),
+            "authority_effect": "none",
+            "audit_chain_sha256": event["chain_sha256"],
+        }
 
     def leave_room(self, args: dict[str, Any]) -> dict[str, Any]:
         room_id = _require_identifier(args.get("room_id"), "room_id")
@@ -2160,6 +3323,15 @@ class Bridge:
                     membership_sha,
                 ),
             )
+            role = self._upsert_room_role(
+                connection,
+                room_id=room_id,
+                agent_id=agent_id,
+                room_session_id=room_session_id,
+                role_id=None,
+                role_label=None,
+                now=now,
+            )
             event = self._event(
                 connection,
                 "room.member_left",
@@ -2167,17 +3339,41 @@ class Bridge:
                     "room_id": room_id,
                     "agent_id": agent_id,
                     "membership_sha256": membership_sha,
+                    "role_id": role["role_id"],
+                    "role_sha256": role["role_sha256"],
                 },
             )
         return {
             **payload,
             "membership_sha256": membership_sha,
+            "role_id": role["role_id"],
+            "role_label": role["role_label"],
+            "role_sha256": role["role_sha256"],
             "audit_chain_sha256": event["chain_sha256"],
         }
 
     def list_rooms(self, args: dict[str, Any]) -> dict[str, Any]:
         include_archived = bool(args.get("include_archived", False))
-        where = "" if include_archived else "AND r.archived=0"
+        where = [] if include_archived else ["r.archived=0"]
+        params: list[Any] = [self.scope]
+        if self.agent_id != HUMAN_OPERATOR_ID:
+            where.append(
+                """(
+                    (r.room_id=? AND NOT EXISTS(
+                        SELECT 1 FROM room_memberships denied
+                        WHERE denied.scope=r.scope AND denied.room_id=r.room_id
+                          AND denied.agent_id=? AND denied.status!='active'
+                    ))
+                    OR EXISTS(
+                        SELECT 1 FROM room_memberships viewer
+                        WHERE viewer.scope=r.scope AND viewer.room_id=r.room_id
+                          AND viewer.agent_id=? AND viewer.status='active'
+                    )
+                )"""
+            )
+            params.extend((DEFAULT_ROOM_ID, self.agent_id, self.agent_id))
+        where_sql = f"AND {' AND '.join(where)}" if where else ""
+        params.append(DEFAULT_ROOM_ID)
         with self._connect() as connection:
             rows = connection.execute(
                 f"""SELECT r.*, rap.mode AS automation_mode,
@@ -2193,10 +3389,10 @@ class Bridge:
                     FROM rooms r
                     LEFT JOIN room_automation_policies rap
                       ON rap.scope=r.scope AND rap.room_id=r.room_id
-                    WHERE r.scope=? {where}
+                    WHERE r.scope=? {where_sql}
                     ORDER BY CASE WHEN r.room_id=? THEN 0 ELSE 1 END,
                              r.updated_utc DESC, r.room_id""",
-                (self.scope, DEFAULT_ROOM_ID),
+                tuple(params),
             ).fetchall()
         rooms = []
         for row in rows:
@@ -2205,44 +3401,118 @@ class Bridge:
             rooms.append(item)
         return {"rooms": rooms, "count": len(rooms)}
 
-    def room_members(self, args: dict[str, Any]) -> dict[str, Any]:
-        room_id = _require_identifier(args.get("room_id"), "room_id")
-        include_inactive = bool(args.get("include_inactive", False))
-        with self._connect() as connection:
-            self._room(connection, room_id)
-            where = "" if include_inactive else "AND rm.status='active'"
-            rows = connection.execute(
-                f"""SELECT rm.*, rp.client_name, rp.provider_id, rp.model_id,
-                            rp.reasoning_mode, rp.route_class,
-                            CASE WHEN EXISTS(
-                                SELECT 1 FROM agent_presence ap
-                                WHERE ap.scope=rm.scope AND ap.agent_id=rm.agent_id
-                                  AND ap.last_seen_epoch>=?
-                            ) THEN 1 ELSE 0 END AS online
-                    FROM room_memberships rm
-                    LEFT JOIN route_profiles rp
-                      ON rp.scope=rm.scope AND rp.route_id=rm.route_profile_id
-                    WHERE rm.scope=? AND rm.room_id=? {where}
-                    ORDER BY rm.status, rm.agent_id""",
-                (time.time() - self.presence_ttl_seconds, self.scope, room_id),
-            ).fetchall()
+    def _room_members_locked(
+        self,
+        connection: sqlite3.Connection,
+        room_id: str,
+        *,
+        include_inactive: bool = False,
+    ) -> list[dict[str, Any]]:
+        self._room(connection, room_id)
+        where = "" if include_inactive else "AND rm.status='active'"
+        rows = connection.execute(
+            f"""SELECT rm.*, rp.client_name, rp.provider_id, rp.model_id,
+                        rp.response_model_id, rp.reasoning_mode, rp.route_class,
+                        rp.profile_sha256 AS route_profile_sha256,
+                        COALESCE(rmr.role_id, ?) AS role_id,
+                        rmr.role_label, rmr.role_sha256,
+                        CASE WHEN EXISTS(
+                            SELECT 1 FROM agent_presence ap
+                            WHERE ap.scope=rm.scope AND ap.agent_id=rm.agent_id
+                              AND ap.last_seen_epoch>=?
+                        ) THEN 1 ELSE 0 END AS online
+                FROM room_memberships rm
+                LEFT JOIN route_profiles rp
+                  ON rp.scope=rm.scope AND rp.route_id=rm.route_profile_id
+                LEFT JOIN room_member_roles rmr
+                  ON rmr.scope=rm.scope AND rmr.room_id=rm.room_id
+                 AND rmr.agent_id=rm.agent_id
+                 AND rmr.room_session_id=rm.room_session_id
+                WHERE rm.scope=? AND rm.room_id=? {where}
+                ORDER BY rm.status, rm.agent_id""",
+            (
+                DEFAULT_ROOM_ROLE,
+                time.time() - self.presence_ttl_seconds,
+                self.scope,
+                room_id,
+            ),
+        ).fetchall()
         members = []
         for row in rows:
             item = dict(row)
             item["online"] = bool(item["online"])
             members.append(item)
+        return members
+
+    def _visible_room_ids_locked(
+        self,
+        connection: sqlite3.Connection,
+        agent_id: str,
+    ) -> set[str]:
+        if agent_id == HUMAN_OPERATOR_ID:
+            return {
+                str(row["room_id"])
+                for row in connection.execute(
+                    "SELECT room_id FROM rooms WHERE scope=?",
+                    (self.scope,),
+                ).fetchall()
+            }
+
+        visible = {
+            str(row["room_id"])
+            for row in connection.execute(
+                """SELECT room_id FROM room_memberships
+                   WHERE scope=? AND agent_id=? AND status='active'""",
+                (self.scope, agent_id),
+            ).fetchall()
+        }
+        lobby_override = connection.execute(
+            """SELECT status FROM room_memberships
+               WHERE scope=? AND room_id=? AND agent_id=?""",
+            (self.scope, DEFAULT_ROOM_ID, agent_id),
+        ).fetchone()
+        if lobby_override is None or lobby_override["status"] == "active":
+            visible.add(DEFAULT_ROOM_ID)
+        return visible
+
+    def room_members(self, args: dict[str, Any]) -> dict[str, Any]:
+        room_id = _require_identifier(args.get("room_id"), "room_id")
+        include_inactive = bool(args.get("include_inactive", False))
+        with self._connect() as connection:
+            if self.agent_id != HUMAN_OPERATOR_ID:
+                self._require_room_member(connection, room_id, self.agent_id)
+            members = self._room_members_locked(
+                connection,
+                room_id,
+                include_inactive=include_inactive,
+            )
         return {"room_id": room_id, "members": members, "count": len(members)}
 
     def _memory_artifact_bindings(self, values: Any) -> list[dict[str, Any]]:
+        normalized_paths = self._clean_artifacts(values)
+        if len(normalized_paths) > MAX_MEMORY_ARTIFACTS:
+            raise BridgeError("memory artifact count exceeds the limit")
         bindings = []
-        for normalized in self._clean_artifacts(values):
+        total_bytes = 0
+        for normalized in normalized_paths:
             resolved = self._resolve_path(normalized, must_exist=True)
-            data = resolved.read_bytes()
+            try:
+                size = resolved.stat().st_size
+            except OSError as exc:
+                raise BridgeError("memory artifact is unavailable") from exc
+            if size > MAX_MEMORY_ARTIFACT_BYTES:
+                raise BridgeError("memory artifact exceeds the per-file limit")
+            total_bytes += size
+            if total_bytes > MAX_MEMORY_ARTIFACT_TOTAL_BYTES:
+                raise BridgeError("memory artifacts exceed the total byte limit")
+            hashed = self._hash_file_streaming(resolved)
+            if int(hashed["bytes"]) != size:
+                raise BridgeError("memory artifact changed while it was being hashed")
             bindings.append(
                 {
                     "path": normalized,
-                    "bytes": len(data),
-                    "sha256": sha256_bytes(data),
+                    "bytes": int(hashed["bytes"]),
+                    "sha256": str(hashed["sha256"]),
                 }
             )
         return bindings
@@ -2256,7 +3526,110 @@ class Bridge:
         ).fetchone()
         if row is None:
             raise BridgeError("memory not found")
+        self._verify_memory_row(connection, row)
         return row
+
+    def _verify_memory_row(
+        self, connection: sqlite3.Connection, row: sqlite3.Row
+    ) -> None:
+        stored = str(row["memory_sha256"] or "")
+        if re.fullmatch(r"[0-9a-f]{64}", stored) is None:
+            raise BridgeError("memory SHA-256 mismatch")
+
+        source_message_id = row["source_message_id"]
+        source_room_id = None
+        source_message_sha256 = None
+        if source_message_id is not None:
+            source = connection.execute(
+                """SELECT room_id, content_sha256 FROM messages
+                    WHERE scope=? AND message_id=?""",
+                (self.scope, source_message_id),
+            ).fetchone()
+            if source is None:
+                raise BridgeError("memory source message is unavailable")
+            source_room_id = str(source["room_id"])
+            source_message_sha256 = str(source["content_sha256"])
+            if row["source_message_sha256"] != source_message_sha256:
+                raise BridgeError("memory source message SHA-256 mismatch")
+        elif row["source_message_sha256"] is not None:
+            raise BridgeError("memory source message SHA-256 mismatch")
+
+        parent_memory_sha256 = None
+        if row["parent_memory_id"] is not None:
+            parent = connection.execute(
+                """SELECT memory_sha256 FROM memories
+                    WHERE scope=? AND memory_id=?""",
+                (self.scope, row["parent_memory_id"]),
+            ).fetchone()
+            if parent is None:
+                raise BridgeError("memory parent is unavailable")
+            parent_memory_sha256 = str(parent["memory_sha256"])
+
+        supersedes_memory_sha256 = None
+        if row["supersedes_memory_id"] is not None:
+            superseded = connection.execute(
+                """SELECT memory_sha256 FROM memories
+                    WHERE scope=? AND memory_id=?""",
+                (self.scope, row["supersedes_memory_id"]),
+            ).fetchone()
+            if superseded is None:
+                raise BridgeError("superseded memory is unavailable")
+            supersedes_memory_sha256 = str(superseded["memory_sha256"])
+
+        try:
+            artifact_bindings = json.loads(str(row["artifact_bindings_json"]))
+            applicability = json.loads(str(row["applicability_json"] or "[]"))
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise BridgeError("memory binding JSON is invalid") from exc
+        if not isinstance(artifact_bindings, list) or not isinstance(
+            applicability, list
+        ):
+            raise BridgeError("memory binding JSON is invalid")
+
+        payload = {
+            "scope": row["scope"],
+            "memory_id": row["memory_id"],
+            "visibility": row["visibility"],
+            "room_id": row["room_id"],
+            "owner_agent_id": row["owner_agent_id"],
+            "record_type": row["record_type"],
+            "authority_id": row["authority_id"],
+            "title": row["title"],
+            "body": row["body"],
+            "source_message_id": source_message_id,
+            "source_message_sha256": source_message_sha256,
+            "source_room_id": source_room_id,
+            "artifact_bindings": artifact_bindings,
+            "parent_memory_id": row["parent_memory_id"],
+            "parent_memory_sha256": parent_memory_sha256,
+            "supersedes_memory_id": row["supersedes_memory_id"],
+            "supersedes_memory_sha256": supersedes_memory_sha256,
+            "applicability": applicability,
+            "status": "active",
+            "created_utc": row["created_utc"],
+        }
+        if secrets.compare_digest(stored, stable_sha256(payload)):
+            return
+
+        legacy_v17 = (
+            row["record_type"] == "FACT"
+            and row["authority_id"] is None
+            and row["supersedes_memory_id"] is None
+            and applicability == []
+        )
+        if legacy_v17:
+            legacy_payload = dict(payload)
+            for key in (
+                "record_type",
+                "authority_id",
+                "supersedes_memory_id",
+                "supersedes_memory_sha256",
+                "applicability",
+            ):
+                legacy_payload.pop(key)
+            if secrets.compare_digest(stored, stable_sha256(legacy_payload)):
+                return
+        raise BridgeError("memory SHA-256 mismatch")
 
     def _require_memory_read_access(
         self, connection: sqlite3.Connection, row: sqlite3.Row
@@ -2303,6 +3676,7 @@ class Bridge:
         result["artifact_bindings"] = json.loads(
             result.pop("artifact_bindings_json")
         )
+        result["applicability"] = json.loads(result.pop("applicability_json", "[]"))
         return result
 
     def record_memory(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -2318,6 +3692,24 @@ class Bridge:
         if visibility == "project" and self.agent_id != "human-operator":
             raise BridgeError("only human-operator may publish project memory")
 
+        record_type = str(args.get("record_type") or "FACT").strip().upper()
+        if record_type not in MEMORY_RECORD_TYPES:
+            raise BridgeError(
+                "record_type must be FACT, DECISION, CONSTRAINT, PREFERENCE or DEPRECATED"
+            )
+        authority_id = _optional_identifier(
+            args.get("authority_id") or self.agent_id, "authority_id"
+        )
+        if visibility == "project" and authority_id != "human-operator":
+            raise BridgeError("project memory requires human-operator authority")
+        applicability = []
+        for item in _json_list(args.get("applicability", []), "applicability"):
+            value = _require_text(item, "applicability item", limit=200)
+            if value not in applicability:
+                applicability.append(value)
+        if len(applicability) > 50:
+            raise BridgeError("applicability exceeds 50 entries")
+
         title = _require_text(args.get("title"), "title", limit=500)
         body = _require_text(args.get("body"), "body")
         source_message_id = _optional_identifier(
@@ -2326,6 +3718,11 @@ class Bridge:
         parent_memory_id = _optional_identifier(
             args.get("parent_memory_id"), "parent_memory_id"
         )
+        supersedes_memory_id = _optional_identifier(
+            args.get("supersedes_memory_id"), "supersedes_memory_id"
+        )
+        if record_type == "DEPRECATED" and not supersedes_memory_id:
+            raise BridgeError("DEPRECATED memory must supersede an existing memory")
         artifact_bindings = self._memory_artifact_bindings(
             args.get("artifact_paths", [])
         )
@@ -2360,8 +3757,28 @@ class Bridge:
                         "private or room memory parent must have the same visibility and room"
                     )
 
+            superseded = None
+            if supersedes_memory_id:
+                superseded = self._memory_row(connection, supersedes_memory_id)
+                self._require_memory_read_access(connection, superseded)
+                if superseded["status"] != "active":
+                    raise BridgeError("superseded memory is revoked")
+                if superseded["visibility"] != visibility or superseded["room_id"] != room_id:
+                    raise BridgeError(
+                        "superseded memory must have the same visibility and room"
+                    )
+                if (
+                    superseded["owner_agent_id"] != self.agent_id
+                    and self.agent_id != HUMAN_OPERATOR_ID
+                ):
+                    if visibility != "room" or room_id is None:
+                        raise BridgeError(
+                            "only the memory owner or human operator may supersede it"
+                        )
+                    self._require_room_manager(connection, room_id)
+
             if visibility == "project" and not any(
-                (source, parent, artifact_bindings)
+                (source, parent, superseded, artifact_bindings)
             ):
                 raise BridgeError(
                     "project memory requires a source message, parent memory or artifact"
@@ -2373,6 +3790,8 @@ class Bridge:
                 "visibility": visibility,
                 "room_id": room_id,
                 "owner_agent_id": self.agent_id,
+                "record_type": record_type,
+                "authority_id": authority_id,
                 "title": title,
                 "body": body,
                 "source_message_id": source_message_id,
@@ -2385,6 +3804,11 @@ class Bridge:
                 "parent_memory_sha256": (
                     str(parent["memory_sha256"]) if parent else None
                 ),
+                "supersedes_memory_id": supersedes_memory_id,
+                "supersedes_memory_sha256": (
+                    str(superseded["memory_sha256"]) if superseded else None
+                ),
+                "applicability": applicability,
                 "status": "active",
                 "created_utc": created,
             }
@@ -2392,11 +3816,13 @@ class Bridge:
             connection.execute(
                 """INSERT INTO memories(
                     scope, memory_id, visibility, room_id, owner_agent_id,
+                    record_type, authority_id,
                     title, body, source_message_id, source_message_sha256,
-                    artifact_bindings_json, parent_memory_id, status,
+                    artifact_bindings_json, parent_memory_id,
+                    supersedes_memory_id, applicability_json, status,
                     created_utc, revoked_utc, revocation_reason,
                     revocation_sha256, memory_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?,
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?,
                           NULL, NULL, NULL, ?)""",
                 (
                     self.scope,
@@ -2404,6 +3830,8 @@ class Bridge:
                     visibility,
                     room_id,
                     self.agent_id,
+                    record_type,
+                    authority_id,
                     title,
                     body,
                     source_message_id,
@@ -2415,6 +3843,13 @@ class Bridge:
                         separators=(",", ":"),
                     ),
                     parent_memory_id,
+                    supersedes_memory_id,
+                    json.dumps(
+                        applicability,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
                     created,
                     memory_sha,
                 ),
@@ -2426,6 +3861,9 @@ class Bridge:
                     "memory_id": memory_id,
                     "visibility": visibility,
                     "room_id": room_id,
+                    "record_type": record_type,
+                    "authority_id": authority_id,
+                    "supersedes_memory_id": supersedes_memory_id,
                     "memory_sha256": memory_sha,
                 },
             )
@@ -2469,17 +3907,38 @@ class Bridge:
                     ORDER BY created_utc DESC, memory_id LIMIT ?""",
                 (*params, limit * 4),
             ).fetchall()
+            superseding_rows = connection.execute(
+                """SELECT * FROM memories
+                    WHERE scope=? AND supersedes_memory_id IS NOT NULL
+                    ORDER BY created_utc DESC, memory_id DESC""",
+                (self.scope,),
+            ).fetchall()
+            superseded_by = {}
+            for item in superseding_rows:
+                try:
+                    self._require_memory_read_access(connection, item)
+                except BridgeError:
+                    continue
+                self._verify_memory_row(connection, item)
+                superseded_by[str(item["supersedes_memory_id"])] = str(
+                    item["memory_id"]
+                )
             memories = []
             for row in rows:
                 try:
                     self._require_memory_read_access(connection, row)
                 except BridgeError:
                     continue
+                self._verify_memory_row(connection, row)
                 if query and query not in str(row["title"]).lower() and query not in str(
                     row["body"]
                 ).lower():
                     continue
-                memories.append(self._memory_result(row))
+                result = self._memory_result(row)
+                result["superseded_by_memory_id"] = superseded_by.get(
+                    str(row["memory_id"])
+                )
+                memories.append(result)
                 if len(memories) >= limit:
                     break
         return {
@@ -2495,7 +3954,250 @@ class Bridge:
         with self._connect() as connection:
             row = self._memory_row(connection, memory_id)
             self._require_memory_read_access(connection, row)
-            return self._memory_result(row)
+            superseding = connection.execute(
+                """SELECT memory_id FROM memories
+                    WHERE scope=? AND supersedes_memory_id=?
+                    ORDER BY created_utc DESC, memory_id DESC LIMIT 1""",
+                (self.scope, memory_id),
+            ).fetchone()
+            result = self._memory_result(row)
+            result["superseded_by_memory_id"] = (
+                str(superseding["memory_id"]) if superseding else None
+            )
+            return result
+
+    def brief_task(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Bind only applicable, visible, non-superseded records to one task."""
+
+        task_id = _require_identifier(args.get("task_id"), "task_id")
+        room_id = _optional_identifier(args.get("room_id"), "room_id")
+        applicability = []
+        for item in _json_list(args.get("applicability", []), "applicability"):
+            value = _require_text(item, "applicability item", limit=200)
+            if value not in applicability:
+                applicability.append(value)
+        if len(applicability) > 50:
+            raise BridgeError("applicability exceeds 50 entries")
+        created = utc_now()
+        briefing_id = uuid.uuid4().hex
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if room_id:
+                self._require_room_member(connection, room_id, self.agent_id)
+                rows = connection.execute(
+                    """SELECT * FROM memories
+                        WHERE scope=? AND status='active'
+                          AND (visibility='project' OR room_id=?)
+                        ORDER BY created_utc, memory_id""",
+                    (self.scope, room_id),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """SELECT * FROM memories
+                        WHERE scope=? AND status='active' AND visibility='project'
+                        ORDER BY created_utc, memory_id""",
+                    (self.scope,),
+                ).fetchall()
+            visible: list[sqlite3.Row] = []
+            for row in rows:
+                try:
+                    self._require_memory_read_access(connection, row)
+                except BridgeError:
+                    continue
+                self._verify_memory_row(connection, row)
+                visible.append(row)
+            historical_superseders = connection.execute(
+                """SELECT * FROM memories
+                    WHERE scope=? AND supersedes_memory_id IS NOT NULL
+                    ORDER BY created_utc, memory_id""",
+                (self.scope,),
+            ).fetchall()
+            superseded_ids = set()
+            for row in historical_superseders:
+                try:
+                    self._require_memory_read_access(connection, row)
+                except BridgeError:
+                    continue
+                self._verify_memory_row(connection, row)
+                superseded_ids.add(str(row["supersedes_memory_id"]))
+            records = []
+            bindings = []
+            requested_applicability = set(applicability)
+            for row in visible:
+                if str(row["memory_id"]) in superseded_ids:
+                    continue
+                if str(row["record_type"]) == "DEPRECATED":
+                    continue
+                record_applicability = set(
+                    json.loads(str(row["applicability_json"] or "[]"))
+                )
+                if record_applicability and not (
+                    record_applicability & requested_applicability
+                ):
+                    continue
+                result = self._memory_result(row)
+                records.append(result)
+                bindings.append(
+                    {
+                        "memory_id": str(row["memory_id"]),
+                        "memory_sha256": str(row["memory_sha256"]),
+                        "record_type": str(row["record_type"]),
+                        "authority_id": str(row["authority_id"] or ""),
+                    }
+                )
+            payload = {
+                "scope": self.scope,
+                "briefing_id": briefing_id,
+                "task_id": task_id,
+                "agent_id": self.agent_id,
+                "room_id": room_id,
+                "applicability": applicability,
+                "memory_bindings": bindings,
+                "created_utc": created,
+            }
+            digest = stable_sha256(payload)
+            connection.execute(
+                """INSERT INTO task_briefings(
+                    scope, briefing_id, task_id, agent_id, room_id,
+                    applicability_json, memory_bindings_json, created_utc,
+                    briefing_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    self.scope,
+                    briefing_id,
+                    task_id,
+                    self.agent_id,
+                    room_id,
+                    json.dumps(
+                        applicability,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    json.dumps(
+                        bindings,
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    ),
+                    created,
+                    digest,
+                ),
+            )
+            event = self._event(
+                connection,
+                "memory.task_briefed",
+                {
+                    "briefing_id": briefing_id,
+                    "task_id": task_id,
+                    "record_count": len(bindings),
+                    "briefing_sha256": digest,
+                },
+                task_id,
+            )
+        return {
+            **payload,
+            "records": records,
+            "briefing_sha256": digest,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
+    def record_decision_conflict(self, args: dict[str, Any]) -> dict[str, Any]:
+        """Record a review finding; never convert it into an automatic block."""
+
+        task_id = _require_identifier(args.get("task_id"), "task_id")
+        briefing_id = _require_identifier(args.get("briefing_id"), "briefing_id")
+        summary = _require_text(args.get("summary"), "summary", limit=4_000)
+        severity = str(args.get("severity") or "medium").strip().lower()
+        if severity not in {"low", "medium", "high", "critical"}:
+            raise BridgeError("severity must be low, medium, high or critical")
+        memory_ids = []
+        for item in _json_list(args.get("memory_ids", []), "memory_ids"):
+            memory_id = _require_identifier(item, "memory_id")
+            if memory_id not in memory_ids:
+                memory_ids.append(memory_id)
+        if not memory_ids:
+            raise BridgeError("decision conflict requires at least one memory_id")
+        finding_id = uuid.uuid4().hex
+        created = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            briefing = connection.execute(
+                """SELECT * FROM task_briefings
+                    WHERE scope=? AND briefing_id=? AND task_id=?""",
+                (self.scope, briefing_id, task_id),
+            ).fetchone()
+            if briefing is None:
+                raise BridgeError("task briefing not found")
+            briefing_payload = {
+                "scope": briefing["scope"],
+                "briefing_id": briefing["briefing_id"],
+                "task_id": briefing["task_id"],
+                "agent_id": briefing["agent_id"],
+                "room_id": briefing["room_id"],
+                "applicability": json.loads(briefing["applicability_json"]),
+                "memory_bindings": json.loads(briefing["memory_bindings_json"]),
+                "created_utc": briefing["created_utc"],
+            }
+            if stable_sha256(briefing_payload) != briefing["briefing_sha256"]:
+                raise BridgeError("task briefing SHA-256 mismatch")
+            bound_ids = {
+                str(item["memory_id"])
+                for item in briefing_payload["memory_bindings"]
+            }
+            if not set(memory_ids).issubset(bound_ids):
+                raise BridgeError("decision conflict references an unbriefed memory")
+            payload = {
+                "scope": self.scope,
+                "finding_id": finding_id,
+                "task_id": task_id,
+                "reviewer": self.agent_id,
+                "briefing_id": briefing_id,
+                "memory_ids": memory_ids,
+                "summary": summary,
+                "severity": severity,
+                "status": "finding",
+                "created_utc": created,
+            }
+            digest = stable_sha256(payload)
+            connection.execute(
+                """INSERT INTO decision_conflict_findings(
+                    scope, finding_id, task_id, reviewer, briefing_id,
+                    memory_ids_json, summary, severity, status, created_utc,
+                    finding_sha256
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'finding', ?, ?)""",
+                (
+                    self.scope,
+                    finding_id,
+                    task_id,
+                    self.agent_id,
+                    briefing_id,
+                    json.dumps(memory_ids, separators=(",", ":")),
+                    summary,
+                    severity,
+                    created,
+                    digest,
+                ),
+            )
+            event = self._event(
+                connection,
+                "memory.decision_conflict_found",
+                {
+                    "finding_id": finding_id,
+                    "task_id": task_id,
+                    "briefing_id": briefing_id,
+                    "severity": severity,
+                    "status": "finding",
+                    "finding_sha256": digest,
+                },
+                task_id,
+            )
+        return {
+            **payload,
+            "finding_sha256": digest,
+            "audit_chain_sha256": event["chain_sha256"],
+            "enforcement": "review-finding-only",
+        }
 
     def revoke_memory(self, args: dict[str, Any]) -> dict[str, Any]:
         memory_id = _require_identifier(args.get("memory_id"), "memory_id")
@@ -2558,6 +4260,7 @@ class Bridge:
             "provider_id": row["provider_id"],
             "model_id": row["model_id"],
             "response_model_id": row["response_model_id"],
+            "inference_timeout_seconds": row["inference_timeout_seconds"],
             "reasoning_mode": row["reasoning_mode"],
             "route_class": row["route_class"],
             "enabled": bool(row["enabled"]),
@@ -2575,15 +4278,19 @@ class Bridge:
         if secrets.compare_digest(stored, expected):
             return stored
 
-        # Schema v17 added an optional response_model_id to the immutable identity.
-        # Profiles created before that column existed bind the same semantic identity
-        # when the new value is NULL, so accept only their exact legacy hash.
-        if identity["response_model_id"] is None:
-            legacy_identity = dict(identity)
-            legacy_identity.pop("response_model_id")
-            legacy_expected = stable_sha256(legacy_identity)
-            if secrets.compare_digest(stored, legacy_expected):
+        # Schema v22 added an explicit route timeout. A NULL timeout preserves the
+        # exact v21 identity, while older pre-v17 profiles may also omit the NULL
+        # response-model field. Non-NULL values always require the current hash.
+        if identity["inference_timeout_seconds"] is None:
+            v21_identity = dict(identity)
+            v21_identity.pop("inference_timeout_seconds")
+            if secrets.compare_digest(stored, stable_sha256(v21_identity)):
                 return stored
+            if identity["response_model_id"] is None:
+                legacy_identity = dict(v21_identity)
+                legacy_identity.pop("response_model_id")
+                if secrets.compare_digest(stored, stable_sha256(legacy_identity)):
+                    return stored
         raise BridgeError("route profile identity SHA mismatch")
 
     def _resolve_route_request(
@@ -2786,6 +4493,56 @@ class Bridge:
             "mismatches": mismatches,
         }
 
+    def _reserve_message_storage(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        rows: int,
+        body_bytes: int,
+    ) -> None:
+        rows = int(rows)
+        body_bytes = int(body_bytes)
+        if rows < 1 or body_bytes < 0:
+            raise BridgeError("message storage reservation is invalid")
+        now = utc_now()
+        connection.execute(
+            """INSERT OR IGNORE INTO scope_storage_usage(
+                   scope, message_rows, message_bytes, updated_utc
+               ) VALUES (?, 0, 0, ?)""",
+            (self.scope, now),
+        )
+        updated = connection.execute(
+            """UPDATE scope_storage_usage
+                  SET message_rows=message_rows+?,
+                      message_bytes=message_bytes+?, updated_utc=?
+                WHERE scope=?
+                  AND message_rows+?<=?
+                  AND message_bytes+?<=?""",
+            (
+                rows,
+                body_bytes,
+                now,
+                self.scope,
+                rows,
+                MAX_SCOPE_MESSAGE_ROWS,
+                body_bytes,
+                MAX_SCOPE_MESSAGE_BYTES,
+            ),
+        )
+        if updated.rowcount != 1:
+            raise BridgeError("durable message storage quota exceeded")
+
+    @staticmethod
+    def _serialized_message_bytes(content: Mapping[str, Any]) -> int:
+        return len(
+            json.dumps(
+                dict(content),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        )
+
     def send_message(self, args: dict[str, Any]) -> dict[str, Any]:
         receipt_metadata = self._mcp_receipt_metadata(args, "send_message")
         room_id = _require_identifier(
@@ -2800,7 +4557,12 @@ class Bridge:
         if priority not in {"low", "normal", "high", "critical"}:
             raise BridgeError("priority must be low, normal, high or critical")
         reply_to = str(args.get("reply_to") or "").strip() or None
-        artifacts = self._clean_artifacts(args.get("artifact_paths", []))
+        artifacts = self._clean_artifacts(
+            args.get("artifact_paths", []),
+            max_count=MAX_CHAT_ATTACHMENT_COUNT,
+            reject_duplicates=True,
+        )
+        visibility = "room" if recipient == "*" else "direct"
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             replay = self._load_mcp_mutation_receipt_locked(
@@ -2835,8 +4597,14 @@ class Bridge:
                 "reply_to": reply_to,
                 "artifact_paths": artifacts,
                 "route_request": self._route_request_content_binding(route_request),
+                "visibility": visibility,
                 "created_utc": created,
             }
+            self._reserve_message_storage(
+                connection,
+                rows=1,
+                body_bytes=self._serialized_message_bytes(content),
+            )
             content_sha = stable_sha256(content)
             cursor = connection.execute(
                 """INSERT INTO messages(
@@ -2844,9 +4612,9 @@ class Bridge:
                     priority, reply_to, artifact_paths_json, route_profile_id,
                     route_profile_sha256, requested_provider_id, requested_model_id,
                     requested_reasoning_mode, requested_route_class,
-                    route_request_sha256, created_utc,
+                    route_request_sha256, visibility, created_utc,
                     acknowledged_utc, content_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
                 (
                     message_id,
                     self.scope,
@@ -2866,6 +4634,7 @@ class Bridge:
                     route_request["requested_reasoning_mode"] if route_request else None,
                     route_request["requested_route_class"] if route_request else None,
                     route_request["route_request_sha256"] if route_request else None,
+                    visibility,
                     created,
                     content_sha,
                 ),
@@ -2936,6 +4705,8 @@ class Bridge:
         ).fetchall()
         if not seats:
             raise BridgeError("room has no active Agent seats")
+        if len(seats) > MAX_ROOM_FANOUT_RECIPIENTS:
+            raise BridgeError("room fanout exceeds the active Agent seat limit")
 
         prepared: list[tuple[str, str, dict[str, Any]]] = []
         for seat in seats:
@@ -2955,6 +4726,32 @@ class Bridge:
             prepared.append((agent_id, route_profile_id, route_request))
 
         messages: list[dict[str, Any]] = []
+        reserved_message_bytes = sum(
+            self._serialized_message_bytes(
+                {
+                    "message_id": "0" * 32,
+                    "scope": self.scope,
+                    "room_id": room_id,
+                    "task_id": task_id,
+                    "sender": self.agent_id,
+                    "recipient": agent_id,
+                    "subject": subject,
+                    "body": body,
+                    "priority": priority,
+                    "reply_to": None,
+                    "artifact_paths": artifacts,
+                    "route_request": self._route_request_content_binding(route_request),
+                    "visibility": "room",
+                    "created_utc": created,
+                }
+            )
+            for agent_id, _route_profile_id, route_request in prepared
+        )
+        self._reserve_message_storage(
+            connection,
+            rows=len(prepared),
+            body_bytes=reserved_message_bytes,
+        )
         for agent_id, route_profile_id, route_request in prepared:
             message_id = uuid.uuid4().hex
             content = {
@@ -2970,6 +4767,7 @@ class Bridge:
                 "reply_to": None,
                 "artifact_paths": artifacts,
                 "route_request": self._route_request_content_binding(route_request),
+                "visibility": "room",
                 "created_utc": created,
             }
             content_sha = stable_sha256(content)
@@ -2979,9 +4777,9 @@ class Bridge:
                     subject, body, priority, reply_to, artifact_paths_json,
                     route_profile_id, route_profile_sha256, requested_provider_id,
                     requested_model_id, requested_reasoning_mode,
-                    requested_route_class, route_request_sha256, created_utc,
+                    requested_route_class, route_request_sha256, visibility, created_utc,
                     acknowledged_utc, content_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, 'room', ?, NULL, ?)""",
                 (
                     message_id,
                     self.scope,
@@ -3056,7 +4854,11 @@ class Bridge:
         priority = str(args.get("priority", "normal")).strip().lower()
         if priority not in {"low", "normal", "high", "critical"}:
             raise BridgeError("priority must be low, normal, high or critical")
-        artifacts = self._clean_artifacts(args.get("artifact_paths", []))
+        artifacts = self._clean_artifacts(
+            args.get("artifact_paths", []),
+            max_count=MAX_CHAT_ATTACHMENT_COUNT,
+            reject_duplicates=True,
+        )
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             replay = self._load_mcp_mutation_receipt_locked(
@@ -3100,6 +4902,8 @@ class Bridge:
         ).fetchall()
         if not rows:
             raise BridgeError("room has no active Agent seats")
+        if len(rows) > MAX_ROOM_FANOUT_RECIPIENTS:
+            raise BridgeError("room fanout exceeds the active Agent seat limit")
         prepared: list[tuple[str, str, dict[str, Any]]] = []
         for row in rows:
             agent_id = str(row["agent_id"])
@@ -3153,8 +4957,14 @@ class Bridge:
             "discussion_id": discussion_id,
             "discussion_round": discussion_round,
             "discussion_role": "prompt",
+            "visibility": "room",
             "created_utc": created,
         }
+        self._reserve_message_storage(
+            connection,
+            rows=1,
+            body_bytes=self._serialized_message_bytes(content),
+        )
         content_sha = stable_sha256(content)
         cursor = connection.execute(
             """INSERT INTO messages(
@@ -3164,9 +4974,9 @@ class Bridge:
                    requested_model_id,
                    requested_reasoning_mode, requested_route_class,
                    route_request_sha256, discussion_id, discussion_round,
-                   discussion_role, created_utc, acknowledged_utc, content_sha256
+                   discussion_role, visibility, created_utc, acknowledged_utc, content_sha256
                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?,
-                          ?, ?, 'prompt', ?, NULL, ?)""",
+                          ?, ?, 'prompt', 'room', ?, NULL, ?)""",
             (
                 message_id,
                 self.scope,
@@ -3312,6 +5122,127 @@ class Bridge:
             )
         return len(rows)
 
+    @staticmethod
+    def _guided_participant_binding(
+        participants: Iterable[Mapping[str, Any]],
+    ) -> list[tuple[str, str, str]]:
+        if isinstance(participants, (str, bytes, Mapping)):
+            raise BridgeError("bound discussion participant binding is invalid")
+        expected: list[tuple[str, str, str]] = []
+        seen: set[str] = set()
+        for participant in participants:
+            if not isinstance(participant, Mapping):
+                raise BridgeError("bound discussion participant binding is invalid")
+            agent_id = str(participant.get("agent_id") or "")
+            route_profile_id = str(participant.get("route_profile_id") or "")
+            route_profile_sha256 = str(
+                participant.get("route_profile_sha256") or ""
+            )
+            if (
+                not SAFE_ID.fullmatch(agent_id)
+                or not SAFE_ID.fullmatch(route_profile_id)
+                or not re.fullmatch(r"[0-9a-f]{64}", route_profile_sha256)
+                or agent_id in seen
+            ):
+                raise BridgeError("bound discussion participant binding is invalid")
+            seen.add(agent_id)
+            expected.append((agent_id, route_profile_id, route_profile_sha256))
+        if not expected:
+            raise BridgeError("bound discussion participant binding is invalid")
+        return sorted(expected)
+
+    def _matching_discussions_for_operation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        room_id: str,
+        task_id: str,
+        prompt_sha256: str,
+        participants: Iterable[Mapping[str, Any]],
+    ) -> list[sqlite3.Row]:
+        """Return every discussion with the exact immutable prompt and route binding."""
+
+        if not re.fullmatch(r"[0-9a-f]{64}", prompt_sha256):
+            raise BridgeError("bound discussion prompt SHA-256 is invalid")
+        room_id = _require_identifier(room_id, "bound discussion room id")
+        task_id = _require_identifier(task_id, "bound discussion task id")
+        expected = self._guided_participant_binding(participants)
+
+        rows = connection.execute(
+            """SELECT * FROM room_discussions
+                WHERE scope=? AND room_id=? AND task_id=?
+                ORDER BY created_utc, discussion_id""",
+            (self.scope, room_id, task_id),
+        ).fetchall()
+        matching: list[sqlite3.Row] = []
+        for discussion in rows:
+            prompts = connection.execute(
+                """SELECT recipient, route_profile_id, route_profile_sha256, body
+                    FROM messages
+                    WHERE scope=? AND discussion_id=? AND discussion_round=1
+                      AND discussion_role='prompt'
+                    ORDER BY recipient""",
+                (self.scope, discussion["discussion_id"]),
+            ).fetchall()
+            observed = sorted(
+                (
+                    str(prompt["recipient"]),
+                    str(prompt["route_profile_id"] or ""),
+                    str(prompt["route_profile_sha256"] or ""),
+                )
+                for prompt in prompts
+            )
+            if observed != expected or any(
+                hashlib.sha256(str(prompt["body"]).encode("utf-8")).hexdigest()
+                != prompt_sha256
+                for prompt in prompts
+            ):
+                continue
+            if (
+                stable_sha256(self._discussion_row_payload(discussion))
+                != discussion["discussion_sha256"]
+            ):
+                raise BridgeError("bound discussion SHA-256 mismatch")
+            matching.append(discussion)
+        return matching
+
+    def _bound_discussion_for_operation(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        discussion_id: str,
+        room_id: str,
+        task_id: str,
+        prompt_sha256: str,
+        participants: Iterable[Mapping[str, Any]],
+    ) -> sqlite3.Row | None:
+        """Resolve only the discussion ID durably stored on the operation."""
+
+        discussion_id = _require_identifier(
+            discussion_id, "bound discussion id"
+        )
+        row = connection.execute(
+            "SELECT * FROM room_discussions WHERE scope=? AND discussion_id=?",
+            (self.scope, discussion_id),
+        ).fetchone()
+        if row is None:
+            return None
+        if str(row["room_id"]) != room_id or str(row["task_id"]) != task_id:
+            raise BridgeError("bound discussion source identity does not match")
+        matching = self._matching_discussions_for_operation(
+            connection,
+            room_id=room_id,
+            task_id=task_id,
+            prompt_sha256=prompt_sha256,
+            participants=participants,
+        )
+        if not any(
+            str(candidate["discussion_id"]) == discussion_id
+            for candidate in matching
+        ):
+            raise BridgeError("bound discussion prompt or route binding does not match")
+        return row
+
     def _discussion_participants(
         self,
         connection: sqlite3.Connection,
@@ -3374,7 +5305,11 @@ class Bridge:
         priority = str(args.get("priority", "normal")).strip().lower()
         if priority not in {"low", "normal", "high", "critical"}:
             raise BridgeError("priority must be low, normal, high or critical")
-        artifacts = self._clean_artifacts(args.get("artifact_paths", []))
+        artifacts = self._clean_artifacts(
+            args.get("artifact_paths", []),
+            max_count=MAX_CHAT_ATTACHMENT_COUNT,
+            reject_duplicates=True,
+        )
         now = utc_now()
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -3401,8 +5336,14 @@ class Bridge:
                     "reply_to": None,
                     "artifact_paths": artifacts,
                     "route_request": None,
+                    "visibility": "room",
                     "created_utc": now,
                 }
+                self._reserve_message_storage(
+                    connection,
+                    rows=1,
+                    body_bytes=self._serialized_message_bytes(content),
+                )
                 content_sha = stable_sha256(content)
                 cursor = connection.execute(
                     """INSERT INTO messages(
@@ -3411,10 +5352,10 @@ class Bridge:
                            route_profile_id, route_profile_sha256,
                            requested_provider_id, requested_model_id,
                            requested_reasoning_mode, requested_route_class,
-                           route_request_sha256, created_utc, acknowledged_utc,
+                           route_request_sha256, visibility, created_utc, acknowledged_utc,
                            content_sha256
                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, NULL, NULL,
-                                 NULL, NULL, NULL, NULL, NULL, ?, NULL, ?)""",
+                                 NULL, NULL, NULL, NULL, NULL, 'room', ?, NULL, ?)""",
                     (
                         message_id,
                         self.scope,
@@ -3631,6 +5572,152 @@ class Bridge:
             raise BridgeError("agent_id must match the current runtime identity")
         return consumer
 
+    @staticmethod
+    def _room_context_dedup_key(row: Mapping[str, Any]) -> str:
+        """Collapse route-specific copies of one room fan-out root message."""
+
+        if row.get("reply_to") is None:
+            payload = {
+                "sender": row.get("sender"),
+                "task_id": row.get("task_id"),
+                "subject": row.get("subject"),
+                "body": row.get("body"),
+                "created_utc": row.get("created_utc"),
+                "artifact_paths_json": row.get("artifact_paths_json"),
+                "discussion_id": row.get("discussion_id"),
+                "discussion_round": row.get("discussion_round"),
+                "discussion_role": row.get("discussion_role"),
+            }
+        else:
+            payload = {
+                "sender": row.get("sender"),
+                "recipient": row.get("recipient"),
+                "subject": row.get("subject"),
+                "body": row.get("body"),
+                "reply_to": row.get("reply_to"),
+                "created_utc": row.get("created_utc"),
+                "discussion_id": row.get("discussion_id"),
+                "discussion_round": row.get("discussion_round"),
+                "discussion_role": row.get("discussion_role"),
+            }
+        return stable_sha256(payload)
+
+    @staticmethod
+    def _room_context_message(row: Mapping[str, Any], char_limit: int) -> tuple[dict[str, str], bool]:
+        sender = str(row.get("sender") or "unknown")
+        subject = str(row.get("subject") or "").strip()
+        body = str(row.get("body") or "").strip()
+        heading = f"[Same-room history | sender={sender}"
+        if subject:
+            heading += f" | subject={subject}"
+        heading += "]\n"
+        available = max(0, char_limit - len(heading))
+        truncated = len(body) > available
+        if truncated:
+            marker = "\n[history message truncated]"
+            body = body[: max(0, available - len(marker))] + marker
+        return {
+            "role": "user" if sender == HUMAN_OPERATOR_ID else "assistant",
+            "content": heading + body,
+        }, truncated
+
+    def room_prompt_context(
+        self,
+        message_id: str,
+        *,
+        max_messages: int = DEFAULT_ROOM_CONTEXT_MESSAGES,
+        max_chars: int = DEFAULT_ROOM_CONTEXT_CHARS,
+    ) -> dict[str, Any]:
+        """Return a bounded, de-duplicated same-room history snapshot for one dispatch.
+
+        Imported-history rooms are not stored in ``messages`` and therefore cannot
+        leak into a live room prompt.  The current root message seeds the de-dup set
+        so earlier route-specific copies from the same fan-out are also omitted.
+        """
+
+        message_id = _require_identifier(message_id, "message_id")
+        max_messages = max(0, min(int(max_messages), MAX_ROOM_CONTEXT_MESSAGES))
+        max_chars = max(0, min(int(max_chars), MAX_ROOM_CONTEXT_CHARS))
+        with self._connect() as connection:
+            current = connection.execute(
+                "SELECT * FROM messages WHERE scope=? AND message_id=?",
+                (self.scope, message_id),
+            ).fetchone()
+            if current is None or current["recipient"] not in {self.agent_id, "*"}:
+                raise BridgeError("source message is not addressed to this agent")
+            self._require_room_member(connection, current["room_id"], self.agent_id)
+            scan_limit = max(256, min(2_000, max(1, max_messages) * 16))
+            rows = connection.execute(
+                """SELECT * FROM messages m
+                     WHERE m.scope=? AND m.room_id=? AND m.sequence<?
+                       AND (m.recipient=? OR m.recipient='*' OR m.visibility='room')
+                     ORDER BY m.sequence DESC LIMIT ?""",
+                (
+                    self.scope,
+                    current["room_id"],
+                    int(current["sequence"]),
+                    self.agent_id,
+                    scan_limit,
+                ),
+            ).fetchall()
+
+        current_item = dict(current)
+        seen = {self._room_context_dedup_key(current_item)}
+        selected_desc: list[tuple[int, dict[str, str]]] = []
+        duplicate_rows_omitted = 0
+        omitted_for_limit = 0
+        any_message_truncated = False
+        used_chars = 0
+        for row in rows:
+            row_item = dict(row)
+            key = self._room_context_dedup_key(row_item)
+            if key in seen:
+                duplicate_rows_omitted += 1
+                continue
+            seen.add(key)
+            if len(selected_desc) >= max_messages or used_chars >= max_chars:
+                omitted_for_limit += 1
+                continue
+            remaining = max_chars - used_chars
+            per_message_limit = min(MAX_ROOM_CONTEXT_MESSAGE_CHARS, remaining)
+            if per_message_limit <= 0:
+                omitted_for_limit += 1
+                continue
+            rendered, truncated = self._room_context_message(
+                row_item, per_message_limit
+            )
+            any_message_truncated = any_message_truncated or truncated
+            used_chars += len(rendered["content"])
+            selected_desc.append((int(row["sequence"]), rendered))
+
+        selected_desc.reverse()
+        messages = [item for _, item in selected_desc]
+        sequences = [sequence for sequence, _ in selected_desc]
+        context_sha = stable_sha256(messages)
+        receipt = {
+            "schema": "peerbridge.room-prompt-context.v1",
+            "scope": self.scope,
+            "room_id": str(current["room_id"]),
+            "agent_id": self.agent_id,
+            "source_message_id": message_id,
+            "history_message_count": len(messages),
+            "history_chars": used_chars,
+            "history_sha256": context_sha,
+            "duplicate_rows_omitted": duplicate_rows_omitted,
+            "visibility_filter": (
+                "recipient_self_or_broadcast_or_explicit_room_visibility"
+            ),
+            "history_truncated": bool(
+                any_message_truncated
+                or omitted_for_limit
+                or len(rows) == scan_limit
+            ),
+            "oldest_sequence": sequences[0] if sequences else None,
+            "newest_sequence": sequences[-1] if sequences else None,
+        }
+        receipt["receipt_sha256"] = stable_sha256(receipt)
+        return {"messages": messages, "receipt": receipt}
+
     def poll_messages(self, args: dict[str, Any]) -> dict[str, Any]:
         room_id = _require_identifier(
             args.get("room_id", DEFAULT_ROOM_ID), "room_id"
@@ -3766,21 +5853,40 @@ class Bridge:
             channel = f"messages:{room_id}"
             current = self._consumer_cursor(connection, channel, consumer)
             eligible = connection.execute(
-                """SELECT m.sequence,
-                          CASE WHEN r.message_id IS NULL THEN 0 ELSE 1 END AS acknowledged
+                """SELECT
+                          MIN(CASE WHEN r.message_id IS NULL THEN m.sequence END)
+                            AS first_unacknowledged,
+                          MAX(m.sequence) AS maximum_sequence
                    FROM messages m
                    LEFT JOIN message_receipts r
                      ON r.scope=m.scope AND r.message_id=m.message_id AND r.agent_id=?
                    WHERE m.scope=? AND m.room_id=? AND m.sequence>?
-                     AND (m.recipient=? OR m.recipient='*')
-                   ORDER BY m.sequence ASC""",
+                     AND (m.recipient=? OR m.recipient='*')""",
                 (consumer, self.scope, room_id, current, consumer),
-            ).fetchall()
-            advanced = current
-            for item in eligible:
-                if not item["acknowledged"]:
-                    break
-                advanced = int(item["sequence"])
+            ).fetchone()
+            first_unacknowledged = eligible["first_unacknowledged"]
+            if first_unacknowledged is None:
+                advanced = int(eligible["maximum_sequence"] or current)
+            else:
+                preceding = connection.execute(
+                    """SELECT MAX(m.sequence)
+                       FROM messages m
+                       JOIN message_receipts r
+                         ON r.scope=m.scope AND r.message_id=m.message_id
+                        AND r.agent_id=?
+                       WHERE m.scope=? AND m.room_id=?
+                         AND m.sequence>? AND m.sequence<?
+                         AND (m.recipient=? OR m.recipient='*')""",
+                    (
+                        consumer,
+                        self.scope,
+                        room_id,
+                        current,
+                        int(first_unacknowledged),
+                        consumer,
+                    ),
+                ).fetchone()[0]
+                advanced = int(preceding or current)
             connection.execute(
                 """INSERT INTO consumer_cursors(scope, channel, consumer, position, updated_utc)
                    VALUES (?, ?, ?, ?, ?)
@@ -3953,9 +6059,11 @@ class Bridge:
 
             selected: sqlite3.Row | None = None
             for candidate in rows:
-                if candidate["room_id"] != DEFAULT_ROOM_ID and self._active_room_member(
-                    connection, candidate["room_id"], self.agent_id
-                ) is None:
+                try:
+                    self._require_room_member(
+                        connection, candidate["room_id"], self.agent_id
+                    )
+                except BridgeError:
                     continue
                 if (
                     candidate["route_profile_id"]
@@ -4094,6 +6202,275 @@ class Bridge:
                 },
             }
 
+    def record_trusted_inference_receipt(
+        self, args: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Bind one runner receipt to the exact active dispatch attempt.
+
+        This method is intentionally not exposed as an MCP tool. The mailbox
+        supervisor calls it only after a provider runner returns.
+        """
+        message_id = _require_identifier(args.get("message_id"), "message_id")
+        lease_token = str(args.get("lease_token") or "")
+        body = _require_text(args.get("body"), "body")
+        receipt = args.get("receipt")
+        assistant_message = args.get("assistant_message")
+        if not isinstance(receipt, Mapping):
+            raise BridgeError("receipt must be an object")
+        if not isinstance(assistant_message, Mapping):
+            raise BridgeError("assistant_message must be an object")
+        connection_id = _optional_identifier(
+            args.get("connection_id"), "connection_id"
+        )
+        raw_connection_sha = str(args.get("connection_sha256") or "").strip()
+        connection_sha = (
+            _require_sha256(raw_connection_sha, "connection_sha256")
+            if raw_connection_sha
+            else None
+        )
+        if (connection_id is None) != (connection_sha is None):
+            raise BridgeError(
+                "connection_id and connection_sha256 must be supplied together"
+            )
+        execution_route_profile_id = _optional_identifier(
+            args.get("execution_route_profile_id"),
+            "execution_route_profile_id",
+        )
+        raw_execution_profile_sha = str(
+            args.get("execution_route_profile_sha256") or ""
+        ).strip()
+        execution_route_profile_sha = (
+            _require_sha256(
+                raw_execution_profile_sha,
+                "execution_route_profile_sha256",
+            )
+            if raw_execution_profile_sha
+            else None
+        )
+        if (execution_route_profile_id is None) != (
+            execution_route_profile_sha is None
+        ):
+            raise BridgeError(
+                "execution route profile id and sha256 must be supplied together"
+            )
+
+        try:
+            receipt_usage = usage_from_receipt(receipt)
+        except UsageError as exc:
+            raise BridgeError(str(exc)) from None
+        usage_sha = stable_sha256(receipt_usage)
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            dispatch = self._require_dispatch_lease(
+                connection, message_id, lease_token
+            )
+            source = connection.execute(
+                "SELECT * FROM messages WHERE scope=? AND message_id=?",
+                (self.scope, message_id),
+            ).fetchone()
+            if source is None or source["recipient"] not in {self.agent_id, "*"}:
+                raise BridgeError("source message is not addressed to this agent")
+            self._require_room_member(connection, source["room_id"], self.agent_id)
+            route_evaluation = self._evaluate_route(
+                source, self.agent_id, connection=connection
+            )
+            if route_evaluation["status"] == "mismatch":
+                raise BridgeError(
+                    "route request is not satisfied by this runtime identity: "
+                    + ", ".join(route_evaluation["mismatches"])
+                )
+
+            response_model_id = self.model_id
+            expected_receipt_schema = "peerbridge.openai-compatible-run.v1"
+            source_route_profile_id = source["route_profile_id"]
+            source_route_profile_sha = source["route_profile_sha256"]
+            if execution_route_profile_id is None and source_route_profile_id:
+                execution_route_profile_id = source_route_profile_id
+                execution_route_profile_sha = source_route_profile_sha
+            if source_route_profile_id and (
+                execution_route_profile_id != source_route_profile_id
+                or execution_route_profile_sha != source_route_profile_sha
+            ):
+                raise BridgeError(
+                    "execution route profile does not match the source request"
+                )
+            if execution_route_profile_id:
+                profile = connection.execute(
+                    """SELECT * FROM route_profiles
+                       WHERE scope=? AND route_id=? AND agent_id=? AND enabled=1""",
+                    (self.scope, execution_route_profile_id, self.agent_id),
+                ).fetchone()
+                if (
+                    profile is None
+                    or profile["profile_sha256"] != execution_route_profile_sha
+                    or profile["provider_id"] != self.provider_id
+                    or profile["model_id"] != self.model_id
+                    or profile["reasoning_mode"] != self.reasoning_mode
+                    or profile["route_class"] != self.route_class
+                ):
+                    raise BridgeError("execution route profile is no longer exact")
+                response_model_id = profile["response_model_id"] or profile["model_id"]
+            if connection_id is not None:
+                if execution_route_profile_id is None:
+                    raise BridgeError(
+                        "routed inference receipt is missing its execution profile"
+                    )
+                provider_connection = connection.execute(
+                    """SELECT * FROM provider_connections
+                       WHERE scope=? AND connection_id=? AND enabled=1""",
+                    (self.scope, connection_id),
+                ).fetchone()
+                bound_provider_id = (
+                    provider_connection["provider_id"]
+                    if provider_connection is not None
+                    else None
+                )
+                if (
+                    provider_connection is not None
+                    and not bound_provider_id
+                    and provider_connection["secret_backend"] == "cc-switch"
+                ):
+                    bound_provider_id = provider_connection["connection_id"]
+                if (
+                    provider_connection is None
+                    or provider_connection["connection_sha256"] != connection_sha
+                    or bound_provider_id != self.provider_id
+                    or provider_connection["route_class"] != self.route_class
+                ):
+                    raise BridgeError("provider connection binding does not match")
+                expected_receipt_schema = {
+                    "windows-credential-manager": "peerbridge.openai-compatible-run.v1",
+                    "native-acp": "peerbridge.acpx-inference-receipt.v1",
+                    "cc-switch": "peerbridge.ccswitch-inference-receipt.v1",
+                }[provider_connection["secret_backend"]]
+
+            expected_route = {
+                "route_profile_id": execution_route_profile_id,
+                "route_profile_sha256": execution_route_profile_sha,
+                "route_class": self.route_class,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "response_model_id": response_model_id,
+                "reasoning_mode": self.reasoning_mode,
+                "connection_id": connection_id,
+                "connection_sha256": connection_sha,
+                "room_id": source["room_id"],
+                "session_id": self.session_id,
+            }
+            try:
+                validated = validate_inference_receipt(
+                    receipt,
+                    message_id=message_id,
+                    assistant_message=assistant_message,
+                    reply_body=body,
+                    expected_route=expected_route,
+                )
+            except InferenceReceiptError as exc:
+                raise BridgeError(str(exc)) from None
+            if validated["receipt_schema"] != expected_receipt_schema:
+                raise BridgeError(
+                    "provider receipt schema does not match the bound secret backend"
+                )
+
+            lease_token_sha = sha256_bytes(lease_token.encode("utf-8"))
+            existing = connection.execute(
+                """SELECT * FROM trusted_inference_receipts
+                   WHERE scope=? AND message_id=? AND agent_id=? AND attempt_count=?""",
+                (
+                    self.scope,
+                    message_id,
+                    self.agent_id,
+                    int(dispatch["attempt_count"]),
+                ),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing["session_id"] != self.session_id
+                    or existing["lease_token_sha256"] != lease_token_sha
+                    or existing["inference_receipt_sha256"]
+                    != validated["inference_receipt_sha256"]
+                    or existing["reply_body_sha256"]
+                    != validated["reply_body_sha256"]
+                    or existing["inference_usage_sha256"] != usage_sha
+                    or existing["binding_sha256"]
+                    != stable_sha256(trusted_inference_receipt_payload(existing))
+                ):
+                    raise BridgeError(
+                        "dispatch attempt already has a different trusted receipt"
+                    )
+                return {
+                    "recorded": True,
+                    "idempotent_replay": True,
+                    "inference_receipt_sha256": existing[
+                        "inference_receipt_sha256"
+                    ],
+                    "binding_sha256": existing["binding_sha256"],
+                }
+
+            binding = {
+                "scope": self.scope,
+                "message_id": message_id,
+                "agent_id": self.agent_id,
+                "session_id": self.session_id,
+                "attempt_count": int(dispatch["attempt_count"]),
+                "lease_token_sha256": lease_token_sha,
+                "source_content_sha256": source["content_sha256"],
+                "source_route_request_sha256": source["route_request_sha256"],
+                **validated,
+                "inference_usage_sha256": usage_sha,
+                "route_profile_id": execution_route_profile_id,
+                "route_profile_sha256": execution_route_profile_sha,
+                "connection_id": connection_id,
+                "connection_sha256": connection_sha,
+                "provider_id": self.provider_id,
+                "model_id": self.model_id,
+                "response_model_id": response_model_id,
+                "reasoning_mode": self.reasoning_mode,
+                "route_class": self.route_class,
+                "room_id": source["room_id"],
+                "recorded_utc": now,
+            }
+            binding.pop("expected_route_sha256", None)
+            binding_sha = stable_sha256(binding)
+            connection.execute(
+                """INSERT INTO trusted_inference_receipts(
+                       scope, message_id, agent_id, session_id, attempt_count,
+                       lease_token_sha256, source_content_sha256,
+                       source_route_request_sha256, receipt_schema,
+                       inference_receipt_sha256, assistant_message_sha256,
+                       assistant_content_sha256, reply_body_sha256,
+                       inference_usage_sha256, route_profile_id,
+                       route_profile_sha256, connection_id, connection_sha256,
+                       provider_id, model_id, response_model_id, reasoning_mode,
+                       route_class, room_id, recorded_utc, binding_sha256
+                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                tuple(binding[key] for key in TRUSTED_INFERENCE_RECEIPT_PAYLOAD_FIELDS)
+                + (binding_sha,),
+            )
+            event = self._event(
+                connection,
+                "message.inference_receipt_trusted",
+                {
+                    "message_id": message_id,
+                    "agent_id": self.agent_id,
+                    "attempt_count": int(dispatch["attempt_count"]),
+                    "inference_receipt_sha256": validated[
+                        "inference_receipt_sha256"
+                    ],
+                    "binding_sha256": binding_sha,
+                },
+                source["task_id"],
+            )
+        return {
+            "recorded": True,
+            "idempotent_replay": False,
+            "inference_receipt_sha256": validated["inference_receipt_sha256"],
+            "binding_sha256": binding_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
     def complete_message_dispatch(self, args: dict[str, Any]) -> dict[str, Any]:
         """Atomically create one reply and mark its source message completed."""
         message_id = _require_identifier(args.get("message_id"), "message_id")
@@ -4148,10 +6525,86 @@ class Bridge:
                     "route request is not satisfied by this runtime identity: "
                     + ", ".join(route_evaluation["mismatches"])
                 )
+            trusted_receipt = connection.execute(
+                """SELECT * FROM trusted_inference_receipts
+                   WHERE scope=? AND message_id=? AND agent_id=?
+                     AND session_id=? AND attempt_count=?
+                     AND lease_token_sha256=? AND inference_receipt_sha256=?""",
+                (
+                    self.scope,
+                    message_id,
+                    self.agent_id,
+                    self.session_id,
+                    int(dispatch_row["attempt_count"]),
+                    sha256_bytes(lease_token.encode("utf-8")),
+                    inference_receipt_sha,
+                ),
+            ).fetchone()
+            if trusted_receipt is None:
+                raise BridgeError(
+                    "trusted inference receipt binding is required before completion"
+                )
+            trusted_binding_sha = stable_sha256(
+                trusted_inference_receipt_payload(trusted_receipt)
+            )
+            trusted_profile = None
+            if trusted_receipt["route_profile_id"]:
+                trusted_profile = connection.execute(
+                    """SELECT * FROM route_profiles
+                       WHERE scope=? AND route_id=? AND agent_id=? AND enabled=1""",
+                    (
+                        self.scope,
+                        trusted_receipt["route_profile_id"],
+                        self.agent_id,
+                    ),
+                ).fetchone()
+            source_profile_matches = (
+                source["route_profile_id"] is None
+                or (
+                    trusted_receipt["route_profile_id"]
+                    == source["route_profile_id"]
+                    and trusted_receipt["route_profile_sha256"]
+                    == source["route_profile_sha256"]
+                )
+            )
+            trusted_profile_matches = (
+                trusted_receipt["route_profile_id"] is None
+                or (
+                    trusted_profile is not None
+                    and trusted_profile["profile_sha256"]
+                    == trusted_receipt["route_profile_sha256"]
+                    and trusted_profile["provider_id"] == self.provider_id
+                    and trusted_profile["model_id"] == self.model_id
+                    and trusted_profile["reasoning_mode"] == self.reasoning_mode
+                    and trusted_profile["route_class"] == self.route_class
+                )
+            )
+            if (
+                trusted_receipt["binding_sha256"] != trusted_binding_sha
+                or trusted_receipt["source_content_sha256"]
+                != source["content_sha256"]
+                or trusted_receipt["source_route_request_sha256"]
+                != source["route_request_sha256"]
+                or trusted_receipt["reply_body_sha256"]
+                != sha256_bytes(body.encode("utf-8"))
+                or trusted_receipt["inference_usage_sha256"]
+                != stable_sha256(inference_usage)
+                or not source_profile_matches
+                or not trusted_profile_matches
+                or trusted_receipt["provider_id"] != self.provider_id
+                or trusted_receipt["model_id"] != self.model_id
+                or trusted_receipt["reasoning_mode"] != self.reasoning_mode
+                or trusted_receipt["route_class"] != self.route_class
+                or trusted_receipt["room_id"] != source["room_id"]
+            ):
+                raise BridgeError("trusted inference receipt binding does not match")
             subject = str(args.get("subject") or f"Re: {source['subject']}").strip()
             subject = _require_text(subject, "subject", limit=500)
             created = utc_now()
             reply_id = uuid.uuid4().hex
+            visibility = (
+                "room" if str(source["visibility"] or "direct") == "room" else "direct"
+            )
             content = {
                 "message_id": reply_id,
                 "scope": self.scope,
@@ -4170,8 +6623,14 @@ class Bridge:
                 "discussion_role": (
                     "response" if source["discussion_id"] else None
                 ),
+                "visibility": visibility,
                 "created_utc": created,
             }
+            self._reserve_message_storage(
+                connection,
+                rows=1,
+                body_bytes=self._serialized_message_bytes(content),
+            )
             content_sha = stable_sha256(content)
             cursor = connection.execute(
                 """INSERT INTO messages(
@@ -4181,9 +6640,9 @@ class Bridge:
                        requested_provider_id, requested_model_id,
                        requested_reasoning_mode, requested_route_class,
                        route_request_sha256, discussion_id, discussion_round,
-                       discussion_role, created_utc, acknowledged_utc, content_sha256
+                       discussion_role, visibility, created_utc, acknowledged_utc, content_sha256
                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'normal', ?, '[]',
-                             NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, NULL, ?)""",
+                             NULL, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?)""",
                 (
                     reply_id,
                     self.scope,
@@ -4197,6 +6656,7 @@ class Bridge:
                     source["discussion_id"],
                     source["discussion_round"],
                     "response" if source["discussion_id"] else None,
+                    visibility,
                     created,
                     content_sha,
                 ),
@@ -4776,6 +7236,8 @@ class Bridge:
                     raise BridgeError("only an active discussion can pause")
                 status, stop_reason = "paused", "human_paused"
             elif action == "stop":
+                if status not in {"active", "paused", "waiting_human"}:
+                    raise BridgeError("only an open discussion can stop")
                 status, stop_reason = "stopped", "human_stopped"
                 cancelled_dispatches = self._cancel_discussion_dispatches(
                     connection,
@@ -5289,8 +7751,11 @@ class Bridge:
             required_peer = _require_identifier(required_peer, "required_peer")
             if required_peer == self.agent_id:
                 raise BridgeError("required_peer must be another agent")
+        raw_required_peers = _json_list(args.get("required_peers"), "required_peers")
+        if len(raw_required_peers) > MAX_REQUIRED_PEERS:
+            raise BridgeError("required_peers exceeds the peer limit")
         required_peers = []
-        for item in _json_list(args.get("required_peers"), "required_peers"):
+        for item in raw_required_peers:
             peer = _require_identifier(item, "required_peers item")
             if peer == self.agent_id:
                 raise BridgeError("required_peers must contain only other agents")
@@ -5350,9 +7815,12 @@ class Bridge:
                    FROM tasks t JOIN task_paths p
                      ON p.scope=t.scope AND p.task_id=t.task_id
                    WHERE t.workspace_root_key=? AND t.status='claimed'
-                     AND t.lease_expires_epoch>?""",
-                (self.workspace_root_key, now_epoch),
+                     AND t.lease_expires_epoch>?
+                   LIMIT ?""",
+                (self.workspace_root_key, now_epoch, MAX_ACTIVE_TASK_PATH_ROWS + 1),
             ).fetchall()
+            if len(active) > MAX_ACTIVE_TASK_PATH_ROWS:
+                raise BridgeError("active task path conflict set exceeds the bounded limit")
             conflicts = []
             for new_access, new_path in requested:
                 for row in active:
@@ -5377,11 +7845,17 @@ class Bridge:
                     "task path scope conflicts with an active lease: "
                     + json.dumps(conflicts, ensure_ascii=False, sort_keys=True)
                 )
+            task_revision = (
+                int(existing["task_revision"] or 1)
+                + (0 if existing["task_sha256"] == task_sha else 1)
+                if existing
+                else 1
+            )
             if existing:
                 connection.execute(
                     """UPDATE tasks SET workspace_root_key=?, summary=?, owner=?, status='claimed', claimed_by=?,
                        claimed_session_id=?, lease_token_sha256=?, lease_expires_epoch=?,
-                       claimed_utc=?, updated_utc=?, task_sha256=?, approval_mode=?,
+                       claimed_utc=?, updated_utc=?, task_sha256=?, task_revision=?, approval_mode=?,
                        required_peer=?, review_quorum=? WHERE scope=? AND task_id=?""",
                     (
                         self.workspace_root_key,
@@ -5394,6 +7868,7 @@ class Bridge:
                         now,
                         now,
                         task_sha,
+                        task_revision,
                         approval_mode,
                         required_peer,
                         review_quorum,
@@ -5411,8 +7886,8 @@ class Bridge:
                         scope, task_id, workspace_root_key, summary, owner, status, claimed_by,
                         claimed_session_id, lease_token_sha256, lease_expires_epoch,
                         claimed_utc, created_utc, updated_utc, task_sha256,
-                        approval_mode, required_peer, review_quorum
-                    ) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        task_revision, approval_mode, required_peer, review_quorum
+                    ) VALUES (?, ?, ?, ?, ?, 'claimed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         self.scope,
                         task_id,
@@ -5427,6 +7902,7 @@ class Bridge:
                         now,
                         now,
                         task_sha,
+                        task_revision,
                         approval_mode,
                         required_peer,
                         review_quorum,
@@ -5450,6 +7926,7 @@ class Bridge:
                 "task.claimed",
                 {
                     "task_sha256": task_sha,
+                    "task_revision": task_revision,
                     "lease_seconds": lease_seconds,
                     "read_paths": read_paths,
                     "write_paths": write_paths,
@@ -5469,6 +7946,7 @@ class Bridge:
             "read_paths": read_paths,
             "write_paths": write_paths,
             "task_sha256": task_sha,
+            "task_revision": task_revision,
             "approval_mode": approval_mode,
             "required_peers": required_peers,
             "review_quorum": review_quorum,
@@ -5636,15 +8114,18 @@ class Bridge:
                 "artifact_paths": artifacts,
                 "request_utc": created,
                 "approval_mode": task["approval_mode"],
+                "task_revision": int(task["task_revision"]),
+                "task_sha256": str(task["task_sha256"]),
             }
             request_sha = stable_sha256(content)
             cursor = connection.execute(
                 """INSERT INTO peer_calls(
                     request_id, scope, task_id, requester, recipient, question,
-                    artifact_paths_json, request_utc, request_sha256, status,
+                    artifact_paths_json, request_utc, request_sha256,
+                    task_revision, task_sha256, status,
                     approval_mode, response, response_artifact_paths_json,
                     response_utc, response_sha256
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, NULL, NULL, NULL, NULL)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, NULL, NULL, NULL, NULL)""",
                 (
                     request_id,
                     self.scope,
@@ -5655,6 +8136,8 @@ class Bridge:
                     json.dumps(artifacts, ensure_ascii=False),
                     created,
                     request_sha,
+                    int(task["task_revision"]),
+                    str(task["task_sha256"]),
                     task["approval_mode"],
                 ),
             )
@@ -5729,6 +8212,17 @@ class Bridge:
                 raise BridgeError("review request not found")
             if call["recipient"] != self.agent_id:
                 raise BridgeError("only the addressed peer may submit this review")
+            task = connection.execute(
+                "SELECT task_revision, task_sha256 FROM tasks WHERE scope=? AND task_id=?",
+                (self.scope, call["task_id"]),
+            ).fetchone()
+            if task is None:
+                raise BridgeError("review task not found")
+            if (
+                int(call["task_revision"]) != int(task["task_revision"])
+                or str(call["task_sha256"]) != str(task["task_sha256"])
+            ):
+                raise BridgeError("review request is bound to a superseded task revision")
             review_id = uuid.uuid4().hex
             reviewed = utc_now()
             content = {
@@ -5742,11 +8236,17 @@ class Bridge:
                 "findings": findings,
                 "artifact_paths": artifacts,
                 "review_utc": reviewed,
+                "task_revision": int(call["task_revision"]),
+                "task_sha256": str(call["task_sha256"]),
             }
             review_sha = stable_sha256(content)
             try:
                 connection.execute(
-                    "INSERT INTO peer_reviews VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    """INSERT INTO peer_reviews(
+                           review_id, scope, request_id, task_id, reviewer, verdict,
+                           score, findings, artifact_paths_json, review_utc,
+                           review_sha256, task_revision, task_sha256
+                       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (
                         review_id,
                         self.scope,
@@ -5759,6 +8259,8 @@ class Bridge:
                         json.dumps(artifacts, ensure_ascii=False),
                         reviewed,
                         review_sha,
+                        int(call["task_revision"]),
+                        str(call["task_sha256"]),
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -5820,9 +8322,30 @@ class Bridge:
             rows = connection.execute(
                 """SELECT r.*, c.recipient, c.requester, c.status AS request_status
                    FROM peer_reviews r JOIN peer_calls c ON c.request_id=r.request_id
-                   WHERE r.scope=? AND r.task_id=? ORDER BY r.review_utc ASC""",
-                (self.scope, task_id),
+                   WHERE r.scope=? AND r.task_id=?
+                     AND r.task_revision=? AND r.task_sha256=?
+                     AND c.task_revision=? AND c.task_sha256=?
+                   ORDER BY r.review_utc ASC""",
+                (
+                    self.scope,
+                    task_id,
+                    int(task["task_revision"]),
+                    str(task["task_sha256"]),
+                    int(task["task_revision"]),
+                    str(task["task_sha256"]),
+                ),
             ).fetchall()
+            stale_review_count = connection.execute(
+                """SELECT COUNT(*) AS n FROM peer_reviews
+                   WHERE scope=? AND task_id=?
+                     AND (task_revision!=? OR task_sha256!=?)""",
+                (
+                    self.scope,
+                    task_id,
+                    int(task["task_revision"]),
+                    str(task["task_sha256"]),
+                ),
+            ).fetchone()["n"]
             required_peer_rows = connection.execute(
                 """SELECT peer_id FROM task_required_peers
                    WHERE scope=? AND task_id=? ORDER BY peer_id""",
@@ -5875,7 +8398,10 @@ class Bridge:
             "required_peer": required_peer,
             "required_peers": sorted(required_peers),
             "review_quorum": review_quorum,
+            "task_revision": int(task["task_revision"]),
+            "task_sha256": str(task["task_sha256"]),
             "reviews": reviews,
+            "stale_review_count": int(stale_review_count),
             "approved_reviewers": sorted(approved),
             "online_peer_agents": sorted(online),
             "ready_for_completion": ready,
@@ -5888,7 +8414,12 @@ class Bridge:
             raise BridgeError("protected or sensitive files are not exposed")
         resolved = self._resolve_path(normalized, must_exist=True)
         max_bytes = max(1, min(int(args.get("max_bytes", 100_000)), 500_000))
-        hashed = self._hash_file_streaming(resolved, prefix_bytes=max_bytes)
+        hashed = self._hash_file_streaming(
+            resolved,
+            prefix_bytes=max_bytes,
+            max_bytes=MAX_MCP_HASH_BYTES,
+            max_seconds=MAX_MCP_HASH_SECONDS,
+        )
         if contains_secret_bytes(hashed["prefix"]):
             raise BridgeError("artifact content appears to contain a credential or private key")
         result: dict[str, Any] = {
@@ -5908,7 +8439,11 @@ class Bridge:
         if self._is_protected(normalized):
             raise BridgeError("protected or sensitive files are not exposed")
         resolved = self._resolve_path(normalized, must_exist=True)
-        hashed = self._hash_file_streaming(resolved)
+        hashed = self._hash_file_streaming(
+            resolved,
+            max_bytes=MAX_MCP_HASH_BYTES,
+            max_seconds=MAX_MCP_HASH_SECONDS,
+        )
         return {
             "path": normalized,
             "bytes": hashed["bytes"],
@@ -5953,11 +8488,21 @@ class Bridge:
             _require_identifier(item, "review_id")
             for item in _json_list(args.get("review_ids", []), "review_ids")
         ]
-        hashed_paths: dict[str, dict[str, Any]] = {}
-        for path in dict.fromkeys([*changed_paths, *evidence_paths]):
-            hashed_paths[path] = self._hash_file_streaming(
-                self._resolve_path(path, must_exist=True)
-            )
+        with self._connect() as connection:
+            self._require_lease(connection, task_id, args.get("lease_token"))
+            initial_write_scopes = [
+                row["path_prefix"]
+                for row in connection.execute(
+                    "SELECT path_prefix FROM task_paths WHERE scope=? AND task_id=? AND access='write'",
+                    (self.scope, task_id),
+                ).fetchall()
+            ]
+        for path in changed_paths:
+            if not any(
+                self._path_within(path, prefix) for prefix in initial_write_scopes
+            ):
+                raise BridgeError(f"changed path is outside the task write scope: {path}")
+        hashed_paths = self._hash_proof_files([*changed_paths, *evidence_paths])
         after_hashes = {
             path: str(hashed_paths[path]["sha256"]) for path in changed_paths
         }
@@ -6075,22 +8620,31 @@ class Bridge:
 
     def _proofs_are_live(
         self, connection: sqlite3.Connection, task_id: str
-    ) -> tuple[bool, list[dict[str, Any]]]:
+    ) -> tuple[bool, list[dict[str, Any]], dict[str, tuple[int, int]]]:
         rows = connection.execute(
             "SELECT * FROM integration_records WHERE scope=? AND task_id=? ORDER BY recorded_utc ASC",
             (self.scope, task_id),
         ).fetchall()
-        checks = []
+        expected_by_record: list[tuple[sqlite3.Row, dict[str, str]]] = []
+        ordered_paths: list[str] = []
         for row in rows:
             after_hashes = json.loads(row["after_hashes_json"])
             evidence = json.loads(row["evidence_paths_json"])
+            expected = {**after_hashes, **evidence.get("hashes", {})}
+            expected_by_record.append((row, expected))
+            ordered_paths.extend(expected)
+        existing_paths = [
+            path for path in dict.fromkeys(ordered_paths) if self._resolve_path(path).is_file()
+        ]
+        hashed = self._hash_proof_files(existing_paths) if existing_paths else {}
+        identities = {
+            path: tuple(item["identity"]) for path, item in hashed.items()
+        }
+        checks = []
+        for row, expected_hashes in expected_by_record:
             drift = []
-            for path, expected in {
-                **after_hashes,
-                **evidence.get("hashes", {}),
-            }.items():
-                resolved = self._resolve_path(path)
-                live = sha256_bytes(resolved.read_bytes()) if resolved.is_file() else None
+            for path, expected in expected_hashes.items():
+                live = str(hashed[path]["sha256"]) if path in hashed else None
                 if live != expected:
                     drift.append({"path": path, "expected": expected, "live": live})
             checks.append(
@@ -6101,14 +8655,19 @@ class Bridge:
                     "drift": drift,
                 }
             )
-        return bool(rows) and all(not item["drift"] and item["tests"] for item in checks), checks
+        return (
+            bool(rows) and all(not item["drift"] and item["tests"] for item in checks),
+            checks,
+            identities,
+        )
 
     def complete_task(self, args: dict[str, Any]) -> dict[str, Any]:
         task_id = _require_identifier(args.get("task_id"), "task_id")
         with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
             self._require_lease(connection, task_id, args.get("lease_token"))
-            proof_ready, proof_checks = self._proofs_are_live(connection, task_id)
+            proof_ready, proof_checks, proof_identities = self._proofs_are_live(
+                connection, task_id
+            )
             if not proof_ready:
                 raise BridgeError(
                     "task proof is missing or has live hash drift: "
@@ -6122,9 +8681,23 @@ class Bridge:
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             self._require_lease(connection, task_id, args.get("lease_token"))
-            proof_ready, proof_checks = self._proofs_are_live(connection, task_id)
-            if not proof_ready:
-                raise BridgeError("proof changed while completing the task")
+            live_records = connection.execute(
+                "SELECT record_id, record_sha256 FROM integration_records "
+                "WHERE scope=? AND task_id=? ORDER BY recorded_utc ASC",
+                (self.scope, task_id),
+            ).fetchall()
+            expected_records = [
+                (item["record_id"], item["record_sha256"]) for item in proof_checks
+            ]
+            if [tuple(row) for row in live_records] != expected_records:
+                raise BridgeError("proof records changed while completing the task")
+            for path, identity in proof_identities.items():
+                resolved = self._resolve_path(path)
+                if not resolved.is_file():
+                    raise BridgeError("proof changed while completing the task")
+                current = resolved.stat()
+                if (current.st_size, current.st_mtime_ns) != identity:
+                    raise BridgeError("proof changed while completing the task")
             completed = utc_now()
             connection.execute(
                 """UPDATE tasks SET status='complete', claimed_by=NULL,
@@ -6153,11 +8726,52 @@ class Bridge:
         }
 
     def _write_draft(self, task_id: str, filename: str, data: bytes) -> dict[str, Any]:
-        safe_task = _require_identifier(task_id, "task_id").replace(":", "_")
+        normalized_task = _require_identifier(task_id, "task_id")
         if not re.fullmatch(r"[A-Za-z0-9_.-]+", filename):
             raise BridgeError("draft filename contains unsupported characters")
-        destination = self.draft_root / self.scope / safe_task / filename
-        destination.parent.mkdir(parents=True, exist_ok=True)
+        scope_key = sha256_bytes(self.scope.encode("utf-8"))
+        task_key = sha256_bytes(
+            f"{self.scope}\0{normalized_task}".encode("utf-8")
+        )
+        draft_root = self.draft_root.resolve()
+        task_root = (
+            self.draft_root
+            / f"scope-{scope_key}"
+            / f"task-{task_key}"
+        ).resolve()
+        if not task_root.is_relative_to(draft_root):
+            raise BridgeError("draft path escaped local state")
+        task_root.mkdir(parents=True, exist_ok=True)
+        owner = {
+            "schema": "peerbridge.draft-owner.v1",
+            "scope_sha256": scope_key,
+            "task_id_sha256": sha256_bytes(normalized_task.encode("utf-8")),
+            "task_path_key_sha256": task_key,
+        }
+        owner_bytes = (
+            json.dumps(owner, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("utf-8")
+        owner_path = task_root / "OWNER.json"
+        try:
+            descriptor = os.open(
+                owner_path,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+            )
+        except FileExistsError:
+            try:
+                existing_owner = owner_path.read_bytes()
+            except OSError as exc:
+                raise BridgeError("draft owner manifest is unreadable") from exc
+            if not hmac.compare_digest(existing_owner, owner_bytes):
+                raise BridgeError("draft directory ownership mismatch")
+        else:
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(owner_bytes)
+                handle.flush()
+                os.fsync(handle.fileno())
+        destination = task_root / filename
         temporary = destination.with_name(f".{filename}.{uuid.uuid4().hex}.tmp")
         temporary.write_bytes(data)
         os.replace(temporary, destination)
@@ -6228,36 +8842,60 @@ class Bridge:
 
     def verify_audit_chain(self, _args: dict[str, Any] | None = None) -> dict[str, Any]:
         with self._connect() as connection:
+            available = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM events WHERE scope=?", (self.scope,)
+                ).fetchone()[0]
+            )
+            if available > MAX_MCP_AUDIT_EVENTS:
+                raise BridgeError(
+                    "audit chain exceeds the interactive verification event budget"
+                )
             rows = connection.execute(
                 "SELECT * FROM events WHERE scope=? ORDER BY sequence ASC",
                 (self.scope,),
-            ).fetchall()
-        previous = ZERO_SHA256
-        errors = []
-        for row in rows:
-            payload_sha = sha256_bytes(row["payload_json"].encode("utf-8"))
-            envelope = {
-                "event_id": row["event_id"],
-                "scope": row["scope"],
-                "actor": row["actor"],
-                "event_type": row["event_type"],
-                "task_id": row["task_id"],
-                "payload_sha256": payload_sha,
-                "created_utc": row["created_utc"],
-                "prev_chain_sha256": previous,
-            }
-            chain_sha = stable_sha256(envelope)
-            if row["payload_sha256"] != payload_sha:
-                errors.append({"sequence": row["sequence"], "error": "payload_sha256"})
-            if row["prev_chain_sha256"] != previous:
-                errors.append({"sequence": row["sequence"], "error": "prev_chain_sha256"})
-            if row["chain_sha256"] != chain_sha:
-                errors.append({"sequence": row["sequence"], "error": "chain_sha256"})
-            previous = row["chain_sha256"]
+            )
+            previous = ZERO_SHA256
+            errors = []
+            error_count = 0
+            event_count = 0
+            deadline = time.monotonic() + MAX_MCP_AUDIT_SECONDS
+            for row in rows:
+                if time.monotonic() > deadline:
+                    raise BridgeError(
+                        "audit chain verification exceeded the interactive time budget"
+                    )
+                event_count += 1
+                payload_sha = sha256_bytes(row["payload_json"].encode("utf-8"))
+                envelope = {
+                    "event_id": row["event_id"],
+                    "scope": row["scope"],
+                    "actor": row["actor"],
+                    "event_type": row["event_type"],
+                    "task_id": row["task_id"],
+                    "payload_sha256": payload_sha,
+                    "created_utc": row["created_utc"],
+                    "prev_chain_sha256": previous,
+                }
+                chain_sha = stable_sha256(envelope)
+                for mismatch, failed in (
+                    ("payload_sha256", row["payload_sha256"] != payload_sha),
+                    ("prev_chain_sha256", row["prev_chain_sha256"] != previous),
+                    ("chain_sha256", row["chain_sha256"] != chain_sha),
+                ):
+                    if failed:
+                        error_count += 1
+                        if len(errors) < 100:
+                            errors.append(
+                                {"sequence": row["sequence"], "error": mismatch}
+                            )
+                previous = row["chain_sha256"]
         return {
-            "valid": not errors,
-            "event_count": len(rows),
+            "valid": error_count == 0,
+            "event_count": event_count,
             "head_chain_sha256": previous,
             "errors": errors,
+            "error_count": error_count,
+            "errors_truncated": error_count > len(errors),
             "writes_performed": 0,
         }

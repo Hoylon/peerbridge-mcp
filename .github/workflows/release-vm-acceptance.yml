@@ -20,9 +20,11 @@ permissions:
   contents: read
 
 jobs:
-  clean-windows-vm:
-    timeout-minutes: 20
+  static-provenance:
+    timeout-minutes: 15
     runs-on: windows-2025
+    outputs:
+      source_commit: ${{ steps.source.outputs.commit }}
     steps:
       - name: Validate exact release inputs
         id: inputs
@@ -41,15 +43,13 @@ jobs:
           if ($env:EXPECTED_SHA256 -cnotmatch '^[0-9a-f]{64}$') {
             throw 'The independently supplied SHA-256 is invalid.'
           }
-          "release_ref=refs/tags/$($env:RELEASE_TAG)" | Out-File `
-            -FilePath $env:GITHUB_OUTPUT `
-            -Append `
-            -Encoding utf8
-      - name: Check out the exact published tag
+          "release_ref=refs/tags/$($env:RELEASE_TAG)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+      - name: Check out the exact published tag for static validation only
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           ref: ${{ steps.inputs.outputs.release_ref }}
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
@@ -62,7 +62,7 @@ jobs:
             throw 'The checked-out release commit is invalid.'
           }
           "commit=$commit" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-      - name: Download all public release assets
+      - name: Download public assets without executing them
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
@@ -71,78 +71,130 @@ jobs:
         run: |
           $download = Join-Path $env:RUNNER_TEMP 'published-release'
           New-Item -ItemType Directory -Path $download -ErrorAction Stop | Out-Null
-          gh release download $env:RELEASE_TAG `
-            --repo $env:GITHUB_REPOSITORY `
-            --dir $download
-          $assetPath = Join-Path $download $env:RELEASE_ASSET
-          if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf)) {
+          gh release download $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --dir $download
+          if (-not (Test-Path -LiteralPath (Join-Path $download $env:RELEASE_ASSET) -PathType Leaf)) {
             throw 'The exact published release asset was not downloaded.'
           }
-      - name: Verify the downloaded app and live HTTPS announcement feed
+      - name: Verify source provenance before candidate execution
+        shell: pwsh
+        env:
+          RELEASE_ASSET: ${{ inputs.asset }}
+          EXPECTED_SHA256: ${{ inputs.sha256 }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          $download = Join-Path $env:RUNNER_TEMP 'published-release'
+          $provenanceJson = & python scripts/verify_portable_provenance.py `
+            --artifact-root $download `
+            --project-root . `
+            --expected-commit $env:SOURCE_COMMIT `
+            --expected-archive-name $env:RELEASE_ASSET `
+            --expected-archive-sha256 $env:EXPECTED_SHA256
+          $provenance = $provenanceJson | ConvertFrom-Json
+          if ($provenance.status -ne 'PASS' -or $provenance.archive -cne $env:RELEASE_ASSET -or $provenance.archive_sha256 -cne $env:EXPECTED_SHA256) {
+            throw 'Static provenance verification failed before candidate execution.'
+          }
+          $provenanceJson | Set-Content -LiteralPath (Join-Path $download 'STATIC_PROVENANCE.json') -Encoding utf8NoBOM -NoNewline
+      - name: Stage the trusted verifier kit
+        shell: pwsh
+        run: |
+          $kit = Join-Path $env:RUNNER_TEMP 'verifier-kit'
+          New-Item -ItemType Directory -Path (Join-Path $kit 'scripts') -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $kit 'docs') -Force | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $kit 'src\peerbridge_mcp\release_support') -Force | Out-Null
+          Copy-Item -LiteralPath scripts\verify_windows_portable.ps1 -Destination (Join-Path $kit 'scripts\verify_windows_portable.ps1')
+          foreach ($name in @('LICENSE', 'TRADEMARKS.md', 'BRAND_ASSETS.md', 'THIRD_PARTY_NOTICES.md')) {
+            Copy-Item -LiteralPath $name -Destination (Join-Path $kit $name)
+          }
+          Copy-Item -LiteralPath docs\alpha-quickstart.zh-Hant.md -Destination (Join-Path $kit 'docs\alpha-quickstart.zh-Hant.md')
+          Copy-Item -LiteralPath docs\alpha-quickstart.zh-Hans.md -Destination (Join-Path $kit 'docs\alpha-quickstart.zh-Hans.md')
+          Copy-Item -LiteralPath src\peerbridge_mcp\release_support\support.json -Destination (Join-Path $kit 'src\peerbridge_mcp\release_support\support.json')
+          Copy-Item -LiteralPath src\peerbridge_mcp\release_support\peerbridge-support-public.pub -Destination (Join-Path $kit 'src\peerbridge_mcp\release_support\peerbridge-support-public.pub')
+      - name: Retain statically verified release inputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: published-release-static-${{ inputs.tag }}
+          path: |
+            ${{ runner.temp }}\published-release
+            ${{ runner.temp }}\verifier-kit
+          if-no-files-found: error
+          retention-days: 1
+
+  clean-windows-vm:
+    needs: static-provenance
+    timeout-minutes: 20
+    runs-on: windows-2025
+    steps:
+      - name: Download statically verified inputs without a source checkout
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: published-release-static-${{ inputs.tag }}
+          path: ${{ runner.temp }}\release-static
+      - name: Execute candidate in a credential-free checkout-free workspace
         id: acceptance
         shell: pwsh
         env:
           RELEASE_TAG: ${{ inputs.tag }}
           RELEASE_ASSET: ${{ inputs.asset }}
           EXPECTED_SHA256: ${{ inputs.sha256 }}
-          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+          SOURCE_COMMIT: ${{ needs.static-provenance.outputs.source_commit }}
         run: |
-          if ($env:EXPECTED_SHA256 -cnotmatch '^[0-9a-f]{64}$') {
-            throw 'The independently supplied SHA-256 is invalid.'
+          $root = Join-Path $env:RUNNER_TEMP 'release-static'
+          $assetPath = Join-Path (Join-Path $root 'published-release') $env:RELEASE_ASSET
+          $kit = Join-Path $root 'verifier-kit'
+          $verifier = Join-Path $kit 'scripts\verify_windows_portable.ps1'
+          if (-not (Test-Path -LiteralPath $assetPath -PathType Leaf) -or -not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
+            throw 'The statically verified execution inputs are incomplete.'
           }
-          $assetPath = Join-Path `
-            (Join-Path $env:RUNNER_TEMP 'published-release') `
-            $env:RELEASE_ASSET
+          function Get-TreeDigest([string]$Path) {
+            $rows = Get-ChildItem -LiteralPath $Path -File -Recurse |
+              Sort-Object FullName |
+              ForEach-Object {
+                $relative = [IO.Path]::GetRelativePath($Path, $_.FullName).Replace('\','/')
+                "$relative|$($_.Length)|$((Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant())"
+              }
+            $joined = [Text.Encoding]::UTF8.GetBytes(($rows -join "`n"))
+            $hash = [Security.Cryptography.SHA256]::HashData($joined)
+            return [Convert]::ToHexString($hash).ToLowerInvariant()
+          }
+          $beforeKit = Get-TreeDigest $kit
+          $beforeAsset = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($beforeAsset -cne $env:EXPECTED_SHA256) {
+            throw 'The downloaded archive differs from the independently supplied SHA-256.'
+          }
+          Remove-Item Env:GH_TOKEN -ErrorAction SilentlyContinue
+          Remove-Item Env:GITHUB_TOKEN -ErrorAction SilentlyContinue
+          Remove-Item Env:ACTIONS_RUNTIME_TOKEN -ErrorAction SilentlyContinue
+          Remove-Item Env:ACTIONS_ID_TOKEN_REQUEST_TOKEN -ErrorAction SilentlyContinue
           $receiptRoot = Join-Path $env:RUNNER_TEMP 'published-release-acceptance'
-          $verificationJson = & ./scripts/verify_windows_portable.ps1 `
-            -Archive $assetPath `
-            -ExpectedSha256 $env:EXPECTED_SHA256 `
-            -OutputRoot $receiptRoot `
-            -Headless
+          $verificationJson = & $verifier -Archive $assetPath -ExpectedSha256 $env:EXPECTED_SHA256 -OutputRoot $receiptRoot -Headless
           $verification = $verificationJson | ConvertFrom-Json
-          if ($verification.Status -ne 'PASS') {
+          if ($verification.Status -ne 'PASS' -or $verification.ArchiveSha256 -cne $env:EXPECTED_SHA256) {
             throw 'The published Windows release failed clean-VM acceptance.'
           }
-          $provenanceJson = & python scripts/verify_portable_provenance.py `
-            --artifact-root (Join-Path $env:RUNNER_TEMP 'published-release') `
-            --project-root . `
-            --expected-commit $env:SOURCE_COMMIT `
-            --expected-archive-name $env:RELEASE_ASSET `
-            --expected-archive-sha256 $env:EXPECTED_SHA256
-          $provenance = $provenanceJson | ConvertFrom-Json
-          if ($provenance.status -ne 'PASS') {
-            throw 'The published Windows release failed source provenance verification.'
+          $afterKit = Get-TreeDigest $kit
+          $afterAsset = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($beforeKit -cne $afterKit -or $beforeAsset -cne $afterAsset) {
+            throw 'Candidate execution modified trusted verifier or release inputs.'
           }
-          if ($provenance.archive -cne $env:RELEASE_ASSET) {
-            throw 'The provenance receipt selected a different release asset.'
-          }
-          if ($provenance.archive_sha256 -cne $env:EXPECTED_SHA256) {
-            throw 'The provenance receipt selected a different release digest.'
-          }
-          if ($verification.ArchiveSha256 -cne $env:EXPECTED_SHA256) {
-            throw 'The lifecycle verifier selected a different release digest.'
-          }
+          $provenance = Get-Content -LiteralPath (Join-Path $root 'published-release\STATIC_PROVENANCE.json') -Raw -Encoding UTF8 | ConvertFrom-Json
           $receiptPath = Join-Path $receiptRoot 'published-release-vm-acceptance.json'
           [ordered]@{
-            schema = 'peerbridge.published-release-vm-acceptance.v1'
+            schema = 'peerbridge.published-release-vm-acceptance.v2'
             status = 'PASS'
             repository = $env:GITHUB_REPOSITORY
             tag = $env:RELEASE_TAG
             asset = $env:RELEASE_ASSET
             archive_sha256 = $verification.ArchiveSha256
             source_commit = $env:SOURCE_COMMIT
+            verifier_tree_sha256 = $afterKit
+            checkout_present = $false
+            git_credentials_present = $false
             runner_os = $env:RUNNER_OS
             runner_arch = $env:RUNNER_ARCH
             verification = $verification
             provenance = $provenance
-          } | ConvertTo-Json -Depth 8 | Set-Content `
-            -LiteralPath $receiptPath `
-            -Encoding utf8NoBOM `
-            -NoNewline
-          "receipt=$receiptPath" | Out-File `
-            -FilePath $env:GITHUB_OUTPUT `
-            -Append `
-            -Encoding utf8
+          } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $receiptPath -Encoding utf8NoBOM -NoNewline
+          "receipt=$receiptPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
       - name: Retain the clean-VM acceptance receipt
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

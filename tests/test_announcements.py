@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+from pathlib import Path
 
 import pytest
 
@@ -96,6 +97,38 @@ def test_packaged_config_binds_the_public_announcement_feed() -> None:
         "https://peerbridge-edge.peerbridge-edge.workers.dev/v1/announcements"
     )
     assert config.poll_seconds == 900
+
+
+def test_packaged_announcement_config_rejects_tampering(tmp_path, monkeypatch) -> None:
+    import peerbridge_mcp.announcements as announcements_module
+
+    root = Path(__file__).resolve().parents[1]
+    source_config = (
+        root
+        / "src"
+        / "peerbridge_mcp"
+        / "release_support"
+        / "announcements.json"
+    )
+    fake_package = tmp_path / "peerbridge_mcp"
+    fake_support = fake_package / "release_support"
+    fake_support.mkdir(parents=True)
+    config_path = fake_support / "announcements.json"
+    pristine_config = source_config.read_bytes()
+    config_path.write_bytes(pristine_config)
+    monkeypatch.setattr(
+        announcements_module,
+        "__file__",
+        str(fake_package / "announcements.py"),
+    )
+
+    assert AnnouncementConfig.load() is not None
+
+    tampered_config = json.loads(pristine_config.decode("utf-8"))
+    tampered_config["endpoint"] = "https://attacker.example/v1/announcements"
+    config_path.write_text(json.dumps(tampered_config), encoding="utf-8")
+    with pytest.raises(AnnouncementError, match="configuration trust anchor mismatch"):
+        AnnouncementConfig.load()
 
 
 def test_explicit_config_load_and_project_checkout_cannot_redirect_feed(

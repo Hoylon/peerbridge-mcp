@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, createPublicKey } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { deflateRawSync } from "node:zlib";
@@ -133,9 +133,29 @@ function baseEnv(overrides = {}) {
     BUNDLES: {},
     RATE_SALT: "test-rate-salt-not-for-production",
     ADMIN_TOKEN: "test-admin-token-not-for-production",
+    SUPPORT_PUBLIC_KEY_DER_SHA256: "d".repeat(64),
     ...overrides,
   };
 }
+
+test("Worker configuration pins the packaged support-key DER fingerprint", () => {
+  const publicKey = readFileSync(
+    new URL(
+      "../../../src/peerbridge_mcp/release_support/peerbridge-support-public.pub",
+      import.meta.url,
+    ),
+  );
+  const der = createPublicKey(publicKey).export({ format: "der", type: "spki" });
+  const wrangler = JSON.parse(
+    readFileSync(new URL("../wrangler.jsonc.example", import.meta.url), "utf8"),
+  );
+
+  assert.equal(
+    wrangler.vars.SUPPORT_PUBLIC_KEY_DER_SHA256,
+    createHash("sha256").update(der).digest("hex"),
+  );
+  assert.equal(JSON.stringify(wrangler.vars).includes("SECRET"), false);
+});
 
 test("Worker fails closed when an administrative secret is weak", async () => {
   for (const overrides of [
@@ -157,6 +177,28 @@ test("Worker fails closed when an administrative secret is weak", async () => {
   }
 });
 
+test("optional digest webhook requires a paired strong secret", async () => {
+  for (const overrides of [
+    { DIGEST_WEBHOOK_URL: "https://digest.example/v1" },
+    { DIGEST_SHARED_SECRET: "x".repeat(48) },
+    {
+      DIGEST_WEBHOOK_URL: "https://digest.example/v1",
+      DIGEST_SHARED_SECRET: "short",
+    },
+    {
+      DIGEST_WEBHOOK_URL: "https://user:password@digest.example/v1",
+      DIGEST_SHARED_SECRET: "x".repeat(48),
+    },
+  ]) {
+    const response = await handleRequest(
+      new Request("https://edge.example/health"),
+      baseEnv(overrides),
+    );
+    assert.equal(response.status, 503);
+    assert.equal((await response.json()).error, "service_unavailable");
+  }
+});
+
 
 test("health exposes the non-secret independent R2 lifecycle requirement", async () => {
   const response = await handleRequest(
@@ -172,6 +214,7 @@ test("health exposes the non-secret independent R2 lifecycle requirement", async
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.bindings.bundles, true);
+  assert.equal(payload.bindings.support_key_fingerprint, true);
   assert.deepEqual(payload.retention, {
     d1_days: 30,
     r2_lifecycle_rule: {
@@ -186,6 +229,15 @@ test("health exposes the non-secret independent R2 lifecycle requirement", async
     baseEnv({ BUNDLES: undefined }),
   );
   assert.equal((await missing.json()).bindings.bundles, false);
+
+  const missingFingerprint = await handleRequest(
+    new Request("https://edge.example/health"),
+    baseEnv({ SUPPORT_PUBLIC_KEY_DER_SHA256: undefined }),
+  );
+  assert.equal(
+    (await missingFingerprint.json()).bindings.support_key_fingerprint,
+    false,
+  );
 });
 
 
@@ -195,12 +247,14 @@ function memoryIntakeEnv({
   insertError = null,
   commitThenThrow = false,
   beforePut = null,
+  announcements = [],
 } = {}) {
   const rates = new Map();
   const cases = new Map();
   const objects = new Map();
   const cleanups = new Map();
   const deleted = [];
+  const metrics = { announcementQueries: 0 };
   const DB = {
     prepare(sql) {
       return {
@@ -209,6 +263,10 @@ function memoryIntakeEnv({
             sql,
             args,
             async all() {
+              if (sql.includes("FROM announcements")) {
+                metrics.announcementQueries += 1;
+                return { results: announcements };
+              }
               if (sql.includes("FROM feedback_cases WHERE notification_status")) {
                 const [maximumAttempts, now, limit] = args;
                 return {
@@ -269,6 +327,19 @@ function memoryIntakeEnv({
                 row.notification_last_attempt_utc = args[1];
                 if (args[2] === 1 && !row.notification_sent_utc) {
                   row.notification_sent_utc = args[3];
+                }
+                row.notification_claim_token_sha256 = null;
+                row.notification_claim_expires_utc = null;
+                return { meta: { changes: 1 } };
+              }
+              if (sql.startsWith("UPDATE feedback_cases SET notification_claim_token_sha256 = NULL")) {
+                const [caseId, claimTokenSha256] = args;
+                const row = cases.get(caseId);
+                if (
+                  !row || !["pending", "failed"].includes(row.notification_status)
+                  || row.notification_claim_token_sha256 !== claimTokenSha256
+                ) {
+                  return { meta: { changes: 0 } };
                 }
                 row.notification_claim_token_sha256 = null;
                 row.notification_claim_expires_utc = null;
@@ -342,6 +413,15 @@ function memoryIntakeEnv({
           if (rateKey === "accepted-global" && count > 100) {
             throw new Error("accepted global rate limit exceeded");
           }
+          if (rateKey.startsWith("announcement-source:") && count > 240) {
+            throw new Error("source announcement rate limit exceeded");
+          }
+          if (rateKey === "announcement-global" && count > 20000) {
+            throw new Error("global announcement rate limit exceeded");
+          }
+          if (rateKey === "notification-anonymous-global" && count > 20) {
+            throw new Error("anonymous notification capacity exceeded");
+          }
           next.set(mapKey, count);
         } else if (statement.sql.startsWith("UPDATE rate_limits")) {
           const [, rateKey, day] = statement.args;
@@ -380,7 +460,7 @@ function memoryIntakeEnv({
   };
   return {
     env: baseEnv({ DB, BUNDLES }),
-    state: { rates, cases, objects, cleanups, deleted },
+    state: { rates, cases, objects, cleanups, deleted, metrics },
   };
 }
 
@@ -561,6 +641,35 @@ test("feedback ZIP strictly validates the encrypted credential envelope", async 
       /encrypted credential/u,
     );
   }
+});
+
+
+test("encrypted feedback must target the packaged support-key fingerprint", async () => {
+  const caseId = "f".repeat(32);
+  const bundle = feedbackZip(caseId, { encrypted: true });
+  const request = () => feedbackRequestForBundle(caseId, bundle);
+
+  const mismatch = memoryIntakeEnv();
+  mismatch.env.SUPPORT_PUBLIC_KEY_DER_SHA256 = "e".repeat(64);
+  const mismatchResponse = await handleRequest(request(), mismatch.env);
+  assert.equal(mismatchResponse.status, 400);
+  assert.equal((await mismatchResponse.json()).error, "invalid_feedback");
+  assert.equal(mismatch.state.objects.size, 0);
+
+  const unavailable = memoryIntakeEnv();
+  delete unavailable.env.SUPPORT_PUBLIC_KEY_DER_SHA256;
+  const unavailableResponse = await handleRequest(request(), unavailable.env);
+  assert.equal(unavailableResponse.status, 400);
+  assert.match((await unavailableResponse.json()).message, /fingerprint is unavailable/u);
+  assert.equal(unavailable.state.objects.size, 0);
+
+  const anonymousPlaintext = memoryIntakeEnv();
+  delete anonymousPlaintext.env.SUPPORT_PUBLIC_KEY_DER_SHA256;
+  const ordinaryResponse = await handleRequest(
+    feedbackRequest("e".repeat(32)),
+    anonymousPlaintext.env,
+  );
+  assert.equal(ordinaryResponse.status, 201);
 });
 
 
@@ -882,6 +991,41 @@ test("R2-free feedback is delivered by Apps Script and recorded as email-only", 
 });
 
 
+test("R2-free feedback cannot consume reserved notification capacity", async () => {
+  const { env, state } = memoryIntakeEnv();
+  delete env.BUNDLES;
+  env.GOOGLE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/TEST_DEPLOYMENT/exec";
+  env.GOOGLE_APPS_SCRIPT_SECRET = "test-apps-script-secret-0123456789-ABCDEFGHIJKLMN";
+  const now = new Date().toISOString();
+  for (let count = 0; count < 20; count += 1) {
+    assert.equal(
+      (await testing.rateLimit(null, env, now, "notification")).response,
+      null,
+    );
+  }
+  const originalFetch = globalThis.fetch;
+  let forwarded = 0;
+  globalThis.fetch = async () => {
+    forwarded += 1;
+    throw new Error("notification must not be attempted");
+  };
+  let response;
+  try {
+    response = await handleRequest(feedbackRequest("4".repeat(32)), env);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  assert.equal(response.status, 503);
+  assert.equal((await response.json()).error, "private_delivery_unavailable");
+  assert.equal(forwarded, 0);
+  assert.equal(state.cases.size, 0);
+  assert.equal(
+    [...state.rates].find(([key]) => key.includes("accepted-global"))[1],
+    0,
+  );
+});
+
+
 test("Apps Script endpoint rejects redirects, queries, and non-Google hosts", () => {
   assert.throws(
     () => testing.normalizeAppsScriptEndpoint(
@@ -1015,6 +1159,41 @@ test("concurrent notification paths atomically claim one delivery", async () => 
     assert.equal(sends, 1);
     assert.equal(row.notification_status, "sent");
     assert.equal(row.notification_attempt_count, 2);
+    assert.equal(row.notification_claim_token_sha256, null);
+    assert.equal(row.notification_claim_expires_utc, null);
+  } finally {
+    console.error = originalError;
+  }
+});
+
+
+test("anonymous notification cap leaves the case pending for protected capacity", async () => {
+  const { env, state } = memoryIntakeEnv();
+  const caseId = "6".repeat(32);
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const response = await handleRequest(feedbackRequest(caseId), env);
+    assert.equal(response.status, 201);
+    const row = state.cases.get(caseId);
+    assert.equal(row.notification_status, "failed");
+    assert.equal(row.notification_attempt_count, 1);
+
+    for (let count = 1; count < 20; count += 1) {
+      const capacity = await testing.rateLimit(
+        null, env, row.received_utc, "notification",
+      );
+      assert.equal(capacity.response, null);
+    }
+    const sent = await testing.attemptFeedbackNotification(env, {
+      caseId,
+      expectedSha: row.bundle_sha256,
+      replyEmail: null,
+      bundleBase64: "",
+    }, row.received_utc);
+    assert.equal(sent, false);
+    assert.equal(row.notification_status, "failed");
+    assert.equal(row.notification_attempt_count, 1);
     assert.equal(row.notification_claim_token_sha256, null);
     assert.equal(row.notification_claim_expires_utc, null);
   } finally {
@@ -1181,25 +1360,62 @@ test("public announcement feed returns only database-projected fields", async ()
     published_utc: "2026-08-15T00:00:00.000Z",
     expires_utc: null,
   }];
-  const DB = {
-    prepare(sql) {
-      assert.match(sql, /FROM announcements/u);
-      return {
-        bind() {
-          return { all: async () => ({ results: rows }) };
-        },
-      };
+  const cached = new Map();
+  const ANNOUNCEMENT_CACHE = {
+    async match(request) {
+      return cached.get(request.url)?.clone() || null;
+    },
+    async put(request, response) {
+      cached.set(request.url, response.clone());
     },
   };
-  const response = await handleRequest(
-    new Request("https://edge.example/v1/announcements?locale=en"),
-    baseEnv({ DB }),
+  const { env, state } = memoryIntakeEnv({ announcements: rows });
+  env.ANNOUNCEMENT_CACHE = ANNOUNCEMENT_CACHE;
+  const request = () => new Request(
+    "https://edge.example/v1/announcements?locale=en",
+    { headers: { "cf-connecting-ip": "192.0.2.30" } },
   );
+  const response = await handleRequest(request(), env);
   assert.equal(response.status, 200);
   const payload = await response.json();
   assert.equal(payload.schema, "peerbridge.announcement-feed.v1");
   assert.deepEqual(payload.announcements, rows);
   assert.equal(response.headers.get("access-control-allow-origin"), null);
+  assert.match(response.headers.get("cache-control"), /public/u);
+  assert.match(response.headers.get("cache-control"), /s-maxage=300/u);
+
+  const cachedResponse = await handleRequest(request(), env);
+  assert.deepEqual(await cachedResponse.json(), payload);
+  assert.equal(state.metrics.announcementQueries, 1);
+  assert.equal(cached.size, 1);
+  assert.equal(
+    [...state.rates].find(([key]) => key.includes("announcement-source:"))[1],
+    1,
+  );
+});
+
+
+test("announcement reads have an independent daily source cap", async () => {
+  const { env } = memoryIntakeEnv();
+  const now = "2026-08-24T00:00:00.000Z";
+  const request = new Request("https://edge.example/v1/announcements", {
+    headers: { "cf-connecting-ip": "192.0.2.31" },
+  });
+  for (let count = 0; count < 240; count += 1) {
+    assert.equal(
+      (await testing.rateLimit(request, env, now, "announcement")).response,
+      null,
+    );
+  }
+  const blocked = await testing.rateLimit(request, env, now, "announcement");
+  assert.equal(blocked.response.status, 429);
+  assert.equal(
+    (await blocked.response.json()).error,
+    "announcement_source_rate_limited",
+  );
+
+  const feedback = await testing.rateLimit(request, env, now, "accepted");
+  assert.equal(feedback.response, null);
 });
 
 
@@ -1350,6 +1566,12 @@ test("D1 schema enforces attempt and accepted-case rate caps", () => {
   assert.match(schema, /NEW\.request_count > 5/u);
   assert.match(schema, /rate_limits_accepted_global_cap_update/u);
   assert.match(schema, /NEW\.request_count > 100/u);
+  assert.match(schema, /rate_limits_announcement_source_cap_update/u);
+  assert.match(schema, /NEW\.request_count > 240/u);
+  assert.match(schema, /rate_limits_announcement_global_cap_update/u);
+  assert.match(schema, /NEW\.request_count > 20000/u);
+  assert.match(schema, /rate_limits_anonymous_notification_cap_update/u);
+  assert.match(schema, /notification-anonymous-global/u);
   assert.match(schema, /expires_utc TEXT NOT NULL/u);
   const cleanupMigration = readFileSync(
     new URL("../migrations/0006_feedback_object_cleanup.sql", import.meta.url),
@@ -1357,6 +1579,15 @@ test("D1 schema enforces attempt and accepted-case rate caps", () => {
   );
   assert.match(cleanupMigration, /CREATE TABLE IF NOT EXISTS feedback_object_cleanup/u);
   assert.match(cleanupMigration, /object_key TEXT PRIMARY KEY/u);
+  const externalCapacityMigration = readFileSync(
+    new URL(
+      "../migrations/0009_external_capacity_and_announcement_reads.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(externalCapacityMigration, /rate_limits_announcement_source_cap_insert/u);
+  assert.match(externalCapacityMigration, /rate_limits_anonymous_notification_cap_insert/u);
 });
 
 

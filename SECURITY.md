@@ -25,7 +25,10 @@ is not guaranteed for this volunteer-maintained alpha project.
 
 ## Security expectations
 
-- Treat every MCP client and local process as untrusted until configured.
+- Treat every MCP client and its protocol input as untrusted until configured. PeerBridge
+  still relies on the documented trusted operating-system-account boundary: another process
+  already executing as the same Windows user can read that user's files and is not contained
+  by a project-local capability file.
 - Use precise task path scopes. Avoid claiming the project root as a write scope.
 - Do not place credentials in messages, reviews, drafts, or proof text.
 - Keep `.peerbridge/` private and out of version control.
@@ -112,6 +115,13 @@ alone are not release evidence. See the detailed
   are never forwarded to a redirected origin.
 - Provider processes run from a controlled canonical working directory and do not inherit
   an arbitrary caller `cwd` or resolve security-sensitive files through relative paths.
+- Windows Codex and Claude launches resolve to their actual publisher binaries and require a
+  valid OpenAI or Anthropic Authenticode signer. Unsigned Kimi and ACPX npm shims remain
+  package/path-bound rather than publisher-signature-attested; the UI and receipts must not
+  claim a Windows publisher signature for them.
+- Persistent Codex and Claude streams count raw bytes before parsing, terminate after an
+  8 MiB cumulative provider-output budget, and reject any frame above 1 MiB. ACPX bridge
+  turns use bounded 4 MiB stdout/stderr capture and an explicit cancellation event.
 - Each operation is classified for idempotency before dispatch. Only bounded transient,
   replay-safe failures may retry; ambiguous mutations and deterministic policy or client
   failures do not retry automatically.

@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+
+from .child_environment import build_local_child_environment
+from .managed_agents import find_trusted_executable, official_agent_spec
+
+
 class CodexCatalogError(RuntimeError):
     """A redacted local Codex catalog discovery error."""
 
@@ -103,14 +107,16 @@ def parse_codex_model_catalog(payload: bytes | str) -> CodexModelCatalog:
 def discover_codex_model_catalog(*, timeout: int = 20) -> CodexModelCatalog:
     """Query the installed official Codex client for its current visible models."""
 
-    executable = shutil.which("codex")
-    if not executable:
-        raise CodexCatalogError("Codex CLI is not installed or is not on PATH")
+    executable = find_trusted_executable(official_agent_spec("codex"))
+    if executable is None:
+        raise CodexCatalogError("Codex CLI is not installed in a trusted location")
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     try:
         completed = subprocess.run(
-            [executable, "debug", "models"],
+            [str(executable), "debug", "models"],
             capture_output=True,
+            env=build_local_child_environment(),
+            cwd=executable.parent,
             timeout=timeout,
             creationflags=flags,
             check=False,

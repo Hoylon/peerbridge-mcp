@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -12,11 +13,14 @@ from typing import Any
 
 import pytest
 
+from peerbridge_mcp import ccswitch_runner as ccswitch_runner_module
 from peerbridge_mcp import openai_compatible_runner as openai_runner_module
+from peerbridge_mcp.attachments import stage_chat_attachment_payloads
 from peerbridge_mcp.ccswitch import CcSwitchProvider, CcSwitchRouteIdentity
 from peerbridge_mcp.ccswitch_runner import (
     CcSwitchRunner,
     _bounded_process,
+    find_claude_cli,
     resolve_reference,
 )
 from peerbridge_mcp.openai_compatible_runner import (
@@ -26,6 +30,11 @@ from peerbridge_mcp.openai_compatible_runner import (
     RouteMismatchError,
     RunnerConfig,
 )
+from peerbridge_mcp.multimodal import (
+    VERIFIED_ATTACHMENT_MESSAGE_KEY,
+    verify_staged_attachments,
+)
+from tests._image_fixtures import PNG
 
 
 def _process_alive(pid: int) -> bool:
@@ -103,6 +112,88 @@ def test_bounded_process_timeout_includes_blocked_stdin_write(tmp_path: Path) ->
         )
 
     assert time.monotonic() - started < 3.0
+
+
+def test_bounded_process_rechecks_overflow_after_final_drain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release_drain = threading.Event()
+
+    class Stream:
+        def __init__(self, payload: bytes) -> None:
+            self.payload = payload
+            self.read_once = False
+
+        def read(self, _size: int) -> bytes:
+            release_drain.wait(2)
+            if self.read_once:
+                return b""
+            self.read_once = True
+            return self.payload
+
+        def close(self) -> None:
+            return None
+
+    class Stdin:
+        closed = False
+
+        def write(self, payload: bytes) -> int:
+            return len(payload)
+
+        def flush(self) -> None:
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+
+    class Process:
+        pid = 4242
+
+        def __init__(self) -> None:
+            self.stdin = Stdin()
+            self.stdout = Stream(b"x" * 33)
+            self.stderr = Stream(b"")
+
+        def wait(self, timeout: float | None = None) -> int:
+            return 0
+
+        def poll(self) -> int:
+            return 0
+
+    monkeypatch.setattr(ccswitch_runner_module.subprocess, "Popen", lambda *_a, **_k: Process())
+    monkeypatch.setattr(ccswitch_runner_module, "attach_process_tree", lambda _p: None)
+    monkeypatch.setattr(
+        ccswitch_runner_module,
+        "release_process_tree",
+        lambda _p: release_drain.set(),
+    )
+
+    with pytest.raises(ResourceUnavailableError, match="exceeded output budget"):
+        _bounded_process(
+            ["trusted-client"],
+            cwd=tmp_path,
+            environment={},
+            stdin_text="",
+            timeout_seconds=1,
+            max_capture_bytes=32,
+            runtime_label="late overflow runtime",
+        )
+
+
+def test_find_claude_cli_uses_signer_aware_trusted_resolver(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    expected = tmp_path / "claude.exe"
+    resolved_specs: list[str] = []
+
+    def resolve(spec) -> Path:
+        resolved_specs.append(spec.agent_id)
+        return expected
+
+    monkeypatch.setattr(ccswitch_runner_module, "find_trusted_executable", resolve)
+
+    assert find_claude_cli() == expected
+    assert resolved_specs == ["claude-code"]
 
 
 @pytest.fixture(autouse=True)
@@ -210,10 +301,70 @@ def test_runner_uses_stdin_returns_content_free_receipt_and_exact_model(
     assert result.receipt["usage"]["total_tokens"] == 11
 
 
-def test_runner_passes_only_claude_auth_family_to_child(
+def test_runner_delivers_verified_images_and_text_through_claude_stream_json(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "fake-claude.py"
+    executable.write_bytes(b"test executable")
+    identity = CcSwitchRouteIdentity(
+        "claude", "relay", "opaque", "Relay", "claude-test", True, "b" * 64
+    )
+    staged = stage_chat_attachment_payloads(
+        tmp_path,
+        (("chart.png", PNG), ("notes.txt", b"Private visual notes.")),
+    )
+    verified = verify_staged_attachments(tmp_path, staged)
+    captured: dict[str, Any] = {}
+
+    def process_runner(command, **kwargs):
+        captured["command"] = list(command)
+        captured["stdin_text"] = kwargs["stdin_text"]
+        return fake_process(observed_model="claude-test", result="reviewed")(
+            command, **kwargs
+        )
+
+    result = CcSwitchRunner(
+        config(tmp_path),
+        credential_target="CCSwitch:" + "a" * 32,
+        client_name="claude",
+        executable=executable,
+        identity_resolver=lambda **_kwargs: identity,
+        process_runner=process_runner,
+    ).run(
+        [
+            {
+                "role": "user",
+                "content": "Inspect the supplied evidence.",
+                VERIFIED_ATTACHMENT_MESSAGE_KEY: [
+                    item.public_record() for item in verified
+                ],
+            }
+        ],
+        message_id="message-with-attachments",
+    )
+
+    command = captured["command"]
+    assert command[command.index("--input-format") + 1] == "stream-json"
+    event = json.loads(captured["stdin_text"])
+    blocks = event["message"]["content"]
+    assert [block["type"] for block in blocks] == ["text", "image", "text"]
+    assert blocks[1]["source"]["type"] == "base64"
+    assert blocks[1]["source"]["media_type"] == "image/png"
+    assert blocks[2]["text"].endswith("Private visual notes.")
+    delivery = result.receipt["attachment_delivery"]
+    assert delivery["attachment_count"] == 2
+    assert delivery["model_view_confirmed"] is False
+    serialized = json.dumps(result.receipt, sort_keys=True)
+    assert str(tmp_path) not in serialized
+    assert "Private visual notes." not in serialized
+
+
+def test_runner_strips_ambient_provider_overrides_from_ccswitch_child(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "provider-auth")
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://stale-relay.invalid")
+    monkeypatch.setenv("CLAUDE_CODE_USE_BEDROCK", "1")
     monkeypatch.setenv("GITHUB_TOKEN", "unrelated-secret")
     monkeypatch.setenv("OPENAI_API_KEY", "other-provider-secret")
     captured: dict[str, str] = {}
@@ -228,7 +379,9 @@ def test_runner_passes_only_claude_auth_family_to_child(
         [{"role": "user", "content": "test"}]
     )
 
-    assert captured["ANTHROPIC_AUTH_TOKEN"] == "provider-auth"
+    assert "ANTHROPIC_AUTH_TOKEN" not in captured
+    assert "ANTHROPIC_BASE_URL" not in captured
+    assert "CLAUDE_CODE_USE_BEDROCK" not in captured
     assert "GITHUB_TOKEN" not in captured
     assert "OPENAI_API_KEY" not in captured
 
@@ -275,7 +428,7 @@ def test_runner_uses_shared_resource_admission_before_native_provider(
     result = runner.run([{"role": "user", "content": "test"}])
 
     assert result.content == "safe reply"
-    assert events == ["admitted", "identity", "provider", "released"]
+    assert events == ["admitted", "identity", "provider", "identity", "released"]
 
 
 def test_runner_rejects_observed_model_drift(tmp_path: Path) -> None:
@@ -314,6 +467,46 @@ def test_runner_maps_unselected_provider_to_unavailable(tmp_path: Path) -> None:
         process_runner=fake_process(observed_model="claude-test", result="reply"),
     )
     with pytest.raises(CredentialUnavailableError):
+        runner.run([{"role": "user", "content": "test"}])
+
+
+def test_runner_rejects_ccswitch_selection_drift_during_provider_call(
+    tmp_path: Path,
+) -> None:
+    executable = tmp_path / "fake-claude.py"
+    executable.write_bytes(b"test executable")
+    identities = iter(
+        (
+            CcSwitchRouteIdentity(
+                "claude",
+                "relay",
+                "provider-a",
+                "Relay A",
+                "claude-test",
+                True,
+                "a" * 64,
+            ),
+            CcSwitchRouteIdentity(
+                "claude",
+                "relay",
+                "provider-b",
+                "Relay B",
+                "claude-test",
+                True,
+                "b" * 64,
+            ),
+        )
+    )
+    runner = CcSwitchRunner(
+        config(tmp_path),
+        credential_target="CCSwitch:" + "a" * 32,
+        client_name="claude",
+        executable=executable,
+        identity_resolver=lambda **_kwargs: next(identities),
+        process_runner=fake_process(observed_model="claude-test", result="unsafe"),
+    )
+
+    with pytest.raises(RouteMismatchError, match="changed during inference"):
         runner.run([{"role": "user", "content": "test"}])
 
 

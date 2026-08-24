@@ -10,8 +10,15 @@ from typing import Any
 
 from . import __version__
 from .analytics import AnalyticsError, AnalyticsStore, record_launch
+from .agent_identity import (
+    AgentIdentityError,
+    ensure_agent_identity_capability,
+    verify_agent_identity_capability,
+    verify_agent_identity_route_binding,
+)
 from .bridge import Bridge, BridgeError
 from .doctor import inspect_database
+from .execution_governance import ExecutionGovernance, GovernanceError
 from .mailbox_supervisor import MailboxSupervisor, SupervisorError
 from .product import (
     ProductConfigError,
@@ -19,7 +26,31 @@ from .product import (
     capability_status,
     set_update_channel,
 )
-from .server import serve
+from .server import READ_ONLY_TOOLS, TOOL_SCHEMAS, serve
+
+
+CAPABILITY_SAFE_TOOLS = frozenset(READ_ONLY_TOOLS) | {"hash_artifact"}
+COLLABORATOR_TOOLS = CAPABILITY_SAFE_TOOLS | {
+    "ack_message",
+    "announce_work",
+    "claim_task",
+    "complete_task",
+    "record_proof",
+    "renew_task",
+    "request_review",
+    "send_message",
+    "submit_patch",
+    "submit_review",
+}
+RESERVED_IDENTITY_IDS = frozenset(
+    {
+        "human-operator",
+        "control-room-workflow",
+        "control-room-migrator",
+        "mailbox-supervisor",
+        "peerbridge-orchestrator",
+    }
+)
 
 
 def _default_db(root: Path) -> Path:
@@ -84,6 +115,28 @@ def build_parser() -> argparse.ArgumentParser:
     migrate.add_argument("--db")
     migrate.add_argument("--scope", default="default")
 
+    identity = sub.add_parser(
+        "identity",
+        help="Issue or revoke a local Agent identity capability.",
+    )
+    identity.add_argument("--project-root", default=".")
+    identity.add_argument("--db")
+    identity.add_argument("--scope", default="default")
+    identity_actions = identity.add_subparsers(
+        dest="identity_action",
+        required=True,
+    )
+    identity_issue = identity_actions.add_parser("issue")
+    identity_issue.add_argument("--agent-id", required=True)
+    identity_issue.add_argument(
+        "--profile",
+        choices=("observer", "collaborator"),
+        default="collaborator",
+    )
+    identity_issue.add_argument("--permission-decision-id", required=True)
+    identity_revoke = identity_actions.add_parser("revoke")
+    identity_revoke.add_argument("--capability-id", required=True)
+
     for name, help_text in (
         ("serve", "Run the MCP server over stdio."),
         ("doctor", "Verify the local database and audit chain."),
@@ -117,6 +170,11 @@ def build_parser() -> argparse.ArgumentParser:
         )
         command.add_argument("--protected-path", action="append", default=[])
         if name == "serve":
+            command.add_argument(
+                "--identity-capability",
+                required=True,
+                help="Absolute path to a pre-issued local Agent identity capability.",
+            )
             command.add_argument(
                 "--allow-tool",
                 action="append",
@@ -249,6 +307,118 @@ def main(argv: list[str] | None = None) -> int:
                 result = capability_manifest(root)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
+        if args.command == "identity":
+            root = Path(args.project_root).resolve()
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            if not root.is_dir() or not db.is_file():
+                raise AgentIdentityError(
+                    "PeerBridge workspace is unavailable; run peerbridge init first"
+                )
+            if args.identity_action != "issue":
+                raise AgentIdentityError(
+                    "identity revocation is available only to the authenticated Control Room"
+                )
+            if args.agent_id in RESERVED_IDENTITY_IDS or args.agent_id.startswith(
+                "control-room-"
+            ):
+                raise AgentIdentityError(
+                    "reserved operator identities cannot be issued by the Alpha CLI"
+                )
+            allowed_tools = (
+                tuple(sorted(CAPABILITY_SAFE_TOOLS))
+                if args.profile == "observer"
+                else tuple(sorted(COLLABORATOR_TOOLS))
+            )
+            task_id = f"identity-issue:{args.agent_id}"
+            action = "identity.capability.issue"
+            resource_key = f"identity-profile:{args.profile}"
+            governance = ExecutionGovernance(
+                Bridge(
+                    root,
+                    db,
+                    args.agent_id,
+                    args.scope,
+                    session_id=f"identity-issuer-{args.agent_id}",
+                    client_name="peerbridge-identity-cli",
+                )
+            )
+            governance.authorize_permission(
+                args.permission_decision_id,
+                task_id=task_id,
+                agent_id=args.agent_id,
+                action=action,
+                resource_key=resource_key,
+                consume=True,
+            )
+            capability = ensure_agent_identity_capability(
+                root,
+                db,
+                args.scope,
+                args.agent_id,
+                allowed_tools=allowed_tools,
+                issued_by=f"peerbridge-identity-cli-{args.profile}",
+            )
+            result = {
+                "status": "issued",
+                "agent_id": capability.agent_id,
+                "scope": capability.scope,
+                "profile": args.profile,
+                "allowed_tools": list(capability.allowed_tools),
+                "capability_id": capability.capability_id,
+                "capability_sha256": capability.capability_sha256,
+                "identity_capability": str(capability.path),
+                "secret_contents_printed": False,
+            }
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.command == "serve":
+            root = Path(args.project_root).resolve()
+            db = Path(args.db).resolve() if args.db else _default_db(root)
+            identity_capability = verify_agent_identity_capability(
+                root,
+                db,
+                args.scope,
+                args.agent_id,
+                Path(args.identity_capability),
+            )
+            verify_agent_identity_route_binding(
+                identity_capability,
+                client_name=args.client_name,
+                provider_id=args.provider_id,
+                model_id=args.model_id,
+                reasoning_mode=args.reasoning_mode,
+                route_class=args.route_class,
+            )
+            if args.allow_artifact_read:
+                raise BridgeError(
+                    "capability-backed Agent serve cannot enable artifact reads"
+                )
+            requested_tools = frozenset(args.allow_tool)
+            known_tools = frozenset(str(tool["name"]) for tool in TOOL_SCHEMAS)
+            unknown_tools = requested_tools - known_tools
+            if unknown_tools:
+                raise BridgeError(
+                    "capability-backed Agent serve requested unknown tools: "
+                    + ", ".join(sorted(unknown_tools))
+                )
+            if "read_artifact" in requested_tools:
+                raise BridgeError(
+                    "capability-backed Agent serve cannot enable artifact reads"
+                )
+            capability_tools = (
+                CAPABILITY_SAFE_TOOLS
+                if identity_capability.uses_legacy_tool_fallback
+                else frozenset(identity_capability.allowed_tools)
+            )
+            if not requested_tools:
+                requested_tools = capability_tools
+            unsafe_tools = requested_tools - capability_tools
+            if unsafe_tools:
+                raise BridgeError(
+                    "capability-backed Agent serve requested tools outside its "
+                    "bound allowlist: "
+                    + ", ".join(sorted(unsafe_tools))
+                )
         launch_features = {
             "serve": "local_core",
             "monitor": "control_room",
@@ -285,16 +455,17 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.command == "serve":
-            allowed_tools = frozenset(args.allow_tool) if args.allow_tool else None
-            denied_tools = (
-                frozenset()
-                if args.allow_artifact_read
-                else frozenset({"read_artifact"})
+            allowed_tools = requested_tools
+            denied_tools = frozenset(
+                {"read_artifact", "list_rooms", "read_memory"}
+                if identity_capability.bound_room_id is not None
+                else {"read_artifact"}
             )
             return serve(
                 _bridge_from_args(args),
                 allowed_tools=allowed_tools,
                 denied_tools=denied_tools,
+                identity_capability=identity_capability,
             )
         if args.command == "doctor":
             root = Path(args.project_root).resolve()
@@ -343,6 +514,8 @@ def main(argv: list[str] | None = None) -> int:
             supervisor.run_forever(args.poll_seconds)
             return 0
     except (
+        AgentIdentityError,
+        GovernanceError,
         BridgeError,
         AnalyticsError,
         ProductConfigError,

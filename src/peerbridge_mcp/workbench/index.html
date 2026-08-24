@@ -1,0 +1,480 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PeerBridge Workbench</title>
+  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260824-6">
+</head>
+<body>
+  <div id="access-gate" class="access-gate" hidden>
+    <div class="access-panel">
+      <div class="brand-mark" aria-hidden="true">PB</div>
+      <h1 data-i18n="access_title">無法連接本機工作台</h1>
+      <p data-i18n="access_body">請由 PeerBridge 桌面程式重新開啟 Modern Workbench。</p>
+    </div>
+  </div>
+
+  <div id="app" class="app-shell" hidden>
+    <aside id="sidebar" class="sidebar">
+      <header class="brand-row">
+        <img class="bridge-logo" src="/assets/peerbridge-icon.png" alt="" aria-hidden="true">
+        <div>
+          <strong>PeerBridge</strong>
+          <span data-i18n="local_workbench">本機工作台</span>
+        </div>
+        <span id="scope-chip" class="scope-chip">LOCAL</span>
+      </header>
+
+      <div class="sidebar-actions">
+        <button id="new-room" class="new-room" type="button">
+          <span aria-hidden="true">＋</span><span data-i18n="new_room">新增房間</span>
+        </button>
+        <button id="import-history" class="import-history" type="button">
+          <span aria-hidden="true">⇩</span><span data-i18n="import_history">匯入 Agent 歷史</span>
+        </button>
+      </div>
+
+      <nav class="primary-nav" aria-label="Workspace">
+        <span class="nav-group-label" data-i18n="nav_workspace">工作區</span>
+        <button class="nav-item" type="button" data-view="cockpit"><span aria-hidden="true">⌁</span><span data-i18n="cockpit">多智能體控制台</span></button>
+        <button class="nav-item" type="button" data-view="work"><span aria-hidden="true">✓</span><span data-i18n="tasks">工作板</span><span id="task-count" class="nav-count">0</span></button>
+        <span class="nav-group-label" data-i18n="nav_governance">治理與證據</span>
+        <button class="nav-item" type="button" data-view="review"><span aria-hidden="true">◎</span><span data-i18n="review">互評</span></button>
+        <button class="nav-item" type="button" data-view="change"><span aria-hidden="true">±</span><span data-i18n="change">變更</span></button>
+        <button class="nav-item" type="button" data-view="audit"><span aria-hidden="true">◇</span><span data-i18n="audit">審計</span></button>
+        <button class="nav-item" type="button" data-view="trust"><span aria-hidden="true">◫</span><span data-i18n="trust">信任與證據</span></button>
+        <span class="nav-group-label" data-i18n="nav_system">系統支援</span>
+        <button class="nav-item" type="button" data-view="connect"><span aria-hidden="true">⌘</span><span data-i18n="connect">接入</span></button>
+        <button class="nav-item" type="button" data-view="memory"><span aria-hidden="true">◉</span><span data-i18n="memory">記憶</span></button>
+        <button class="nav-item" type="button" data-view="feedback"><span aria-hidden="true">↗</span><span data-i18n="feedback">意見回饋</span></button>
+        <button class="nav-item" type="button" data-view="usage"><span aria-hidden="true">▥</span><span data-i18n="token_usage">Token 使用量</span></button>
+      </nav>
+
+      <section class="rooms-section">
+        <div class="rooms-section-header">
+          <div class="section-label" data-i18n="recent_rooms">最近房間</div>
+          <button id="room-search-button" class="icon-button compact-icon-button" type="button" data-i18n-title="search_rooms" title="搜尋房間" aria-label="Search rooms" aria-expanded="false"><span class="symbol-icon" aria-hidden="true">🔍︎</span></button>
+        </div>
+        <div id="room-search-popover" class="room-search-panel" hidden>
+          <label class="sr-only" for="room-search-input" data-i18n="search_rooms">搜尋房間</label>
+          <div><input id="room-search-input" type="search" maxlength="160" data-i18n-placeholder="search_rooms_placeholder" placeholder="輸入房間名稱"><button id="room-search-clear" class="icon-button compact-icon-button" type="button" data-i18n-title="clear_search" title="清除搜尋" aria-label="Clear search">×</button></div>
+          <span id="room-search-status" role="status"></span>
+        </div>
+        <div id="room-list" class="room-list"></div>
+      </section>
+
+      <footer class="operator-card">
+        <div class="operator-avatar">HY</div>
+        <div><strong data-i18n="operator">本機操作者</strong><span id="scope-label">--</span></div>
+        <button id="locale-button" class="icon-button" type="button" title="Language">文</button>
+      </footer>
+      <div id="sidebar-resizer" class="panel-resizer panel-resizer-right" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize navigation" aria-valuemin="190" aria-valuemax="320"></div>
+    </aside>
+
+    <main class="workspace">
+      <header class="workspace-header">
+        <button id="sidebar-toggle" class="icon-button mobile-only" type="button" aria-label="Menu">☰</button>
+        <div class="room-heading">
+          <div class="room-breadcrumb"><span data-i18n="workspace">工作區</span><span aria-hidden="true">/</span><span id="header-scope">--</span></div>
+          <h1 id="room-title">--</h1><span id="room-context">--</span>
+        </div>
+        <div class="header-actions">
+          <span id="connection-state" class="connection-state"><i></i><span data-i18n="connecting">連接中</span></span>
+          <button id="chat-home" class="icon-button" type="button" data-view="chat" data-i18n-title="back_to_chat" title="返回對話" aria-label="Back to chat" hidden>←</button>
+          <button id="announcement-button" class="icon-button notification-button" type="button" data-view="announcement" data-i18n-title="announcement" title="公告" aria-label="Announcements"><span class="symbol-icon" aria-hidden="true">🔔︎</span><span id="announcement-unread" class="notification-count" hidden>0</span></button>
+          <button id="refresh-button" class="icon-button" type="button" title="Refresh">↻</button>
+          <button id="chat-focus-button" class="icon-button" type="button" data-i18n-title="fullscreen" title="專注對話" aria-label="Focus chat">⛶</button>
+          <button id="inspector-toggle" class="icon-button" type="button" aria-label="Context">☷</button>
+        </div>
+      </header>
+
+      <section id="chat-view" class="content-view active-view">
+        <section id="history-notice" class="history-notice" hidden aria-live="polite">
+          <div><strong data-i18n="history_read_only">唯讀 Agent 歷史</strong><span id="history-detail">--</span></div>
+          <span id="history-hash" class="route-hash">--</span>
+        </section>
+        <section id="collaboration-overview" class="collaboration-overview" aria-label="Room activity">
+          <div class="overview-copy">
+            <span class="overview-eyebrow" data-i18n="current_round">目前協作</span>
+            <strong id="overview-title">--</strong>
+            <span id="overview-detail">--</span>
+          </div>
+          <div class="overview-metrics">
+            <div><span data-i18n="connected_agents">已連線 Agent</span><strong id="overview-agents">0 / 0</strong></div>
+            <div><span data-i18n="task_progress">工作進度</span><strong id="overview-tasks">0 / 0</strong></div>
+            <div><span data-i18n="dispatch_progress">派送狀態</span><strong id="overview-dispatches">0 / 0</strong></div>
+            <div><span data-i18n="audit_events">審計事件</span><strong id="overview-events">0</strong></div>
+          </div>
+        </section>
+        <div id="timeline" class="timeline" aria-live="polite">
+          <button id="load-older" class="load-older" type="button" hidden data-i18n="load_older">載入較早訊息</button>
+          <div id="message-list" class="message-list"></div>
+          <div id="empty-chat" class="empty-state" hidden>
+            <div class="empty-symbol">PB</div>
+            <h2 data-i18n="empty_title">開始一個協作回合</h2>
+            <p data-i18n="empty_body">向房間發送訊息，已連線的 Agent 會按房間規則處理。</p>
+          </div>
+        </div>
+
+        <form id="composer" class="composer">
+          <div class="composer-meta-row">
+            <input id="message-subject" type="text" maxlength="500" data-i18n-placeholder="subject_placeholder" placeholder="主旨">
+            <details id="automation-menu" class="automation-menu">
+              <summary id="automation-label">--</summary>
+              <div class="automation-popover">
+                <label><span data-i18n="automation_mode">自動模式</span><select id="automation-mode"><option value="off" data-i18n="automation_off_short">關閉</option><option value="once" data-i18n="automation_once_short">一輪</option><option value="discussion" data-i18n="automation_discussion_short">討論</option></select></label>
+                <div class="automation-limits">
+                  <label><span data-i18n="max_rounds">最多回合</span><input id="automation-rounds" type="number" min="1" max="20" value="4"></label>
+                  <label><span data-i18n="max_messages">最多訊息</span><input id="automation-messages" type="number" min="2" max="200" value="40"></label>
+                  <label><span data-i18n="stagnation">停滯回合</span><input id="automation-stagnation" type="number" min="1" max="5" value="2"></label>
+                </div>
+                <button id="save-automation" class="secondary-button" type="button" data-i18n="apply">套用</button>
+                <div id="discussion-controls" class="discussion-controls" hidden>
+                  <button type="button" data-discussion-action="pause" data-i18n="pause">暫停</button>
+                  <button type="button" data-discussion-action="resume" data-i18n="resume">恢復</button>
+                  <button type="button" data-discussion-action="continue" data-i18n="continue">繼續</button>
+                  <button type="button" data-discussion-action="stop" data-i18n="stop">停止</button>
+                </div>
+              </div>
+            </details>
+          </div>
+          <textarea id="message-body" rows="2" maxlength="20000" data-i18n-placeholder="composer_placeholder" placeholder="向房間發送訊息"></textarea>
+          <div id="attachment-list" class="attachment-list" aria-live="polite"></div>
+          <div class="composer-toolbar">
+            <div class="composer-options">
+              <input id="attachment-input" type="file" multiple hidden>
+              <button id="attachment-button" class="icon-button" type="button" data-i18n-title="attach" title="附件" aria-label="Attach">＋</button>
+              <select id="recipient" aria-label="Recipient"><option value="*" data-i18n="all_agents">全體 Agent</option></select>
+              <select id="priority" aria-label="Priority"><option value="normal" data-i18n="normal">一般</option><option value="high" data-i18n="high">高</option><option value="critical" data-i18n="critical">緊急</option></select>
+            </div>
+            <div class="send-area"><span id="send-status" role="status"></span><button id="send-button" class="send-button" type="submit" aria-label="Send">↑</button></div>
+          </div>
+        </form>
+      </section>
+
+      <section id="cockpit-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="workspace">工作區</span><h2 data-i18n="cockpit">多智能體控制台</h2></div><span id="cockpit-summary">--</span></div>
+        <div id="cockpit-metrics" class="metric-strip"></div>
+        <section class="action-panel" aria-labelledby="managed-launch-heading">
+          <div class="section-heading action-panel-heading">
+            <div><h3 id="managed-launch-heading" data-i18n="official_agent_capabilities">官方 Agent 能力</h3><p data-i18n="official_agent_capabilities_hint">依本機安裝、驗證收據及 PeerBridge 映射顯示真實能力。</p></div>
+            <button id="refresh-agent-capabilities" class="secondary-button" type="button" data-i18n="refresh_capabilities">重新檢查能力</button>
+          </div>
+          <div id="official-agent-grid" class="official-agent-grid" aria-live="polite"></div>
+          <div class="section-heading managed-launch-subheading"><div><h3 data-i18n="launch_managed_agent">啟動受管 Agent</h3><p data-i18n="managed_agent_hint">只啟動本機已安裝且受 PeerBridge 允許的官方 CLI。</p></div></div>
+          <form id="managed-session-form" class="action-form managed-session-form">
+            <label class="field"><span data-i18n="agent">Agent</span><select id="managed-agent" required></select></label>
+            <label class="field"><span data-i18n="role">角色</span><select id="managed-role" required></select></label>
+            <label class="field"><span data-i18n="permission_tier">權限層級</span><select id="managed-permission" required></select><small id="managed-permission-hint" class="permission-mode-hint" aria-live="polite"></small></label>
+            <label id="managed-binding-field" class="field" hidden><span data-i18n="governed_worktree">治理工作樹</span><select id="managed-binding"></select><small data-i18n="governed_worktree_hint">寫入權限只在已批准的隔離工作樹內生效。</small></label>
+            <label class="field"><span data-i18n="requested_route">指定路由（選填）</span><input id="managed-route" maxlength="200" data-i18n-placeholder="requested_route_placeholder" placeholder="例如官方模型或已設定路由"></label>
+            <label class="field"><span data-i18n="working_directory">工作資料夾</span><input id="managed-directory" maxlength="500" value="." required></label>
+            <label class="field action-form-wide"><span data-i18n="initial_instruction">初始指令（選填）</span><textarea id="managed-input" rows="2" maxlength="20000" data-i18n-placeholder="initial_instruction_placeholder" placeholder="啟動後交給 Agent 的第一項工作"></textarea></label>
+            <div class="managed-attachment-row action-form-wide">
+              <input id="managed-attachment-input" type="file" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.wav,.mp3,.m4a,.ogg,.flac,.csv,.json,.log,.md,.txt">
+              <button id="managed-attachment-button" class="secondary-button" type="button" data-i18n="attach">附件</button>
+              <span data-i18n="managed_attachment_hint">圖片及音訊會以原生多模態輸入送往支援的官方 runtime；文字檔會受限內嵌。</span>
+            </div>
+            <div id="managed-attachment-list" class="attachment-list action-form-wide" aria-live="polite"></div>
+            <p class="managed-session-contract-hint action-form-wide" data-i18n="managed_session_notice">支援持續會話的官方 runtime 可接收後續訊息與附件；舊式 CLI 會安全退回一次性任務。</p>
+            <div class="action-submit"><span id="managed-session-status" role="status"></span><button id="managed-start" class="primary-button" type="submit" data-i18n="start_agent">啟動 Agent</button></div>
+          </form>
+        </section>
+        <div class="cockpit-toolbar" aria-label="Session layout">
+          <span data-i18n="session_layout">工作階段檢視</span>
+          <div class="segmented-control" role="group">
+            <button type="button" class="active" data-cockpit-mode="grid" data-i18n="cockpit_grid">網格</button>
+            <button type="button" data-cockpit-mode="focus" data-i18n="cockpit_focus">專注</button>
+            <button type="button" data-cockpit-mode="timeline" data-i18n="cockpit_timeline">時間軸</button>
+          </div>
+        </div>
+        <div id="session-workspace" class="session-workspace mode-grid">
+          <section class="session-browser"><div class="section-heading"><h3 data-i18n="managed_sessions">受管工作階段</h3><span id="session-count">0</span></div><div id="session-list" class="record-list"></div></section>
+          <section id="session-inspector" class="session-inspector">
+            <div class="section-heading"><div><h3 id="session-detail-title" data-i18n="session_details">工作階段詳情</h3><span id="session-detail-subtitle" data-i18n="no_session_selected">尚未選擇工作階段</span></div><span id="session-event-count">0</span></div>
+            <div class="session-detail-tabs" role="tablist">
+              <button type="button" class="active" data-session-tab="terminal" data-i18n="terminal">終端</button>
+              <button type="button" data-session-tab="activity" data-i18n="activity">活動</button>
+              <button type="button" data-session-tab="final" data-i18n="final_answer">最終回答</button>
+              <button type="button" data-session-tab="evidence" data-i18n="evidence">證據</button>
+            </div>
+            <div id="session-detail-content" class="session-detail-content"></div>
+            <div id="session-event-list" class="record-list session-event-list" hidden></div>
+          </section>
+        </div>
+      </section>
+
+      <section id="work-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="workspace">工作區</span><h2 data-i18n="tasks">工作板</h2></div><span id="tasks-summary">--</span></div>
+        <div id="operation-metrics" class="metric-strip"></div>
+        <section class="action-panel" aria-labelledby="workflow-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="workflow-heading" data-i18n="enqueue_workflow">派發協作工作流程</h3><p data-i18n="workflow_hint">選擇受治理的工作流程，PeerBridge 會建立可追蹤的執行記錄。</p></div></div>
+          <form id="workflow-form" class="action-form workflow-form">
+            <label class="field"><span data-i18n="workflow">工作流程</span><select id="workflow-template" required></select></label>
+            <label class="field"><span data-i18n="max_attempts">最多嘗試</span><input id="workflow-attempts" type="number" min="1" max="10" value="1" required></label>
+            <label class="field"><span data-i18n="timeout_seconds">逾時秒數</span><input id="workflow-timeout" type="number" min="30" max="86400" value="1800" required></label>
+            <label class="field action-form-wide"><span data-i18n="task_description">工作內容</span><textarea id="workflow-task" rows="2" maxlength="20000" required data-i18n-placeholder="task_description_placeholder" placeholder="說明目標、限制及完成條件"></textarea></label>
+            <div class="action-submit"><span id="workflow-status" role="status"></span><button id="workflow-enqueue" class="primary-button" type="submit" data-i18n="enqueue">加入佇列</button></div>
+          </form>
+        </section>
+        <section class="action-panel" aria-labelledby="schedule-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="schedule-heading" data-i18n="schedules">本機排程</h3><p data-i18n="schedule_hint">排程只會加入既有受治理佇列，保留權限、逾時及停止控制。</p></div></div>
+          <form id="schedule-form" class="action-form schedule-form">
+            <label class="field"><span data-i18n="schedule_id">排程 ID</span><input id="schedule-id" maxlength="200" required placeholder="daily-review"></label>
+            <label class="field"><span data-i18n="workflow">工作流程</span><select id="schedule-workflow" required></select></label>
+            <label class="field"><span data-i18n="interval_minutes">間隔分鐘</span><input id="schedule-interval" type="number" min="1" max="44640" value="60" required></label>
+            <label class="field"><span data-i18n="start_delay_minutes">首次延遲分鐘</span><input id="schedule-delay" type="number" min="0" max="44640" value="1" required></label>
+            <label class="field"><span data-i18n="permission_decision_id_optional">權限決策 ID（選填）</span><input id="schedule-permission" maxlength="200"></label>
+            <label class="consent-row compact-consent"><input id="schedule-enabled" type="checkbox" checked><span data-i18n="enabled">啟用</span></label>
+            <label class="field action-form-wide"><span data-i18n="task_description">工作內容</span><textarea id="schedule-task" rows="2" maxlength="20000" required></textarea></label>
+            <div class="action-submit"><span id="schedule-status" role="status"></span><button class="primary-button" type="submit" data-i18n="save_schedule">儲存排程</button></div>
+          </form>
+          <div class="section-heading"><h3 data-i18n="saved_schedules">已儲存排程</h3><span id="schedule-count">0</span></div>
+          <div id="schedule-list" class="record-list schedule-list"></div>
+        </section>
+        <div class="split-workspace">
+          <section><div class="section-heading"><h3 data-i18n="tasks">工作板</h3><span id="board-task-count">0</span></div><div id="tasks-list" class="summary-list"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="operations">執行佇列</h3><span id="operation-count">0</span></div><div id="operation-list" class="record-list"></div></section>
+        </div>
+      </section>
+
+      <section id="review-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="review">互評</h2></div><span id="review-summary">--</span></div>
+        <div class="split-workspace">
+          <section><div class="section-heading"><h3 data-i18n="review_requests">互評請求</h3><span id="peer-call-count">0</span></div><div id="peer-call-list" class="record-list"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="review_results">互評結果</h3><span id="peer-review-count">0</span></div><div id="peer-review-list" class="record-list"></div></section>
+        </div>
+      </section>
+
+      <section id="change-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="change">變更</h2></div><span id="change-summary">--</span></div>
+        <div id="change-list" class="record-list wide-record-list"></div>
+      </section>
+
+      <section id="audit-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="audit">審計</h2></div><span id="snapshot-signature">--</span></div>
+        <div id="audit-grid" class="audit-grid"></div>
+        <div class="section-heading"><h3 data-i18n="recent_events">最近事件</h3><span id="audit-event-count">0</span></div>
+        <div id="audit-event-list" class="record-list wide-record-list"></div>
+      </section>
+
+      <section id="trust-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_governance">治理與證據</span><h2 data-i18n="trust">信任與證據</h2></div><span id="trust-summary">--</span></div>
+        <section class="action-panel governance-panel" aria-labelledby="capability-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="capability-heading" data-i18n="capability_governance">能力授權</h3><p data-i18n="capability_governance_hint">註冊具 SHA 綁定的 Skill 或 MCP 工具，再由操作者逐一允許或拒絕。</p></div></div>
+          <div class="governance-grid">
+            <form id="capability-form" class="compact-form">
+              <h4 data-i18n="register_capability">註冊能力</h4>
+              <label class="field"><span data-i18n="capability_id">能力 ID</span><input id="capability-id" maxlength="200" required></label>
+              <label class="field"><span data-i18n="registry_version">版本</span><input id="capability-version" maxlength="200" value="v1" required></label>
+              <label class="field"><span data-i18n="capability_kind">類型</span><select id="capability-kind"><option value="skill">Skill</option><option value="mcp-tool">MCP Tool</option></select></label>
+              <label class="field"><span data-i18n="display_name">顯示名稱</span><input id="capability-name" maxlength="160" required></label>
+              <label class="field form-span"><span>SHA-256</span><input id="capability-sha" minlength="64" maxlength="64" spellcheck="false" required></label>
+              <label class="field"><span data-i18n="sensitivity">敏感度</span><select id="capability-sensitivity"><option value="read" data-i18n="read_only">唯讀</option><option value="write" data-i18n="write_access">寫入</option><option value="sensitive" data-i18n="sensitive_access">敏感</option></select></label>
+              <div class="form-actions"><span id="capability-status" role="status"></span><button class="primary-button" type="submit" data-i18n="register">註冊</button></div>
+            </form>
+            <form id="capability-grant-form" class="compact-form">
+              <h4 data-i18n="grant_capability">授權能力</h4>
+              <label class="field"><span data-i18n="principal_type">對象類型</span><select id="grant-principal-type"><option value="agent">Agent</option><option value="room" data-i18n="room">房間</option></select></label>
+              <label class="field"><span data-i18n="principal_id">對象 ID</span><input id="grant-principal-id" maxlength="200" required></label>
+              <label class="field"><span data-i18n="capability_id">能力 ID</span><input id="grant-capability-id" maxlength="200" required></label>
+              <label class="field"><span data-i18n="registry_version">版本</span><input id="grant-capability-version" maxlength="200" value="v1" required></label>
+              <label class="field"><span data-i18n="decision">決策</span><select id="grant-decision"><option value="allow" data-i18n="allow">允許</option><option value="deny" data-i18n="deny">拒絕</option></select></label>
+              <label class="field form-span"><span data-i18n="reason">原因</span><input id="grant-reason" maxlength="500" required></label>
+              <div class="form-actions"><span id="capability-grant-status" role="status"></span><button class="primary-button" type="submit" data-i18n="save_decision">儲存決策</button></div>
+            </form>
+          </div>
+          <div class="governance-grid governance-lists">
+            <section><div class="section-heading"><h3 data-i18n="registered_capabilities">已註冊能力</h3><span id="capability-count">0</span></div><div id="capability-list" class="record-list"></div></section>
+            <section><div class="section-heading"><h3 data-i18n="capability_grants">能力授權記錄</h3><span id="capability-grant-count">0</span></div><div id="capability-grant-list" class="record-list"></div></section>
+          </div>
+        </section>
+        <section class="action-panel governance-panel" aria-labelledby="execution-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="execution-heading" data-i18n="execution_governance">隔離執行</h3><p data-i18n="execution_governance_hint">先建立限時人類權限，再建立獨立 Git worktree；PeerBridge 不會自動合併變更。</p></div></div>
+          <div class="governance-grid">
+            <form id="permission-form" class="compact-form">
+              <h4 data-i18n="permission_decision">權限決策</h4>
+              <label class="field"><span data-i18n="decision_id">決策 ID</span><input id="permission-id" maxlength="200" required></label>
+              <label class="field"><span data-i18n="task_id">工作 ID</span><input id="permission-task" maxlength="200" required></label>
+              <label class="field"><span data-i18n="agent">Agent</span><input id="permission-agent" maxlength="200" required></label>
+              <label class="field"><span data-i18n="decision">決策</span><select id="permission-decision"><option value="allow" data-i18n="allow">允許</option><option value="deny" data-i18n="deny">拒絕</option></select></label>
+              <label class="field"><span data-i18n="ttl_hours">有效小時</span><input id="permission-ttl" type="number" min="1" max="24" value="1" required></label>
+              <label class="field form-span"><span data-i18n="reason">原因</span><input id="permission-reason" maxlength="500" required></label>
+              <div class="form-actions"><span id="permission-status" role="status"></span><button class="primary-button" type="submit" data-i18n="save_decision">儲存決策</button></div>
+            </form>
+            <form id="execution-form" class="compact-form">
+              <h4 data-i18n="create_isolated_execution">建立隔離執行</h4>
+              <label class="field"><span data-i18n="binding_id">綁定 ID</span><input id="execution-binding" maxlength="200" required></label>
+              <label class="field"><span data-i18n="task_id">工作 ID</span><input id="execution-task" maxlength="200" required></label>
+              <label class="field"><span data-i18n="agent">Agent</span><input id="execution-agent" maxlength="200" required></label>
+              <label class="field"><span data-i18n="permission_decision_id">權限決策 ID</span><input id="execution-permission" maxlength="200" required></label>
+              <div class="form-actions"><span id="execution-status" role="status"></span><button class="primary-button" type="submit" data-i18n="create_execution">建立執行</button></div>
+            </form>
+          </div>
+          <div class="section-heading"><h3 data-i18n="execution_bindings">執行綁定</h3><span id="execution-count">0</span></div>
+          <div id="execution-list" class="record-list"></div>
+        </section>
+        <section class="action-panel governance-panel" aria-labelledby="proof-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="proof-heading" data-i18n="proof_bundle">證據包</h3><p data-i18n="proof_bundle_hint">輸出經清理的可攜式證據，或對既有證據包進行零寫入驗證。</p></div></div>
+          <form id="proof-form" class="inline-governance-form">
+            <label class="field"><span data-i18n="task_id">工作 ID</span><input id="proof-task" maxlength="200"></label>
+            <button id="proof-export" class="primary-button" type="button" data-i18n="export_proof">匯出證據包</button>
+            <label class="field proof-path-field"><span data-i18n="bundle_path">證據包路徑</span><input id="proof-path" maxlength="500" placeholder=".peerbridge-artifacts/proof-bundles/..."></label>
+            <button id="proof-verify" class="secondary-button" type="button" data-i18n="verify_proof">驗證證據包</button>
+            <span id="proof-status" role="status"></span>
+          </form>
+        </section>
+        <div class="split-workspace">
+          <section><div class="section-heading"><h3 data-i18n="trust_records">信任記錄</h3><span id="trust-count">0</span></div><div id="trust-list" class="record-list"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="permissions">權限決策</h3><span id="permission-count">0</span></div><div id="permission-list" class="record-list"></div></section>
+        </div>
+      </section>
+
+      <section id="connect-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="connect">接入</h2></div><span id="connect-summary">--</span></div>
+        <section class="action-panel" aria-labelledby="identity-authorize-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="identity-authorize-heading" data-i18n="authorize_agent_identity">授權 Agent 接入</h3><p data-i18n="authorize_agent_identity_hint">建立十分鐘內只可使用一次的權限，供 CLI 簽發綁定工具 profile 的 Agent capability。</p></div></div>
+          <form id="identity-authorize-form" class="action-form">
+            <label class="field"><span data-i18n="agent_id">Agent ID</span><input id="identity-agent-id" maxlength="200" required placeholder="codex-main"></label>
+            <label class="field"><span data-i18n="capability_profile">能力 Profile</span><select id="identity-profile"><option value="collaborator" data-i18n="profile_collaborator">協作者</option><option value="observer" data-i18n="profile_observer">觀察者</option></select></label>
+            <div class="action-submit"><span id="identity-authorize-status" role="status"></span><button class="primary-button" type="submit" data-i18n="authorize_once">一次授權</button></div>
+          </form>
+          <label id="identity-decision-field" class="field" hidden><span data-i18n="permission_decision_id">權限決策 ID</span><input id="identity-decision-id" readonly><small data-i18n="identity_cli_hint">在十分鐘內把此 ID 加到 identity issue 命令的 --permission-decision-id。</small></label>
+          <div class="section-heading managed-launch-subheading"><div><h3 data-i18n="revoke_agent_identity">撤銷 Agent 接入</h3><p data-i18n="revoke_agent_identity_hint">撤銷後，新舊 stdio 工作階段在下一次工具呼叫都會被永久封鎖。</p></div></div>
+          <form id="identity-revoke-form" class="action-form">
+            <label class="field"><span data-i18n="identity_capability_id">Capability ID</span><input id="identity-revoke-id" maxlength="200" required placeholder="identity-..."></label>
+            <label class="field"><span data-i18n="identity_revocation_reason">撤銷原因</span><input id="identity-revoke-reason" maxlength="500" required></label>
+            <div class="action-submit"><span id="identity-revoke-status" role="status"></span><button class="danger-button" type="submit" data-i18n="revoke_identity">撤銷接入</button></div>
+          </form>
+        </section>
+        <div class="split-workspace">
+          <section><div class="section-heading"><h3 data-i18n="provider_connections">供應商連線</h3><span id="connection-count">0</span></div><div id="connection-list" class="record-list"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="routes">模型路由</h3><span id="route-count">0</span></div><div id="route-list" class="record-list"></div></section>
+        </div>
+      </section>
+
+      <section id="memory-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="memory">記憶</h2></div><span id="memory-summary">--</span></div>
+        <div class="split-workspace">
+          <section><div class="section-heading"><h3 data-i18n="memory_records">記憶記錄</h3><span id="memory-count">0</span></div><div id="memory-list" class="record-list"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="briefings">工作簡報</h3><span id="briefing-count">0</span></div><div id="briefing-list" class="record-list"></div></section>
+        </div>
+      </section>
+
+      <section id="feedback-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="feedback">意見回饋</h2></div><span id="feedback-summary" data-i18n="private_feedback">私密送出</span></div>
+        <div class="support-state">
+          <div><h3 id="feedback-heading" data-i18n="feedback_ready">回饋入口已就緒</h3><p id="feedback-detail" data-i18n="feedback_body">一般診斷會遮蔽秘密；完整憑證只會在明確同意後於本機加密。</p></div>
+          <span id="feedback-service-status" class="status-badge muted">--</span>
+        </div>
+        <form id="feedback-form" class="support-form">
+          <div class="support-form-grid">
+            <label class="field"><span data-i18n="feedback_summary_label">問題摘要</span><input id="feedback-summary-input" maxlength="240" required data-i18n-placeholder="feedback_summary_placeholder" placeholder="一句話說明問題"></label>
+            <label class="field"><span data-i18n="feedback_contact_label">聯絡方式（選填）</span><input id="feedback-contact" maxlength="320" data-i18n-placeholder="feedback_contact_placeholder" placeholder="電郵或其他聯絡方式"></label>
+          </div>
+          <label class="field"><span data-i18n="feedback_message_label">詳細內容</span><textarea id="feedback-message" maxlength="20000" required data-i18n-placeholder="feedback_message_placeholder" placeholder="說明發生了甚麼、預期結果及重現步驟"></textarea></label>
+          <div class="support-attachment-row">
+            <input id="feedback-attachment-input" type="file" multiple hidden accept=".png,.jpg,.jpeg,.gif,.webp,.json,.log,.txt">
+            <button id="feedback-attachment-button" class="secondary-button" type="button" data-i18n="attach">附件</button>
+            <span data-i18n="feedback_attachment_hint">可附畫面或診斷檔；最多 5 個，共 16 MiB。</span>
+          </div>
+          <div id="feedback-attachment-list" class="attachment-list"></div>
+          <div class="credential-panel">
+            <div class="credential-heading"><div><strong data-i18n="feedback_credential_label">完整 API Key 診斷（選填）</strong><p data-i18n="feedback_credential_body">只有勾選同意後，內容才會在本機以支援公鑰加密；不會以明文送出。</p></div><button id="feedback-credential-toggle" class="text-button" type="button" data-i18n="show">顯示</button></div>
+            <input id="feedback-credential" type="password" maxlength="16384" autocomplete="off" spellcheck="false" data-i18n-placeholder="feedback_credential_placeholder" placeholder="只在需要重現 Key 解析問題時填寫">
+            <label class="consent-row"><input id="feedback-credential-consent" type="checkbox"><span data-i18n="feedback_credential_consent">我明確同意在本機加密後隨本次回饋送出。</span></label>
+          </div>
+          <div class="support-submit-row"><p id="feedback-status" role="status"></p><button id="feedback-submit" class="primary-button" type="submit" data-i18n="feedback_submit">私密送出</button></div>
+        </form>
+      </section>
+
+      <section id="usage-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="workspace">工作區</span><h2 data-i18n="token_usage">Token 使用量</h2></div><span id="usage-total">--</span></div>
+        <div id="usage-periods" class="usage-period-selector" role="tablist" aria-label="Token period"></div>
+        <div class="usage-dashboard-grid">
+          <section class="usage-panel"><div class="section-heading"><h3 data-i18n="token_breakdown">Token 分拆</h3></div><div id="usage-bars" class="usage-bars"></div></section>
+          <section class="usage-panel"><div class="section-heading"><h3 data-i18n="token_trend">Token 趨勢</h3></div><div id="usage-trend" class="usage-trend"></div></section>
+        </div>
+        <div class="usage-breakdown-grid">
+          <section><div class="section-heading"><h3 data-i18n="provider_usage">供應商使用量</h3></div><div id="usage-providers" class="usage-models"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="model_usage">模型使用量</h3></div><div id="usage-models" class="usage-models"></div></section>
+        </div>
+      </section>
+
+      <section id="announcement-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="announcement">公告</h2></div><span id="announcement-summary">--</span></div>
+        <div class="support-state">
+          <div><h3 data-i18n="announcement_status">公告來源狀態</h3><p id="announcement-detail" data-i18n="announcement_unconfigured">尚未設定公告 HTTPS 來源；本機不會偽造公告。</p></div>
+          <button id="refresh-announcements" class="secondary-button" type="button" data-i18n="refresh">重新整理</button>
+        </div>
+        <div id="announcement-list" class="record-list wide-record-list"></div>
+      </section>
+    </main>
+
+    <aside id="inspector" class="inspector">
+      <div id="inspector-resizer" class="panel-resizer panel-resizer-left" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize inspector" aria-valuemin="260" aria-valuemax="420"></div>
+      <header class="inspector-header"><strong data-i18n="room_status">房間狀態</strong><button id="inspector-close" class="icon-button" type="button" aria-label="Close">×</button></header>
+      <div class="inspector-tabs" role="tablist"><button class="active" type="button" data-inspector="agents" data-i18n="agents">Agent</button><button type="button" data-inspector="work" data-i18n="work">工作</button><button type="button" data-inspector="evidence" data-i18n="evidence">證據</button></div>
+      <section id="agents-panel" class="inspector-panel active-panel">
+        <div class="panel-metric"><span data-i18n="seats">席位</span><strong id="seat-count">0 / 0</strong></div>
+        <div class="seat-management">
+          <div class="panel-section-heading"><span data-i18n="manage_seats">管理席位</span></div>
+          <label class="compact-field"><span data-i18n="agent">Agent</span><select id="seat-agent"></select></label>
+          <label class="compact-field"><span data-i18n="route">路由</span><select id="seat-route"></select></label>
+          <label class="compact-field"><span data-i18n="role">角色</span><select id="seat-role"></select></label>
+          <button id="seat-add" class="primary-button full-width" type="button" data-i18n="add_seat">加入席位</button>
+          <label class="compact-field"><span data-i18n="current_member">現有成員</span><select id="seat-remove-member"></select></label>
+          <button id="seat-remove" class="danger-button full-width" type="button" data-i18n="remove_seat">移除席位</button>
+        </div>
+        <div id="agent-list" class="agent-list"></div>
+      </section>
+      <section id="work-panel" class="inspector-panel">
+        <div class="panel-section-heading"><span data-i18n="current_round">目前協作</span><strong id="work-mode">--</strong></div>
+        <div id="round-summary" class="round-summary"></div>
+        <div class="panel-section-heading"><span data-i18n="dispatch_queue">派送佇列</span><strong id="dispatch-count">0</strong></div>
+        <div id="dispatch-list" class="dispatch-list"></div>
+        <div class="panel-section-heading"><span data-i18n="recent_tasks">最近工作</span><strong id="work-task-count">0</strong></div>
+        <div id="work-task-list" class="work-task-list"></div>
+      </section>
+      <section id="evidence-panel" class="inspector-panel">
+        <div id="evidence-summary" class="evidence-summary"></div>
+        <div class="panel-section-heading"><span data-i18n="work_updates">工作更新</span><strong id="work-update-count">0</strong></div>
+        <div id="work-update-list" class="work-update-list"></div>
+      </section>
+      <footer class="inspector-footer"><div><span data-i18n="messages">訊息</span><strong id="room-message-count">0</strong></div><div><span>Token</span><strong id="room-token-count">0</strong></div></footer>
+    </aside>
+  </div>
+
+  <dialog id="new-room-dialog" class="workbench-dialog">
+    <form id="new-room-form" method="dialog" class="dialog-form">
+      <header><div><span data-i18n="workspace">工作區</span><h2 data-i18n="create_room">建立新房間</h2></div><button id="new-room-close" class="icon-button" type="button" aria-label="Close">×</button></header>
+      <p data-i18n="create_room_hint">房間 ID 建立後不可更改；顯示名稱可使用容易辨識的工作主題。</p>
+      <label class="field"><span data-i18n="room_id">房間 ID</span><input id="new-room-id" maxlength="200" pattern="[A-Za-z0-9_.:-]{1,200}" required data-i18n-placeholder="room_id_placeholder" placeholder="例如 alpha-52-review"></label>
+      <label class="field"><span data-i18n="room_name">房間名稱</span><input id="new-room-name" maxlength="120" required data-i18n-placeholder="room_name_placeholder" placeholder="例如 Alpha 5.2 發佈檢查"></label>
+      <footer><button id="new-room-cancel" class="secondary-button" type="button" data-i18n="cancel">取消</button><button id="new-room-submit" class="primary-button" type="submit" data-i18n="create">建立</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="history-dialog" class="workbench-dialog history-dialog">
+    <form id="history-form" method="dialog" class="dialog-form">
+      <header><div><span data-i18n="workspace">工作區</span><h2 data-i18n="import_history">匯入 Agent 歷史</h2></div><button id="history-close" class="icon-button" type="button" aria-label="Close">×</button></header>
+      <p data-i18n="history_import_hint">只解析你明確選取的本機匯出檔；PeerBridge 不會搜尋或上傳其他私人歷史。</p>
+      <label class="field"><span data-i18n="history_provider">來源 Agent</span><select id="history-provider" required><option value="codex">Codex</option><option value="claude">Claude</option><option value="grok">Grok</option><option value="kimi">Kimi</option><option value="generic" data-i18n="history_generic">通用 JSON / JSONL</option></select></label>
+      <section id="native-history-direct" class="codex-history-direct">
+        <div><strong id="native-history-title">Codex 本機對話</strong><span id="native-history-hint">透過官方介面唯讀列出對話；選定前不讀取完整內容。</span></div>
+        <button id="native-history-discover" class="secondary-button" type="button" data-i18n="discover_history">列出對話</button>
+        <div id="native-history-list" class="history-selection-list" hidden aria-label="Agent conversations"></div>
+      </section>
+      <div class="history-divider"><span data-i18n="or_import_file">或匯入檔案</span></div>
+      <label class="history-file-field"><span data-i18n="history_file">對話匯出檔</span><input id="history-file" type="file" accept=".json,.jsonl"><small id="history-file-status" data-i18n="history_file_limit">最多 16 MiB；支援 JSON 或 JSONL。</small></label>
+      <div class="history-contract"><strong data-i18n="history_contract">匯入契約</strong><ul><li data-i18n="history_contract_id">保留來源 conversation ID、時間與 SHA-256。</li><li data-i18n="history_contract_redaction">秘密形狀內容會在寫入前遮蔽。</li><li data-i18n="history_contract_readonly">匯入房間預設唯讀，不會觸發 Agent 或 fan-out。</li></ul></div>
+      <div id="history-import-status" class="dialog-status" role="status"></div>
+      <footer><button id="history-cancel" class="secondary-button" type="button" data-i18n="cancel">取消</button><button id="history-submit" class="primary-button" type="submit" data-i18n="import_history_action">匯入並開啟</button></footer>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script src="/assets/app.js?v=alpha52-20260824-6" defer></script>
+</body>
+</html>

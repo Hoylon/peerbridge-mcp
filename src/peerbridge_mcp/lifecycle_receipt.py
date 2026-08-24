@@ -15,6 +15,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
+from .agent_identity import AgentIdentityError, verify_agent_identity_capability
 from .bridge import ZERO_SHA256, sha256_bytes, stable_sha256, utc_now
 from .secret_scan import contains_secret
 from .protocol import PROTOCOL_VERSION
@@ -257,6 +258,14 @@ def _launch_snapshot(
     executable = Path(command[0])
     if not executable.is_absolute():
         raise ReceiptError(f"{label} Python executable is not absolute")
+    capability_flags = [
+        index for index, value in enumerate(command) if value == "--identity-capability"
+    ]
+    if len(capability_flags) != 1 or capability_flags[0] + 1 >= len(command):
+        raise ReceiptError(f"{label} Agent identity capability is absent")
+    capability_path = Path(command[capability_flags[0] + 1])
+    if not capability_path.is_absolute() or not capability_path.is_file():
+        raise ReceiptError(f"{label} Agent identity capability is invalid")
     fixed = [
         "-m",
         "peerbridge_mcp",
@@ -269,6 +278,8 @@ def _launch_snapshot(
         scope,
         "--agent-id",
         agent_id,
+        "--identity-capability",
+        str(capability_path),
         "--session-id",
         session_id,
     ]
@@ -279,6 +290,17 @@ def _launch_snapshot(
     ]
     if command[1:] != [*fixed, *allow_arguments]:
         raise ReceiptError(f"{label} launch command or allowlist drifted")
+    try:
+        identity_capability = verify_agent_identity_capability(
+            project_root,
+            db_path,
+            scope,
+            agent_id,
+            capability_path,
+            immutable=True,
+        )
+    except AgentIdentityError as exc:
+        raise ReceiptError(f"{label} Agent identity capability is invalid") from exc
     cwd = Path(str(phase.get("cwd") or ""))
     if not cwd.is_absolute() or not cwd.is_dir():
         raise ReceiptError(f"{label} working directory is invalid")
@@ -303,6 +325,11 @@ def _launch_snapshot(
         "database_path": str(db_path),
         "scope": scope,
         "agent_id": agent_id,
+        "identity_capability": {
+            "bound": True,
+            "capability_id": identity_capability.capability_id,
+            "capability_sha256": identity_capability.capability_sha256,
+        },
         "session_id": session_id,
         "allowed_tools": allowed_tools,
         "cwd": str(cwd.resolve()),
@@ -502,6 +529,8 @@ def _parse_evidence(
     if (
         before_launch["python_executable"] != recovery_launch["python_executable"]
         or before_launch["cwd"] != recovery_launch["cwd"]
+        or before_launch["identity_capability"]
+        != recovery_launch["identity_capability"]
     ):
         raise ReceiptError("crash and recovery children used different runtimes")
 
@@ -793,10 +822,14 @@ def _message_snapshot(row: sqlite3.Row) -> dict[str, Any]:
         "reply_to": row["reply_to"],
         "artifact_paths": artifacts,
         "route_request": None,
+        "visibility": str(row["visibility"] or "direct"),
         "created_utc": row["created_utc"],
     }
     if stable_sha256(content) != row["content_sha256"]:
-        raise ReceiptError("bound message content SHA mismatch")
+        legacy_content = dict(content)
+        legacy_content.pop("visibility", None)
+        if stable_sha256(legacy_content) != row["content_sha256"]:
+            raise ReceiptError("bound message content SHA mismatch")
     return {
         "sequence": int(row["sequence"]),
         "message_id": row["message_id"],
@@ -809,6 +842,7 @@ def _message_snapshot(row: sqlite3.Row) -> dict[str, Any]:
         "body_sha256": sha256_bytes(row["body"].encode("utf-8")),
         "priority": row["priority"],
         "reply_to": row["reply_to"],
+        "visibility": str(row["visibility"] or "direct"),
         "artifact_paths_sha256": stable_sha256(artifacts),
         "created_utc": row["created_utc"],
         "acknowledged_utc": row["acknowledged_utc"],

@@ -30,7 +30,7 @@ from peerbridge_mcp.remote import (
 LOGIN = "operator@example.test"
 CSRF = "test-csrf-token"
 ACCESS = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-PUBLIC_ORIGIN = "https://peerbridge.example.test"
+PUBLIC_ORIGIN = "https://peerbridge.tail123.ts.net"
 
 
 def test_windows_launcher_handles_empty_external_output_safely() -> None:
@@ -534,6 +534,7 @@ def test_remote_restarts_on_same_port_without_losing_messages(tmp_path: Path) ->
 
 
 def test_tailscale_identity_discovery_does_not_require_persisted_credentials(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class Completed:
@@ -545,8 +546,21 @@ def test_tailscale_identity_discovery_does_not_require_persisted_credentials(
             }
         )
 
-    monkeypatch.setattr("peerbridge_mcp.remote.subprocess.run", lambda *a, **k: Completed())
+    executable = tmp_path / "tailscale.exe"
+    executable.write_bytes(b"stub")
+    observed: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        observed["command"] = command
+        observed.update(kwargs)
+        return Completed()
+
+    monkeypatch.setattr("peerbridge_mcp.remote._tailscale_executable", lambda: executable)
+    monkeypatch.setattr("peerbridge_mcp.remote.subprocess.run", fake_run)
     assert tailscale_self_login() == LOGIN
+    assert observed["command"] == [str(executable), "status", "--json"]
+    assert observed["cwd"] == executable.parent
+    assert isinstance(observed["env"], dict)
 
 
 def test_real_phone_evidence_flow_is_hashed_sealed_and_audited(

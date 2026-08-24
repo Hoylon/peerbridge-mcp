@@ -10,6 +10,8 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Iterable
+from urllib.parse import urlsplit
 
 
 _BASE_KEYS = frozenset(
@@ -69,11 +71,20 @@ _PROVIDER_KEYS: Mapping[str, frozenset[str]] = {
         {
             "GROK_API_KEY",
             "GROK_BASE_URL",
+            "GROK_HOME",
             "XAI_API_KEY",
             "XAI_BASE_URL",
         }
     ),
     "kimi": frozenset(
+        {
+            "KIMI_API_KEY",
+            "KIMI_BASE_URL",
+            "MOONSHOT_API_KEY",
+            "MOONSHOT_BASE_URL",
+        }
+    ),
+    "kimi-code": frozenset(
         {
             "KIMI_API_KEY",
             "KIMI_BASE_URL",
@@ -120,7 +131,11 @@ def _trusted_path_roots(values: Mapping[str, str]) -> tuple[Path, ...]:
     return tuple(root for root in roots if root is not None)
 
 
-def _sanitized_path(values: Mapping[str, str]) -> str:
+def _sanitized_path(
+    values: Mapping[str, str],
+    *,
+    required_roots: Iterable[Path] = (),
+) -> str:
     """Keep PATH ordering but retain only exact reviewed executable directories."""
 
     roots = _trusted_path_roots(values)
@@ -135,6 +150,25 @@ def _sanitized_path(values: Mapping[str, str]) -> str:
             os.path.normcase(item) for item in selected
         }:
             selected.append(resolved)
+    selected_normalized = {os.path.normcase(item) for item in selected}
+    for root in required_roots:
+        resolved = str(Path(root).resolve())
+        normalized = os.path.normcase(resolved)
+        trusted_descendant = False
+        for candidate in allowed:
+            try:
+                if os.path.commonpath((normalized, candidate)) == candidate:
+                    trusted_descendant = True
+                    break
+            except ValueError:
+                continue
+        if not trusted_descendant:
+            raise ValueError("required child executable root is not trusted")
+        if not Path(resolved).is_dir():
+            raise ValueError("required child executable root is unavailable")
+        if normalized not in selected_normalized:
+            selected.append(resolved)
+            selected_normalized.add(normalized)
     if not selected:
         selected = [str(root) for root in roots if root.is_dir()]
     return os.pathsep.join(selected)
@@ -146,11 +180,24 @@ def build_local_child_environment(
     """Return only OS essentials for a trusted local PeerBridge child."""
 
     values = os.environ if source is None else source
-    selected = {
-        str(key): str(value)
-        for key, value in values.items()
-        if str(key).upper() in _BASE_KEYS
-    }
+    selected: dict[str, str] = {}
+    for key, value in values.items():
+        normalized = str(key).upper()
+        if normalized not in _BASE_KEYS:
+            continue
+        text = str(value)
+        if normalized in {"ALL_PROXY", "HTTP_PROXY", "HTTPS_PROXY"}:
+            try:
+                parsed = urlsplit(text)
+            except ValueError:
+                continue
+            if not parsed.scheme or not parsed.hostname or parsed.username or parsed.password:
+                continue
+        selected[str(key)] = text
+    if os.name == "nt" and not selected.get("HOME"):
+        user_profile = str(values.get("USERPROFILE") or "").strip()
+        if user_profile:
+            selected["HOME"] = user_profile
     sanitized_path = _sanitized_path(values)
     if sanitized_path:
         selected["PATH"] = sanitized_path
@@ -160,8 +207,11 @@ def build_local_child_environment(
 def build_agent_child_environment(
     provider_family: str,
     source: Mapping[str, str] | None = None,
+    *,
+    required_path_roots: Iterable[Path] = (),
+    include_provider_credentials: bool = False,
 ) -> dict[str, str]:
-    """Return OS essentials plus credentials for exactly one Agent family."""
+    """Return OS essentials and only explicitly requested provider credentials."""
 
     family = str(provider_family or "").strip().lower()
     if family not in _PROVIDER_KEYS:
@@ -169,8 +219,17 @@ def build_agent_child_environment(
     values = os.environ if source is None else source
     allowed_keys = _PROVIDER_KEYS[family]
     selected = build_local_child_environment(values)
-    for key, value in values.items():
-        normalized = str(key).upper()
-        if normalized in allowed_keys:
-            selected[str(key)] = str(value)
+    sanitized_path = _sanitized_path(values, required_roots=required_path_roots)
+    if sanitized_path:
+        selected["PATH"] = sanitized_path
+    if include_provider_credentials:
+        for key, value in values.items():
+            normalized = str(key).upper()
+            if normalized in allowed_keys:
+                selected[str(key)] = str(value)
+    if family == "grok-build" and not selected.get("GROK_HOME"):
+        user_profile = str(values.get("USERPROFILE") or "").strip()
+        cached_home = Path(user_profile, ".grok").resolve() if user_profile else None
+        if cached_home is not None and cached_home.is_dir():
+            selected["GROK_HOME"] = str(cached_home)
     return selected

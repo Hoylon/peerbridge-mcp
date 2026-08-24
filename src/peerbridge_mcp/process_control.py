@@ -8,6 +8,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from typing import Any
 
 
@@ -137,6 +138,11 @@ def attach_process_tree(process: subprocess.Popen[Any]) -> bool:
 def release_process_tree(process: subprocess.Popen[Any]) -> None:
     """Release ownership; kill-on-close also removes leaked descendants."""
     if sys.platform != "win32":
+        # Every POSIX child is started as a fresh session leader. The parent may
+        # exit while a helper remains in that process group, so explicitly kill
+        # the now-orphaned group before releasing ownership.
+        with contextlib.suppress(ProcessLookupError, PermissionError):
+            os.killpg(process.pid, signal.SIGKILL)
         return
     handle = getattr(process, _JOB_HANDLE_ATTRIBUTE, None)
     if handle:
@@ -178,9 +184,51 @@ def terminate_process_tree(
         process.wait(timeout=wait_seconds)
 
 
+def write_process_stdin_bounded(
+    process: subprocess.Popen[bytes],
+    payload: bytes,
+    *,
+    close_after: bool = False,
+    timeout_seconds: float = 5.0,
+) -> None:
+    """Deliver stdin without letting a blocked child freeze its owner."""
+
+    stream = process.stdin
+    if stream is None or stream.closed:
+        raise RuntimeError("process input stream is unavailable")
+    completed = threading.Event()
+    failures: list[BaseException] = []
+
+    def write() -> None:
+        try:
+            stream.write(payload)
+            stream.flush()
+            if close_after:
+                stream.close()
+        except BaseException as exc:
+            failures.append(exc)
+        finally:
+            completed.set()
+
+    writer = threading.Thread(
+        target=write,
+        name="peerbridge-bounded-stdin-writer",
+        daemon=True,
+    )
+    writer.start()
+    if not completed.wait(max(0.1, float(timeout_seconds))):
+        terminate_process_tree(process, wait_seconds=2)
+        completed.wait(2)
+        raise TimeoutError("process input delivery exceeded the bounded deadline")
+    writer.join(timeout=0.1)
+    if failures:
+        raise RuntimeError("process input delivery failed") from failures[0]
+
+
 __all__ = [
     "attach_process_tree",
     "process_group_popen_kwargs",
     "release_process_tree",
     "terminate_process_tree",
+    "write_process_stdin_bounded",
 ]

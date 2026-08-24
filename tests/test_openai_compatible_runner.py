@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+import io
 import os
 import threading
 import time
 from contextlib import contextmanager
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Mapping
@@ -14,7 +16,13 @@ import pytest
 from peerbridge_mcp import __version__
 from peerbridge_mcp import credentials
 from peerbridge_mcp import openai_compatible_runner as runner_module
-from peerbridge_mcp.bridge import sha256_bytes, stable_sha256
+from peerbridge_mcp.agent_identity import ensure_agent_identity_capability
+from peerbridge_mcp.attachments import stage_chat_attachment_payloads
+from peerbridge_mcp.bridge import Bridge, sha256_bytes, stable_sha256
+from peerbridge_mcp.multimodal import (
+    VERIFIED_ATTACHMENT_MESSAGE_KEY,
+    verify_staged_attachments,
+)
 from peerbridge_mcp.openai_compatible_runner import (
     DEFAULT_ALLOWED_TOOLS,
     HTTPResponse,
@@ -32,10 +40,32 @@ from peerbridge_mcp.openai_compatible_runner import (
 )
 from peerbridge_mcp.resource_guard import ResourceGuardError
 from peerbridge_mcp.server import TOOL_SCHEMAS
+from tests._image_fixtures import PNG
 
 
 def _test_credential(*parts: str) -> str:
     return "-".join(parts)
+
+
+def _identity_bound_config(config: RunnerConfig) -> RunnerConfig:
+    root = Path(config.project_root).resolve()
+    db_path = (
+        Path(config.db_path).resolve()
+        if config.db_path is not None
+        else root / ".peerbridge" / "peerbridge.sqlite3"
+    )
+    Bridge(root, db_path, "test-identity-authority", config.scope)
+    capability = ensure_agent_identity_capability(
+        root,
+        db_path,
+        config.scope,
+        config.agent_id,
+    )
+    return replace(
+        config,
+        db_path=db_path,
+        identity_capability_path=capability.path,
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -244,7 +274,8 @@ class FakeOpenAITransport:
             tool_names = {
                 item["function"]["name"] for item in parsed["tools"]
             }
-            assert {"list_memories", "read_memory"}.issubset(tool_names)
+            assert "list_memories" in tool_names
+            assert "read_memory" not in tool_names
             message = {
                 "role": "assistant",
                 "content": None,
@@ -328,6 +359,110 @@ class ScriptedOpenAITransport:
         return HTTPResponse(status=200, body=json.dumps(response).encode("utf-8"))
 
 
+def test_openai_compatible_runner_sends_verified_multimodal_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    endpoint = "https://relay.example/v1"
+    api_key = _test_credential("multimodal", "relay", "secret")
+    config = RunnerConfig(
+        project_root=tmp_path,
+        scope="multimodal-relay",
+        connection_id="relay",
+        route_class="relay",
+        provider_id="relay-provider",
+        model="vision-model",
+    )
+    mcp = _mcp_for_endpoint(config=config, endpoint=endpoint, api_key=api_key)
+    _patch_remote_access(
+        monkeypatch,
+        config=config,
+        endpoint=endpoint,
+        api_key=api_key,
+        mcp=mcp,
+    )
+    http = ScriptedOpenAITransport(
+        model=config.model,
+        messages=[{"role": "assistant", "content": "image reviewed"}],
+    )
+    staged = stage_chat_attachment_payloads(
+        tmp_path,
+        (("chart.png", PNG), ("notes.txt", b"Private chart notes.")),
+    )
+    verified = verify_staged_attachments(tmp_path, staged)
+
+    result = OpenAICompatibleRunner(
+        config,
+        mcp_transport=mcp,
+        http_transport=http,
+    ).run(
+        [
+            {
+                "role": "user",
+                "content": "Inspect this evidence.",
+                VERIFIED_ATTACHMENT_MESSAGE_KEY: [
+                    item.public_record() for item in verified
+                ],
+            }
+        ]
+    )
+
+    content = http.request_bodies[0]["messages"][0]["content"]
+    assert [part["type"] for part in content] == ["text", "image_url", "text"]
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert content[2]["text"].endswith("Private chart notes.")
+    delivery = result.receipt["attachment_delivery"]
+    assert delivery["attachment_count"] == 2
+    assert delivery["model_view_confirmed"] is False
+    serialized = json.dumps(result.receipt, sort_keys=True)
+    assert str(tmp_path) not in serialized
+    assert "Private chart notes." not in serialized
+
+
+def test_openai_compatible_runner_rejects_audio_before_provider_work(
+    tmp_path: Path,
+) -> None:
+    config = RunnerConfig(
+        project_root=tmp_path,
+        scope="audio-relay",
+        connection_id="relay",
+        route_class="relay",
+        provider_id="relay-provider",
+        model="vision-model",
+    )
+    staged = stage_chat_attachment_payloads(
+        tmp_path,
+        (("voice.wav", b"RIFF" + (8).to_bytes(4, "little") + b"WAVEdata"),),
+    )
+    verified = verify_staged_attachments(tmp_path, staged)
+    http = ScriptedOpenAITransport(model=config.model, messages=[])
+
+    with pytest.raises(
+        runner_module.ConfigurationError,
+        match="does not advertise native audio input",
+    ):
+        OpenAICompatibleRunner(
+            config,
+            mcp_transport=_mcp_for_endpoint(
+                config=config,
+                endpoint="https://relay.example/v1",
+                api_key=_test_credential("audio", "relay", "secret"),
+            ),
+            http_transport=http,
+        ).run(
+            [
+                {
+                    "role": "user",
+                    "content": "Transcribe this evidence.",
+                    VERIFIED_ATTACHMENT_MESSAGE_KEY: [
+                        item.public_record() for item in verified
+                    ],
+                }
+            ]
+        )
+
+    assert http.request_bodies == []
+
+
 def test_default_mcp_subprocess_uses_controlled_cwd_outside_project_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -344,13 +479,15 @@ def test_default_mcp_subprocess_uses_controlled_cwd_outside_project_root(
             captured["cwd"] = Path(cwd).resolve()
 
     monkeypatch.setattr(runner_module, "StdioMCPTransport", CapturingStdioTransport)
-    config = RunnerConfig(
-        project_root=project_root,
-        scope="shadow-test",
-        connection_id="relay",
-        route_class="relay",
-        provider_id="relay-provider",
-        model="model-one",
+    config = _identity_bound_config(
+        RunnerConfig(
+            project_root=project_root,
+            scope="shadow-test",
+            connection_id="relay",
+            route_class="relay",
+            provider_id="relay-provider",
+            model="model-one",
+        )
     )
 
     OpenAICompatibleRunner(config)
@@ -415,6 +552,30 @@ def test_stdio_mcp_subprocess_receives_only_os_essentials(
         assert name not in environment
 
 
+def test_stdio_mcp_reader_rejects_oversized_frame_before_json_parse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeProcess:
+        stdout = io.BytesIO(b"x" * (runner_module._MAX_MCP_RESPONSE_BYTES + 1))
+
+    process = FakeProcess()
+    terminated: list[object] = []
+    monkeypatch.setattr(
+        runner_module,
+        "terminate_process_tree",
+        lambda candidate, **_kwargs: terminated.append(candidate),
+    )
+    transport = runner_module.StdioMCPTransport(("unused",), cwd=tmp_path)
+    transport._process = process  # type: ignore[assignment]
+
+    transport._read_stdout()
+
+    failure = transport._responses.get_nowait()
+    assert isinstance(failure, runner_module.MCPTransportError)
+    assert "frame limit" in str(failure)
+    assert terminated == [process]
+
+
 def test_runner_uses_shared_resource_admission_before_provider_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -429,13 +590,15 @@ def test_runner_uses_shared_resource_admission_before_provider_work(
             events.append("released")
 
     monkeypatch.setattr(runner_module, "provider_runtime_slot", tracked_slot)
-    config = RunnerConfig(
-        project_root=tmp_path,
-        scope="shared-admission",
-        connection_id="relay",
-        route_class="relay",
-        provider_id="relay-provider",
-        model="model-one",
+    config = _identity_bound_config(
+        RunnerConfig(
+            project_root=tmp_path,
+            scope="shared-admission",
+            connection_id="relay",
+            route_class="relay",
+            provider_id="relay-provider",
+            model="model-one",
+        )
     )
     runner = OpenAICompatibleRunner(config)
     sentinel = object()
@@ -460,13 +623,15 @@ def test_resource_admission_failure_prevents_openai_provider_work(
         yield
 
     monkeypatch.setattr(runner_module, "provider_runtime_slot", rejected_slot)
-    config = RunnerConfig(
-        project_root=tmp_path,
-        scope="rejected-admission",
-        connection_id="relay",
-        route_class="relay",
-        provider_id="relay-provider",
-        model="model-one",
+    config = _identity_bound_config(
+        RunnerConfig(
+            project_root=tmp_path,
+            scope="rejected-admission",
+            connection_id="relay",
+            route_class="relay",
+            provider_id="relay-provider",
+            model="model-one",
+        )
     )
     runner = OpenAICompatibleRunner(config)
     provider_called = False
@@ -853,16 +1018,14 @@ def _patch_remote_access(
         ("relay-kimi", "moonshot-v1-8k"),
     ],
 )
-def test_real_local_http_relay_routes_bind_identity_tool_boundaries_and_retry(
+def test_real_local_http_relay_routes_bind_identity_and_tool_boundaries(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     provider_id: str,
     model: str,
 ) -> None:
     secret = f"test-{provider_id}-secret"
-    state = FakeProviderState(
-        model=model, expected_api_key=secret, transient_failures=1
-    )
+    state = FakeProviderState(model=model, expected_api_key=secret)
     with fake_provider(state) as endpoint:
         raw = json.dumps(
             {"api_key": secret, "endpoint": endpoint},
@@ -908,11 +1071,10 @@ def test_real_local_http_relay_routes_bind_identity_tool_boundaries_and_retry(
         for call in result.receipt["provider_http_calls"]
         if call["operation"] == "chat.completions"
     ]
-    assert chat_calls[0]["attempts"] == 2
+    assert chat_calls[0]["attempts"] == 1
     assert chat_calls[1]["attempts"] == 1
-    assert len(state.idempotency_keys) == 3
-    assert state.idempotency_keys[0] == state.idempotency_keys[1]
-    assert state.idempotency_keys[0] != state.idempotency_keys[2]
+    assert len(state.idempotency_keys) == 2
+    assert state.idempotency_keys[0] != state.idempotency_keys[1]
     serialized = json.dumps(result.receipt, sort_keys=True)
     assert secret not in serialized
     assert endpoint not in serialized
@@ -1342,7 +1504,7 @@ def test_cancellation_during_retry_backoff_stops_before_second_provider_call(
     assert mcp.closed is True
 
 
-def test_post_idempotency_key_is_stable_only_within_one_logical_request(
+def test_post_is_not_retried_and_reuses_a_stable_logical_idempotency_key(
     tmp_path: Path,
 ) -> None:
     body = {
@@ -1378,8 +1540,7 @@ def test_post_idempotency_key_is_stable_only_within_one_logical_request(
                 assert body is not None
                 assert timeout > 0
                 self.keys.append(headers["Idempotency-Key"])
-                status = 503 if len(self.keys) == 1 else 200
-                return HTTPResponse(status=status, body=b"{}")
+                return HTTPResponse(status=503, body=b"{}")
 
         transport = RetryOnceTransport()
         runner = OpenAICompatibleRunner(
@@ -1387,12 +1548,13 @@ def test_post_idempotency_key_is_stable_only_within_one_logical_request(
             http_transport=transport,
             mcp_transport=object(),
         )
-        runner._provider_json(
-            "POST",
-            "https://relay.example/v1/chat/completions",
-            api_key=_test_credential("provider", "secret"),
-            body=body,
-        )
+        with pytest.raises(ProviderHTTPError):
+            runner._provider_json(
+                "POST",
+                "https://relay.example/v1/chat/completions",
+                api_key=_test_credential("provider", "secret"),
+                body=body,
+            )
         return transport.keys
 
     first = issue_logical_post()
@@ -1405,11 +1567,9 @@ def test_post_idempotency_key_is_stable_only_within_one_logical_request(
         allow_nan=False,
     ).encode("utf-8")
 
-    assert len(first) == 2
-    assert len(second) == 2
-    assert first[0] == first[1]
-    assert second[0] == second[1]
-    assert first[0] != second[0]
+    assert len(first) == 1
+    assert len(second) == 1
+    assert first[0] == second[0]
     assert first[0] != sha256_bytes(encoded)
 
 

@@ -150,7 +150,7 @@ def test_collaboration_receipt_binds_chain_and_allows_append_only_events(
     assert receipt["schema"] == RECEIPT_SCHEMA_V2
     assert receipt["room_id"] == "lobby"
     assert {item["content_hash_contract"] for item in receipt["messages"]} == {
-        "room-bound-v2"
+        "room-visibility-bound-v4"
     }
     path = tmp_path / "receipt.json"
     path.write_text(json.dumps(receipt), encoding="utf-8")

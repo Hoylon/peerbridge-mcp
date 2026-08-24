@@ -20,6 +20,10 @@ from pathlib import Path
 from typing import Any
 
 from .acp_client_receipt import _matching_bridge_pair
+from .agent_identity import (
+    AgentIdentityError,
+    verify_agent_identity_launch_args,
+)
 from .bridge import sha256_bytes, stable_sha256, utc_now
 from .secret_scan import contains_secret
 from .mcp_client_receipt import _raw_prefix, _read_jsonl_text
@@ -79,7 +83,14 @@ def _flag_value(args: list[str], flag: str, *, required: bool) -> str | None:
     return args[positions[0] + 1]
 
 
-def _config_snapshot(path: Path, *, server_name: str) -> dict[str, Any]:
+def _config_snapshot(
+    path: Path,
+    *,
+    server_name: str,
+    db_path: Path,
+    scope: str,
+    agent_id: str,
+) -> dict[str, Any]:
     value, _ = _json_object(path, "Claude MCP config")
     servers = value.get("mcpServers")
     if not isinstance(servers, dict) or set(servers) != {server_name}:
@@ -97,6 +108,15 @@ def _config_snapshot(path: Path, *, server_name: str) -> dict[str, Any]:
         raise ReceiptError("Claude MCP server config lacks a command")
     if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
         raise ReceiptError("Claude MCP server args must be a string array")
+    try:
+        sanitized_args, identity_capability = verify_agent_identity_launch_args(
+            args,
+            db_path=db_path,
+            scope=scope,
+            claimed_agent_id=agent_id,
+        )
+    except AgentIdentityError as exc:
+        raise ReceiptError("Claude MCP server Agent identity binding is invalid") from exc
     allowed_tools: list[str] = []
     for index, item in enumerate(args):
         if item != "--allow-tool":
@@ -118,11 +138,12 @@ def _config_snapshot(path: Path, *, server_name: str) -> dict[str, Any]:
         "name": server_name,
         "type": "stdio",
         "command": command,
-        "args": list(args),
+        "args": sanitized_args,
         "cwd": server.get("cwd"),
         "environment_supplied": False,
         "allowed_tools": allowed_tools,
         "route": route,
+        "identity_capability": identity_capability,
     }
     if contains_secret(json.dumps(snapshot, sort_keys=True)):
         raise ReceiptError("sanitized Claude MCP config appears to contain a credential")
@@ -427,7 +448,13 @@ def capture_receipt(
     for path in (db_path, transcript_path, config_path, lifecycle_path, client_binary):
         if not path.is_file():
             raise ReceiptError(f"required Claude receipt evidence is absent: {path}")
-    config = _config_snapshot(config_path, server_name=server_name)
+    config = _config_snapshot(
+        config_path,
+        server_name=server_name,
+        db_path=db_path,
+        scope=scope,
+        agent_id=agent_id,
+    )
     expected_route = {
         "agent_id": agent_id,
         "scope": scope,
@@ -560,7 +587,13 @@ def verify_receipt(receipt_path: Path) -> dict[str, Any]:
             errors.append("config_size_bytes")
         if _file_sha256(config_path) != config_record.get("file_sha256"):
             errors.append("config_file_sha256")
-        config = _config_snapshot(config_path, server_name=transcript_record["server_name"])
+        config = _config_snapshot(
+            config_path,
+            server_name=transcript_record["server_name"],
+            db_path=Path(bridge["database_path"]),
+            scope=bridge["scope"],
+            agent_id=bridge["agent_id"],
+        )
         if config != config_record.get("sanitized_server"):
             errors.append("sanitized_server")
         if stable_sha256(config) != config_record.get("sanitized_server_sha256"):

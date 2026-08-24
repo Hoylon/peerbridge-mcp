@@ -11,6 +11,7 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import secrets
 import subprocess
 import sys
 import threading
@@ -18,6 +19,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from .agent_install import find_trusted_executable, official_agent_spec
 from .bridge import MAX_TEXT_CHARS, stable_sha256
 from .child_environment import build_agent_child_environment
 from .ccswitch import (
@@ -37,6 +39,11 @@ from .openai_compatible_runner import (
     RunnerConfig,
     provider_runtime_admission,
 )
+from .multimodal import (
+    attachment_delivery_receipt,
+    claude_native_content_blocks,
+    extract_verified_attachments,
+)
 from .process_control import (
     attach_process_tree,
     process_group_popen_kwargs,
@@ -48,11 +55,6 @@ from .usage import normalize_provider_usage
 
 REFERENCE_PREFIX = "CCSwitch:"
 MAX_CAPTURE_BYTES = 4 * 1024 * 1024
-_CLAUDE_CANDIDATES = (
-    Path.home()
-    / ".covs/npm-global/node_modules/@anthropic-ai/claude-code/bin/claude.exe",
-    Path.home() / ".covs/npm-global/claude.cmd",
-)
 
 
 def _sha256_bytes(value: bytes) -> str:
@@ -90,7 +92,7 @@ def resolve_reference(
 
 
 def find_claude_cli() -> Path | None:
-    return next((path for path in _CLAUDE_CANDIDATES if path.is_file()), None)
+    return find_trusted_executable(official_agent_spec("claude-code"))
 
 
 def _bounded_process(
@@ -198,6 +200,8 @@ def _bounded_process(
         writer.join(timeout=0.5)
         for thread in threads:
             thread.join(timeout=5)
+    if overflow.is_set():
+        raise ResourceUnavailableError(f"{runtime_label} exceeded output budget")
     return return_code, bytes(outputs["stdout"]), bytes(outputs["stderr"])
 
 
@@ -251,7 +255,7 @@ class CcSwitchRunner:
 
     def run(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         message_id: str | None = None,
     ) -> InferenceResult:
@@ -260,23 +264,29 @@ class CcSwitchRunner:
 
     def _run_unchecked(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         message_id: str | None = None,
     ) -> InferenceResult:
         identity = self._identity()
+        conversation, attachments = extract_verified_attachments(
+            self.config.project_root,
+            messages,
+        )
         system = "\n\n".join(
             str(item.get("content") or "")
-            for item in messages
+            for item in conversation
             if item.get("role") == "system"
         ).strip()
         prompt = "\n\n".join(
             str(item.get("content") or "")
-            for item in messages
+            for item in conversation
             if item.get("role") != "system"
         ).strip()
-        if not prompt:
+        if not prompt and not attachments:
             raise ConfigurationError("CC Switch inference prompt is empty")
+        if not prompt:
+            prompt = "Inspect the supplied PeerBridge attachment evidence and respond."
         runtime = self.config.project_root / ".peerbridge" / "runtime" / "ccswitch"
         runtime.mkdir(parents=True, exist_ok=True)
         command = [
@@ -298,13 +308,30 @@ class CcSwitchRunner:
             "--disable-slash-commands",
             "--no-chrome",
         ]
+        stdin_text = prompt
+        if attachments:
+            command.extend(("--input-format", "stream-json"))
+            content_blocks = claude_native_content_blocks(prompt, attachments)
+            event = {
+                "type": "user",
+                "message": {"role": "user", "content": content_blocks},
+                "parent_tool_use_id": None,
+            }
+            stdin_text = json.dumps(
+                event,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ) + "\n"
         if system:
             command.extend(("--system-prompt", system))
         return_code, stdout, _stderr = self.process_runner(
             command,
             cwd=runtime,
-            environment=build_agent_child_environment(self.app),
-            stdin_text=prompt,
+            environment=build_agent_child_environment(
+                self.app,
+                include_provider_credentials=False,
+            ),
+            stdin_text=stdin_text,
             timeout_seconds=self.config.timeout_seconds,
             cancel_event=self._cancel_event,
         )
@@ -349,6 +376,13 @@ class CcSwitchRunner:
             )
         if len(content) > MAX_TEXT_CHARS:
             raise ResourceUnavailableError("CC Switch provider response exceeded bridge limit")
+        final_identity = self._identity()
+        if not secrets.compare_digest(
+            final_identity.identity_sha256, identity.identity_sha256
+        ):
+            raise RouteMismatchError(
+                "CC Switch provider selection changed during inference"
+            )
         raw_usage = terminal.get("usage")
         if not isinstance(raw_usage, Mapping):
             model_usage = terminal.get("modelUsage")
@@ -368,6 +402,8 @@ class CcSwitchRunner:
             "app": self.app,
             "connection_id": self.config.connection_id,
             "provider_identity_sha256": identity.identity_sha256,
+            "provider_selection_rechecked": True,
+            "provider_selection_stable": True,
             "requested_model": self.config.model,
             "observed_model": observed_model,
             "message_id": message_id,
@@ -384,6 +420,14 @@ class CcSwitchRunner:
             "status": "completed",
             "usage": usage,
         }
+        if attachments:
+            receipt["attachment_delivery"] = attachment_delivery_receipt(
+                provider_id=self.config.provider_id,
+                protocol="claude-stream-json",
+                delivery_mode="native_image_base64_and_bounded_text_inline",
+                status="provider_request_completed",
+                attachments=attachments,
+            )
         receipt["receipt_sha256"] = stable_sha256(receipt)
         return InferenceResult(
             assistant_message={"role": "assistant", "content": content},

@@ -23,6 +23,52 @@ def _bridge(root: Path, agent: str, **identity: str) -> Bridge:
     )
 
 
+def _complete_with_trusted_receipt(
+    worker: Bridge, claim: dict[str, object], body: str
+) -> None:
+    message = claim["message"]
+    assert isinstance(message, dict)
+    assistant_message = {"role": "assistant", "content": body}
+    receipt = {
+        "schema": "peerbridge.openai-compatible-run.v1",
+        "route": {
+            "route_profile_id": message.get("route_profile_id"),
+            "route_profile_sha256": message.get("route_profile_sha256"),
+            "route_class": worker.route_class,
+            "provider_id": worker.provider_id,
+            "model_id": worker.model_id,
+            "response_model_id": worker.model_id,
+            "reasoning_mode": worker.reasoning_mode,
+            "connection_id": None,
+            "connection_sha256": None,
+        },
+        "room_id": message["room_id"],
+        "session_id": worker.session_id,
+        "message_id_sha256": stable_sha256(message["message_id"]),
+        "output_message_sha256": stable_sha256(assistant_message),
+    }
+    receipt["receipt_sha256"] = stable_sha256(receipt)
+    worker.record_trusted_inference_receipt(
+        {
+            "message_id": message["message_id"],
+            "lease_token": claim["lease_token"],
+            "body": body,
+            "receipt": receipt,
+            "assistant_message": assistant_message,
+            "execution_route_profile_id": message.get("route_profile_id"),
+            "execution_route_profile_sha256": message.get("route_profile_sha256"),
+        }
+    )
+    worker.complete_message_dispatch(
+        {
+            "message_id": message["message_id"],
+            "lease_token": claim["lease_token"],
+            "body": body,
+            "inference_receipt_sha256": receipt["receipt_sha256"],
+        }
+    )
+
+
 def _capability(path: Path, provider: str, model: str) -> None:
     receipt = {
         "schema": OPENAI_RUN_SCHEMA,
@@ -95,13 +141,8 @@ def test_room_fanout_receipt_binds_two_completed_routes(tmp_path: Path) -> None:
     )
     for worker in (alpha, beta):
         claim = worker.claim_message_dispatch({})
-        worker.complete_message_dispatch(
-            {
-                "message_id": claim["message"]["message_id"],
-                "lease_token": claim["lease_token"],
-                "body": f"Reply from {worker.agent_id}",
-                "inference_receipt_sha256": stable_sha256(worker.agent_id),
-            }
+        _complete_with_trusted_receipt(
+            worker, claim, f"Reply from {worker.agent_id}"
         )
     capability_paths = {}
     for agent, provider, model in (
@@ -197,14 +238,7 @@ def test_room_fanout_receipt_binds_terminal_failed_seat_without_hang(
         }
     )
     alpha_claim = alpha.claim_message_dispatch({})
-    alpha.complete_message_dispatch(
-        {
-            "message_id": alpha_claim["message"]["message_id"],
-            "lease_token": alpha_claim["lease_token"],
-            "body": "Reply from alpha",
-            "inference_receipt_sha256": stable_sha256("alpha"),
-        }
-    )
+    _complete_with_trusted_receipt(alpha, alpha_claim, "Reply from alpha")
     beta_claim = beta.claim_message_dispatch({})
     beta.fail_message_dispatch(
         {
@@ -281,13 +315,8 @@ def test_room_fanout_v2_reports_partial_direct_mcp_capability_honestly(
     )
     for worker in workers:
         claim = worker.claim_message_dispatch({})
-        worker.complete_message_dispatch(
-            {
-                "message_id": claim["message"]["message_id"],
-                "lease_token": claim["lease_token"],
-                "body": f"Reply from {worker.agent_id}",
-                "inference_receipt_sha256": stable_sha256(worker.agent_id),
-            }
+        _complete_with_trusted_receipt(
+            worker, claim, f"Reply from {worker.agent_id}"
         )
     alpha_capability = tmp_path / "alpha.json"
     _capability(alpha_capability, "relay-alpha", "model-alpha")
@@ -354,13 +383,8 @@ def test_room_fanout_v1_receipt_remains_verifiable(tmp_path: Path) -> None:
     )
     for worker in workers:
         claim = worker.claim_message_dispatch({})
-        worker.complete_message_dispatch(
-            {
-                "message_id": claim["message"]["message_id"],
-                "lease_token": claim["lease_token"],
-                "body": f"Reply from {worker.agent_id}",
-                "inference_receipt_sha256": stable_sha256(worker.agent_id),
-            }
+        _complete_with_trusted_receipt(
+            worker, claim, f"Reply from {worker.agent_id}"
         )
     receipt = capture_room_fanout_receipt(
         db_path=human.db_path,

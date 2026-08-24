@@ -13,6 +13,10 @@ const MAX_ATTEMPTS_PER_SOURCE_PER_DAY = 20;
 const MAX_ATTEMPTS_GLOBAL_PER_DAY = 500;
 const MAX_ACCEPTED_PER_SOURCE_PER_DAY = 5;
 const MAX_ACCEPTED_GLOBAL_PER_DAY = 100;
+const MAX_ANNOUNCEMENT_READS_PER_SOURCE_PER_DAY = 240;
+const MAX_ANNOUNCEMENT_READS_GLOBAL_PER_DAY = 20000;
+const MAX_ANONYMOUS_NOTIFICATION_ATTEMPTS_PER_DAY = 20;
+const ANNOUNCEMENT_CACHE_TTL_SECONDS = 300;
 const ALLOWED_LOCALES = new Set(["en", "zh-Hans", "zh-Hant"]);
 const ALLOWED_SEVERITIES = new Set(["info", "important", "critical"]);
 const ALLOWED_CASE_STATUSES = new Set(["new", "read", "replied", "closed"]);
@@ -79,6 +83,33 @@ function requireBindings(env) {
       || /[\u0000-\u0020\u007f]/u.test(secret)
     ) {
       throw new Error("required Worker bindings or secrets are unavailable");
+    }
+  }
+  const digestUrlPresent = typeof env.DIGEST_WEBHOOK_URL === "string"
+    && env.DIGEST_WEBHOOK_URL.length > 0;
+  const digestSecretPresent = typeof env.DIGEST_SHARED_SECRET === "string"
+    && env.DIGEST_SHARED_SECRET.length > 0;
+  if (digestUrlPresent !== digestSecretPresent) {
+    throw new Error("digest webhook URL and secret must be configured together");
+  }
+  if (digestSecretPresent) {
+    const secret = env.DIGEST_SHARED_SECRET;
+    if (
+      secret.length < MIN_OPAQUE_SECRET_LENGTH
+      || secret.length > MAX_OPAQUE_SECRET_LENGTH
+      || /[\u0000-\u0020\u007f]/u.test(secret)
+    ) {
+      throw new Error("digest shared secret is invalid");
+    }
+    const endpoint = new URL(env.DIGEST_WEBHOOK_URL);
+    if (
+      endpoint.protocol !== "https:"
+      || endpoint.username
+      || endpoint.password
+      || endpoint.search
+      || endpoint.hash
+    ) {
+      throw new Error("digest webhook URL is invalid");
     }
   }
 }
@@ -532,7 +563,9 @@ function attachmentPayloadIsValid(name, payload) {
   return /\.(?:json|log|txt)$/u.test(name) && decodeTextAttachment(name, payload) !== null;
 }
 
-function validateEncryptedCredentialEnvelope(bytes, caseId) {
+function validateEncryptedCredentialEnvelope(
+  bytes, caseId, expectedPublicKeySha256 = undefined,
+) {
   let envelope;
   try {
     envelope = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -543,15 +576,25 @@ function validateEncryptedCredentialEnvelope(bytes, caseId) {
     throw new TypeError("feedback encrypted credential envelope is invalid");
   }
   const fields = Object.keys(envelope);
+  const publicKeySha256 = String(envelope.public_key_sha256 || "").toLowerCase();
   if (
     fields.length !== FEEDBACK_SECRET_FIELDS.size
     || fields.some((field) => !FEEDBACK_SECRET_FIELDS.has(field))
     || envelope.schema !== FEEDBACK_SECRET_SCHEMA
     || envelope.algorithm !== FEEDBACK_SECRET_ALGORITHM
     || envelope.case_id !== caseId
-    || !/^[0-9a-f]{64}$/u.test(String(envelope.public_key_sha256 || ""))
+    || !/^[0-9a-f]{64}$/u.test(publicKeySha256)
   ) {
     throw new TypeError("feedback encrypted credential envelope is invalid");
+  }
+  if (expectedPublicKeySha256 !== undefined) {
+    const expected = String(expectedPublicKeySha256 || "").trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/u.test(expected)) {
+      throw new TypeError("packaged support-key fingerprint is unavailable");
+    }
+    if (!timingSafeEqual(publicKeySha256, expected)) {
+      throw new TypeError("feedback encrypted credential uses an unexpected support key");
+    }
   }
   const expectedAssociatedData = new TextEncoder().encode(`${FEEDBACK_SECRET_SCHEMA}:${caseId}`);
   const associatedData = decodeCanonicalBase64Field(
@@ -855,7 +898,9 @@ async function decompressedZipEntry(bytes, entry, remainingBytes) {
   return payload;
 }
 
-async function validateZipBundleContents(bytes, entries, caseId) {
+async function validateZipBundleContents(
+  bytes, entries, caseId, expectedPublicKeySha256 = undefined,
+) {
   const members = new Map();
   let expanded = 0;
   for (const entry of entries) {
@@ -891,7 +936,9 @@ async function validateZipBundleContents(bytes, entries, caseId) {
   }
   const encryptedCredential = members.get("encrypted-credential.json");
   if (encryptedCredential) {
-    validateEncryptedCredentialEnvelope(encryptedCredential, caseId);
+    validateEncryptedCredentialEnvelope(
+      encryptedCredential, caseId, expectedPublicKeySha256,
+    );
   }
   const manifestNames = new Set();
   for (const item of report.attachments) {
@@ -989,11 +1036,23 @@ async function readJsonBody(request, maximumBytes) {
 
 async function rateLimit(request, env, now, phase = "accepted") {
   const day = now.slice(0, 10);
-  const source = request.headers.get("cf-connecting-ip") || "unknown";
-  const sourceHash = await hmacHex(env.RATE_SALT, `${day}\n${source}`);
-  const rateKeys = phase === "attempt"
-    ? [`attempt-source:${sourceHash}`, "attempt-global"]
-    : [`accepted-source:${sourceHash}`, "accepted-global"];
+  let rateKeys;
+  if (phase === "notification") {
+    rateKeys = ["notification-anonymous-global"];
+  } else {
+    if (!request?.headers) throw new TypeError("rate-limited request is unavailable");
+    const source = request.headers.get("cf-connecting-ip") || "unknown";
+    const sourceHash = await hmacHex(env.RATE_SALT, `${day}\n${source}`);
+    if (phase === "attempt") {
+      rateKeys = [`attempt-source:${sourceHash}`, "attempt-global"];
+    } else if (phase === "accepted") {
+      rateKeys = [`accepted-source:${sourceHash}`, "accepted-global"];
+    } else if (phase === "announcement") {
+      rateKeys = [`announcement-source:${sourceHash}`, "announcement-global"];
+    } else {
+      throw new TypeError("rate-limit phase is invalid");
+    }
+  }
   const statements = rateKeys.map((rateKey) => env.DB.prepare(
     "INSERT INTO rate_limits(rate_key, rate_day, request_count, updated_utc) VALUES (?, ?, 1, ?) " +
     "ON CONFLICT(rate_key, rate_day) DO UPDATE SET request_count = request_count + 1, updated_utc = excluded.updated_utc",
@@ -1010,13 +1069,23 @@ async function rateLimit(request, env, now, phase = "accepted") {
     const sourceKey = rateKeys[0];
     const sourceLimit = phase === "attempt"
       ? MAX_ATTEMPTS_PER_SOURCE_PER_DAY
-      : MAX_ACCEPTED_PER_SOURCE_PER_DAY;
-    if ((counts.get(sourceKey) || 0) >= sourceLimit) {
+      : phase === "accepted"
+        ? MAX_ACCEPTED_PER_SOURCE_PER_DAY
+        : phase === "announcement"
+          ? MAX_ANNOUNCEMENT_READS_PER_SOURCE_PER_DAY
+          : null;
+    if (sourceLimit !== null && (counts.get(sourceKey) || 0) >= sourceLimit) {
       return {
         response: errorResponse(
-          phase === "attempt" ? "source_attempt_rate_limited" : "source_rate_limited",
+          phase === "attempt"
+            ? "source_attempt_rate_limited"
+            : phase === "accepted"
+              ? "source_rate_limited"
+              : "announcement_source_rate_limited",
           429,
-          "Daily feedback limit reached for this source.",
+          phase === "announcement"
+            ? "Daily announcement read limit reached for this source."
+            : "Daily feedback limit reached for this source.",
         ),
         reservation: null,
       };
@@ -1037,6 +1106,33 @@ async function rateLimit(request, env, now, phase = "accepted") {
           "service_rate_limited",
           429,
           "Daily feedback service limit reached.",
+        ),
+        reservation: null,
+      };
+    }
+    if (
+      phase === "announcement"
+      && (counts.get("announcement-global") || 0) >= MAX_ANNOUNCEMENT_READS_GLOBAL_PER_DAY
+    ) {
+      return {
+        response: errorResponse(
+          "announcement_service_rate_limited",
+          429,
+          "Daily announcement read capacity reached.",
+        ),
+        reservation: null,
+      };
+    }
+    if (
+      phase === "notification"
+      && (counts.get("notification-anonymous-global") || 0)
+        >= MAX_ANONYMOUS_NOTIFICATION_ATTEMPTS_PER_DAY
+    ) {
+      return {
+        response: errorResponse(
+          "anonymous_notification_capacity_reserved",
+          429,
+          "Anonymous notification capacity is reserved for a later retry.",
         ),
         reservation: null,
       };
@@ -1076,7 +1172,7 @@ async function recordObjectCleanup(env, upload, objectKey, reason, now) {
   ).run();
 }
 
-async function validateFeedbackUpload(payload) {
+async function validateFeedbackUpload(payload, expectedPublicKeySha256 = undefined) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new TypeError("feedback upload must be an object");
   }
@@ -1095,7 +1191,9 @@ async function validateFeedbackUpload(payload) {
   }
   const bundleBytes = decodeBase64(payload.bundle_base64);
   const entries = validateZipBundle(bundleBytes);
-  const report = await validateZipBundleContents(bundleBytes, entries, caseId);
+  const report = await validateZipBundleContents(
+    bundleBytes, entries, caseId, expectedPublicKeySha256,
+  );
   const runtime = report.runtime;
   if (!runtime || typeof runtime !== "object" || Array.isArray(runtime)) {
     throw new TypeError("feedback report runtime metadata is invalid");
@@ -1128,7 +1226,10 @@ async function receiveFeedback(request, env) {
   }
   let upload;
   try {
-    upload = await validateFeedbackUpload(await readJsonBody(request, MAX_UPLOAD_JSON_BYTES));
+    upload = await validateFeedbackUpload(
+      await readJsonBody(request, MAX_UPLOAD_JSON_BYTES),
+      String(env.SUPPORT_PUBLIC_KEY_DER_SHA256 || ""),
+    );
   } catch (error) {
     return reject("invalid_feedback", 400, String(error.message || error));
   }
@@ -1202,6 +1303,17 @@ async function receiveFeedback(request, env) {
       });
       objectStored = true;
     } else {
+      const notificationCapacity = await rateLimit(
+        null, env, receivedUtc, "notification",
+      );
+      if (notificationCapacity.response) {
+        await releaseRateLimit(env, acceptedRate.reservation);
+        return reject(
+          "private_delivery_unavailable",
+          503,
+          "Private feedback delivery is temporarily unavailable.",
+        );
+      }
       notificationSent = await sendAppsScriptNotification(env, upload, receivedUtc);
       if (!notificationSent) throw new Error("private email delivery is unavailable");
     }
@@ -1456,12 +1568,35 @@ async function recordNotificationAttempt(
   }
 }
 
+async function releaseNotificationClaim(env, caseId, claimTokenSha256) {
+  const result = await env.DB.prepare(
+    "UPDATE feedback_cases SET notification_claim_token_sha256 = NULL, " +
+    "notification_claim_expires_utc = NULL WHERE case_id = ? " +
+    "AND notification_status IN ('pending', 'failed') " +
+    "AND notification_claim_token_sha256 = ?",
+  ).bind(caseId, claimTokenSha256).run();
+  if (Number(result.meta?.changes || 0) !== 1) {
+    throw new Error("feedback notification claim was lost");
+  }
+}
+
 async function attemptFeedbackNotification(env, upload, receivedUtc) {
   const attemptedUtc = new Date().toISOString();
   const claimTokenSha256 = await claimNotificationAttempt(
     env, upload.caseId, attemptedUtc,
   );
   if (!claimTokenSha256) return false;
+  const notificationCapacity = await rateLimit(
+    null, env, attemptedUtc, "notification",
+  );
+  if (notificationCapacity.response) {
+    try {
+      await releaseNotificationClaim(env, upload.caseId, claimTokenSha256);
+    } catch {
+      console.error(JSON.stringify({ event: "feedback_notification_claim_release_failed" }));
+    }
+    return false;
+  }
   const sent = await notifyFeedbackWithoutAffectingReceipt(env, upload, receivedUtc);
   try {
     await recordNotificationAttempt(
@@ -1666,24 +1801,71 @@ async function createAnnouncement(request, env) {
   }, 201);
 }
 
-async function listAnnouncements(request, env) {
+function announcementCache(env) {
+  const candidate = env?.ANNOUNCEMENT_CACHE || globalThis.caches?.default;
+  if (
+    !candidate
+    || typeof candidate.match !== "function"
+    || typeof candidate.put !== "function"
+  ) {
+    return null;
+  }
+  return candidate;
+}
+
+function announcementCacheKey(request, locale, afterUtc) {
+  const url = new URL(request.url);
+  url.search = "";
+  url.searchParams.set("locale", locale);
+  url.searchParams.set("after", afterUtc);
+  url.searchParams.set("cache_schema", "1");
+  return new Request(url.toString(), { method: "GET" });
+}
+
+async function listAnnouncements(request, env, context = null) {
   const url = new URL(request.url);
   const locale = url.searchParams.get("locale") || "en";
   const after = url.searchParams.get("after") || "1970-01-01T00:00:00.000Z";
   if (!ALLOWED_LOCALES.has(locale) || Number.isNaN(new Date(after).valueOf())) {
     return errorResponse("invalid_announcement_query", 400, "Announcement query is invalid.");
   }
+  const normalizedAfter = new Date(after).toISOString();
+  const cache = announcementCache(env);
+  const cacheKey = announcementCacheKey(request, locale, normalizedAfter);
+  if (cache) {
+    try {
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+    } catch {
+      console.error(JSON.stringify({ event: "announcement_cache_read_failed" }));
+    }
+  }
   const now = new Date().toISOString();
+  const readRate = await rateLimit(request, env, now, "announcement");
+  if (readRate.response) return readRate.response;
   const rows = await env.DB.prepare(
     "SELECT announcement_id, locale, title, body, severity, link_url, published_utc, expires_utc " +
     "FROM announcements WHERE locale = ? AND published_utc > ? AND published_utc <= ? " +
     "AND (expires_utc IS NULL OR expires_utc > ?) ORDER BY published_utc ASC LIMIT 50",
-  ).bind(locale, new Date(after).toISOString(), now, now).all();
-  return jsonResponse({
+  ).bind(locale, normalizedAfter, now, now).all();
+  const response = jsonResponse({
     schema: ANNOUNCEMENT_SCHEMA,
     generated_utc: now,
     announcements: rows.results || [],
-  }, 200, { "cache-control": "private, max-age=60" });
+  }, 200, {
+    "cache-control": `public, max-age=60, s-maxage=${ANNOUNCEMENT_CACHE_TTL_SECONDS}`,
+  });
+  if (cache) {
+    const store = cache.put(cacheKey, response.clone()).catch(() => {
+      console.error(JSON.stringify({ event: "announcement_cache_write_failed" }));
+    });
+    if (context && typeof context.waitUntil === "function") {
+      context.waitUntil(store);
+    } else {
+      await store;
+    }
+  }
+  return response;
 }
 
 async function handleAdmin(request, env, pathname) {
@@ -1803,7 +1985,7 @@ async function pruneOrphanedFeedbackObjects(env, now = new Date().toISOString())
   return removed;
 }
 
-export async function handleRequest(request, env) {
+export async function handleRequest(request, env, context = null) {
   try {
     requireBindings(env);
     const url = new URL(request.url);
@@ -1811,7 +1993,7 @@ export async function handleRequest(request, env) {
       return await receiveFeedback(request, env);
     }
     if (request.method === "GET" && url.pathname === "/v1/announcements") {
-      return await listAnnouncements(request, env);
+      return await listAnnouncements(request, env, context);
     }
     if (url.pathname.startsWith("/v1/admin/")) {
       return await handleAdmin(request, env, url.pathname);
@@ -1826,6 +2008,9 @@ export async function handleRequest(request, env) {
             && typeof env.BUNDLES.put === "function"
             && typeof env.BUNDLES.get === "function"
             && typeof env.BUNDLES.delete === "function"
+          ),
+          support_key_fingerprint: /^[0-9a-f]{64}$/u.test(
+            String(env.SUPPORT_PUBLIC_KEY_DER_SHA256 || "").trim().toLowerCase(),
           ),
         },
         retention: {
@@ -1853,8 +2038,8 @@ export async function handleRequest(request, env) {
 }
 
 export default {
-  fetch(request, env) {
-    return handleRequest(request, env);
+  fetch(request, env, ctx) {
+    return handleRequest(request, env, ctx);
   },
   scheduled(_controller, env, ctx) {
     ctx.waitUntil(Promise.all([
@@ -1872,6 +2057,7 @@ export const testing = {
   normalizeEmail,
   normalizeHttpsUrl,
   normalizeAppsScriptEndpoint,
+  announcementCacheKey,
   attemptFeedbackNotification,
   retryPendingFeedbackNotifications,
   pruneOrphanedFeedbackObjects,
@@ -1883,6 +2069,7 @@ export const testing = {
   sendAppsScriptNotification,
   rateLimit,
   releaseRateLimit,
+  releaseNotificationClaim,
   timingSafeEqual,
   validateAnnouncement,
   attachmentPayloadIsValid,

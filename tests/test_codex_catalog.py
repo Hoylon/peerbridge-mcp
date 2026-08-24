@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -87,11 +88,18 @@ def test_parse_codex_catalog_rejects_missing_visible_models() -> None:
         parse_codex_model_catalog('{"models": []}')
 
 
-def test_discover_codex_catalog_uses_cli_without_shell(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_discover_codex_catalog_uses_trusted_cli_without_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     observed: dict[str, object] = {}
     stdout = json.dumps(_catalog_payload()).encode("utf-8")
+    executable = tmp_path / "codex.exe"
+    executable.write_bytes(b"stub")
 
-    monkeypatch.setattr("peerbridge_mcp.codex_catalog.shutil.which", lambda name: "codex.exe")
+    monkeypatch.setattr(
+        "peerbridge_mcp.codex_catalog.find_trusted_executable",
+        lambda _spec: executable,
+    )
 
     def fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         observed["command"] = command
@@ -102,15 +110,19 @@ def test_discover_codex_catalog_uses_cli_without_shell(monkeypatch: pytest.Monke
 
     catalog = discover_codex_model_catalog(timeout=7)
 
-    assert observed["command"] == ["codex.exe", "debug", "models"]
+    assert observed["command"] == [str(executable), "debug", "models"]
     assert "shell" not in observed
     assert observed["capture_output"] is True
     assert observed["timeout"] == 7
+    assert observed["cwd"] == executable.parent
+    assert isinstance(observed["env"], dict)
     assert len(catalog.models) == 3
 
 
 def test_discover_codex_catalog_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("peerbridge_mcp.codex_catalog.shutil.which", lambda name: None)
+    monkeypatch.setattr(
+        "peerbridge_mcp.codex_catalog.find_trusted_executable", lambda _spec: None
+    )
 
     with pytest.raises(CodexCatalogError, match="not installed"):
         discover_codex_model_catalog()

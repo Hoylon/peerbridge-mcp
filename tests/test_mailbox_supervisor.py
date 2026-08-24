@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
@@ -10,7 +11,8 @@ from pathlib import Path
 import pytest
 
 from peerbridge_mcp import mailbox_supervisor as supervisor_module
-from peerbridge_mcp.bridge import Bridge
+from peerbridge_mcp.attachments import stage_chat_attachment_payloads
+from peerbridge_mcp.bridge import Bridge, stable_sha256
 from peerbridge_mcp.credentials import credential_target
 from peerbridge_mcp.mailbox_supervisor import (
     MailboxSupervisor,
@@ -23,10 +25,81 @@ from peerbridge_mcp.openai_compatible_runner import (
     ProviderHTTPError,
     ResourceUnavailableError,
 )
+from peerbridge_mcp.multimodal import VERIFIED_ATTACHMENT_MESSAGE_KEY
+from tests._image_fixtures import PNG
 
 
 HEX_A = "a" * 64
 HEX_B = "b" * 64
+
+
+def successful_inference_result(
+    config,
+    *,
+    message_id: str,
+    content: str,
+    usage: dict | None = None,
+) -> InferenceResult:
+    assert config.db_path is not None
+    with sqlite3.connect(config.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        provider_connection = connection.execute(
+            """SELECT * FROM provider_connections
+               WHERE scope=? AND connection_id=? AND enabled=1""",
+            (config.scope, config.connection_id),
+        ).fetchone()
+    assert provider_connection is not None
+    assistant_message = {"role": "assistant", "content": content}
+    secret_backend = str(provider_connection["secret_backend"])
+    if secret_backend == "native-acp":
+        receipt = {
+            "schema": "peerbridge.acpx-inference-receipt.v1",
+            "secret_backend": "native-acp",
+            "route_profile_id": config.route_profile_id,
+            "route_profile_sha256": config.route_profile_sha256,
+            "route_class": config.route_class,
+            "requested_provider_id": config.provider_id,
+            "requested_model": config.model,
+            "requested_reasoning_mode": config.reasoning_mode,
+            "connection_id": config.connection_id,
+            "message_id": message_id,
+            "response_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+    elif secret_backend == "cc-switch":
+        receipt = {
+            "schema": "peerbridge.ccswitch-inference-receipt.v1",
+            "secret_backend": "cc-switch",
+            "route_profile_id": config.route_profile_id,
+            "route_profile_sha256": config.route_profile_sha256,
+            "route_class": config.route_class,
+            "requested_model": config.model,
+            "connection_id": config.connection_id,
+            "message_id": message_id,
+            "response_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+        }
+    else:
+        receipt = {
+            "schema": "peerbridge.openai-compatible-run.v1",
+            "route": {
+                "route_profile_id": config.route_profile_id,
+                "route_profile_sha256": config.route_profile_sha256,
+                "route_class": config.route_class,
+                "provider_id": config.provider_id,
+                "model_id": config.model,
+                "response_model_id": config.response_model or config.model,
+                "reasoning_mode": config.reasoning_mode,
+                "connection_id": config.connection_id,
+                "connection_sha256": provider_connection["connection_sha256"],
+            },
+            "room_id": config.room_id,
+            "session_id": config.session_id,
+            "message_id_sha256": stable_sha256(message_id),
+            "output_message_sha256": stable_sha256(assistant_message),
+        }
+    if usage is not None:
+        receipt["usage"] = usage
+    receipt["receipt_sha256"] = stable_sha256(receipt)
+    return InferenceResult(assistant_message=assistant_message, receipt=receipt)
 
 
 @pytest.mark.parametrize(
@@ -35,7 +108,7 @@ HEX_B = "b" * 64
         (401, "provider_authentication_required", False),
         (402, "provider_billing_required", False),
         (403, "provider_access_denied", False),
-        (429, "provider_rate_limited", True),
+        (429, "provider_rate_limited_terminal", False),
         (503, "provider_http_retryable", True),
     ),
 )
@@ -77,6 +150,7 @@ def register_route(
     route_id: str = "relay-one-model-a",
     model_id: str = "model-a",
     backend: str = "windows-credential-manager",
+    inference_timeout_seconds: int | None = None,
 ) -> None:
     if backend == "windows-credential-manager":
         target = credential_target("test", connection_id)
@@ -110,18 +184,19 @@ def register_route(
             "enabled": True,
         }
     )
-    bridge.upsert_route_profile(
-        {
-            "route_id": route_id,
-            "agent_id": agent_id,
-            "client_name": client_name,
-            "provider_id": provider_id,
-            "model_id": model_id,
-            "reasoning_mode": "high",
-            "route_class": route_class,
-            "enabled": True,
-        }
-    )
+    profile = {
+        "route_id": route_id,
+        "agent_id": agent_id,
+        "client_name": client_name,
+        "provider_id": provider_id,
+        "model_id": model_id,
+        "reasoning_mode": "high",
+        "route_class": route_class,
+        "enabled": True,
+    }
+    if inference_timeout_seconds is not None:
+        profile["inference_timeout_seconds"] = inference_timeout_seconds
+    bridge.upsert_route_profile(profile)
 
 
 class SuccessfulRunner:
@@ -135,25 +210,98 @@ class SuccessfulRunner:
         assert messages[0]["role"] == "system"
         assert "hello supervisor" in messages[1]["content"]
         assert message_id
-        return InferenceResult(
-            assistant_message={"role": "assistant", "content": "audited reply"},
-            receipt={
-                "receipt_sha256": HEX_B,
-                "usage": {
-                    "schema": "peerbridge.inference-usage.v1",
-                    "status": "reported",
-                    "source": "test-runner",
-                    "input_tokens": 21,
-                    "output_tokens": 8,
-                    "total_tokens": 29,
-                    "cached_input_tokens": 5,
-                    "reasoning_tokens": 3,
-                    "reported_calls": 1,
-                    "total_calls": 1,
-                    "total_tokens_derived": False,
-                },
+        return successful_inference_result(
+            self.config,
+            message_id=message_id,
+            content="audited reply",
+            usage={
+                "schema": "peerbridge.inference-usage.v1",
+                "status": "reported",
+                "source": "test-runner",
+                "input_tokens": 21,
+                "output_tokens": 8,
+                "total_tokens": 29,
+                "cached_input_tokens": 5,
+                "reasoning_tokens": 3,
+                "reported_calls": 1,
+                "total_calls": 1,
+                "total_tokens_derived": False,
             },
         )
+
+
+class AttachmentCapturingRunner:
+    messages: list[list[dict[str, object]]] = []
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        assert message_id
+        self.__class__.messages.append(messages)
+        return successful_inference_result(
+            self.config,
+            message_id=message_id,
+            content="attachment reviewed",
+        )
+
+
+class ContextCapturingRunner:
+    messages_by_agent: dict[str, list[list[dict[str, object]]]] = {}
+    lock = threading.Lock()
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        assert message_id
+        with self.__class__.lock:
+            self.__class__.messages_by_agent.setdefault(
+                self.config.agent_id, []
+            ).append(messages)
+        return successful_inference_result(
+            self.config,
+            message_id=message_id,
+            content=f"context reply from {self.config.agent_id}",
+        )
+
+
+class WrongReceiptSchemaRunner:
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        assert message_id
+        assert self.config.db_path is not None
+        with sqlite3.connect(self.config.db_path) as connection:
+            connection.row_factory = sqlite3.Row
+            provider_connection = connection.execute(
+                """SELECT * FROM provider_connections
+                   WHERE scope=? AND connection_id=? AND enabled=1""",
+                (self.config.scope, self.config.connection_id),
+            ).fetchone()
+        assert provider_connection is not None
+        assistant_message = {"role": "assistant", "content": "forged schema reply"}
+        receipt = {
+            "schema": "peerbridge.openai-compatible-run.v1",
+            "route": {
+                "route_profile_id": self.config.route_profile_id,
+                "route_profile_sha256": self.config.route_profile_sha256,
+                "route_class": self.config.route_class,
+                "provider_id": self.config.provider_id,
+                "model_id": self.config.model,
+                "response_model_id": self.config.response_model or self.config.model,
+                "reasoning_mode": self.config.reasoning_mode,
+                "connection_id": self.config.connection_id,
+                "connection_sha256": provider_connection["connection_sha256"],
+            },
+            "room_id": self.config.room_id,
+            "session_id": self.config.session_id,
+            "message_id_sha256": stable_sha256(message_id),
+            "output_message_sha256": stable_sha256(assistant_message),
+        }
+        receipt["receipt_sha256"] = stable_sha256(receipt)
+        return InferenceResult(assistant_message=assistant_message, receipt=receipt)
 
 
 def test_supervisor_completes_one_routed_message_exactly_once(tmp_path: Path) -> None:
@@ -185,6 +333,7 @@ def test_supervisor_completes_one_routed_message_exactly_once(tmp_path: Path) ->
     assert SuccessfulRunner.configs[-1].room_id == "lobby"
     assert SuccessfulRunner.configs[-1].route_profile_id == "relay-one-model-a"
     assert SuccessfulRunner.configs[-1].route_profile_sha256
+    assert SuccessfulRunner.configs[-1].timeout_seconds == 60.0
     assert SuccessfulRunner.configs[-1].response_only_fallback_on_tool_error is True
 
     with sqlite3.connect(human.db_path) as connection:
@@ -203,8 +352,10 @@ def test_supervisor_completes_one_routed_message_exactly_once(tmp_path: Path) ->
             (sent["message_id"],),
         ).fetchone()
     assert replies == [("audited reply", sent["message_id"])]
-    assert dispatch == ("completed", 1, HEX_B)
-    assert usage == ("reported", 21, 8, 29, 5, 3, HEX_B)
+    assert dispatch[:2] == ("completed", 1)
+    assert len(dispatch[2]) == 64
+    assert usage[:6] == ("reported", 21, 8, 29, 5, 3)
+    assert usage[6] == dispatch[2]
     assert human.status()["message_dispatch_counts"] == {"completed": 1}
     supervisor.close()
     assert "model-peer" not in human.presence_snapshot()["online_agents"]
@@ -220,7 +371,7 @@ class RetryThenSucceedRunner(SuccessfulRunner):
         return super().run(messages, message_id=message_id)
 
 
-def test_supervisor_retry_is_bounded_and_crash_recoverable(
+def test_ambiguous_resource_failure_is_terminal_and_not_replayed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clock = [1_000.0]
@@ -246,9 +397,9 @@ def test_supervisor_retry_is_bounded_and_crash_recoverable(
         max_attempts=3,
     )
     failed = supervisor.run_cycle()
-    cooling_down = supervisor.run_cycle()
-    assert (failed.retryable_failures, failed.completed) == (1, 0)
-    assert (cooling_down.claimed, cooling_down.completed) == (0, 0)
+    repeated = supervisor.run_cycle()
+    assert (failed.terminal_failures, failed.completed) == (1, 0)
+    assert (repeated.claimed, repeated.completed) == (0, 0)
     with sqlite3.connect(human.db_path) as connection:
         state = connection.execute(
             "SELECT status, attempt_count FROM message_dispatches"
@@ -257,27 +408,10 @@ def test_supervisor_retry_is_bounded_and_crash_recoverable(
             "SELECT attempt_count, not_before_epoch, error_code "
             "FROM message_dispatch_retry_schedules"
         ).fetchone()
-    assert state == ("retryable", 1)
-    assert schedule == (1, 1_015.0, "resource_unavailable")
+    assert state == ("failed", 1)
+    assert schedule is None
     supervisor.close()
-
-    clock[0] = 1_016.0
-    recovered = MailboxSupervisor(
-        tmp_path,
-        human.db_path,
-        "test",
-        runner_factory=RetryThenSucceedRunner,
-        credential_probe=lambda _route: True,
-        max_attempts=3,
-    )
-    completed = recovered.run_cycle()
-    assert (completed.retryable_failures, completed.completed) == (0, 1)
-    with sqlite3.connect(human.db_path) as connection:
-        state = connection.execute(
-            "SELECT status, attempt_count FROM message_dispatches"
-        ).fetchone()
-    assert state == ("completed", 2)
-    recovered.close()
+    assert RetryThenSucceedRunner.attempts == 1
 
 
 def test_ccswitch_route_is_discovered_but_requires_a_runtime_probe(tmp_path: Path) -> None:
@@ -327,7 +461,10 @@ def test_native_acp_route_is_exactly_bound_and_uses_acpx_runner(
 
     executable = tmp_path / "acpx.cmd"
     executable.write_bytes(b"acpx launcher")
-    monkeypatch.setattr("peerbridge_mcp.acpx_runner.find_acpx", lambda: executable)
+    monkeypatch.setattr(
+        "peerbridge_mcp.acpx_runner.native_acp_runtime_available",
+        lambda **_kwargs: True,
+    )
     human = make_bridge(tmp_path, "human-operator")
     register_route(
         human,
@@ -354,6 +491,76 @@ def test_native_acp_route_is_exactly_bound_and_uses_acpx_runner(
         route, supervisor._runner_config(route, bridge, "lobby")
     )
     assert isinstance(runner, AcpxRunner)
+    assert runner.config.timeout_seconds == 180.0
+    supervisor.close()
+
+
+def test_native_acp_route_rejects_openai_compatible_receipt_schema(
+    tmp_path: Path,
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(
+        human,
+        agent_id="codex-native",
+        connection_id="acpx-codex",
+        route_id="acpx-codex-luna",
+        model_id="gpt-5.6-luna",
+        backend="native-acp",
+    )
+    sent = human.send_message(
+        {
+            "recipient": "codex-native",
+            "task_id": "wrong-receipt-schema",
+            "subject": "Reject backend schema mismatch",
+            "body": "hello supervisor",
+            "route_profile_id": "acpx-codex-luna",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=WrongReceiptSchemaRunner,
+        credential_probe=lambda _route: True,
+        max_attempts=1,
+    )
+
+    result = supervisor.run_cycle()
+
+    assert (result.claimed, result.completed, result.terminal_failures) == (1, 0, 1)
+    with sqlite3.connect(human.db_path) as connection:
+        dispatch = connection.execute(
+            "SELECT status, attempt_count, error_code FROM message_dispatches "
+            "WHERE message_id=?",
+            (sent["message_id"],),
+        ).fetchone()
+        replies = connection.execute(
+            "SELECT COUNT(*) FROM messages WHERE reply_to=?",
+            (sent["message_id"],),
+        ).fetchone()[0]
+        trusted_receipts = connection.execute(
+            "SELECT COUNT(*) FROM trusted_inference_receipts WHERE message_id=?",
+            (sent["message_id"],),
+        ).fetchone()[0]
+    assert dispatch == ("failed", 1, "unexpected_runtime_failure")
+    assert replies == 0
+    assert trusted_receipts == 0
+    supervisor.close()
+
+
+def test_explicit_route_timeout_overrides_the_relay_default(tmp_path: Path) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human, inference_timeout_seconds=180)
+
+    routes = discover_runnable_routes(human, credential_probe=lambda _route: True)
+
+    assert len(routes) == 1
+    route = routes[0]
+    assert route.inference_timeout_seconds == 180
+    supervisor = MailboxSupervisor(tmp_path, human.db_path, "test")
+    bridge = supervisor._bridge_for(route)
+    config = supervisor._runner_config(route, bridge, "lobby")
+    assert config.timeout_seconds == 180.0
     supervisor.close()
 
 
@@ -449,12 +656,10 @@ class RouteEchoRunner:
         self.__class__.seen.append(
             (self.config.connection_id, self.config.model, str(message_id))
         )
-        return InferenceResult(
-            assistant_message={
-                "role": "assistant",
-                "content": f"{self.config.connection_id}:{self.config.model}",
-            },
-            receipt={"receipt_sha256": HEX_B},
+        return successful_inference_result(
+            self.config,
+            message_id=str(message_id),
+            content=f"{self.config.connection_id}:{self.config.model}",
         )
 
 
@@ -534,12 +739,10 @@ class ProfileEchoRunner:
 
     def run(self, _messages, *, message_id=None) -> InferenceResult:
         self.__class__.seen.append((self.config.route_profile_id, str(message_id)))
-        return InferenceResult(
-            assistant_message={
-                "role": "assistant",
-                "content": str(self.config.route_profile_id),
-            },
-            receipt={"receipt_sha256": HEX_B},
+        return successful_inference_result(
+            self.config,
+            message_id=str(message_id),
+            content=str(self.config.route_profile_id),
         )
 
 
@@ -719,6 +922,263 @@ def test_supervisor_completes_room_fanout_once_per_agent(tmp_path: Path) -> None
     supervisor.close()
 
 
+def test_room_context_persists_deduplicates_fanout_and_isolates_rooms(
+    tmp_path: Path,
+) -> None:
+    ContextCapturingRunner.messages_by_agent = {}
+    human = make_bridge(tmp_path, "human-operator")
+    human.create_room({"room_id": "team", "name": "Team"})
+    for agent_id, connection_id, route_id, model_id in (
+        ("grok-peer", "relay-grok", "grok-route", "grok-4.6"),
+        ("kimi-peer", "relay-kimi", "kimi-route", "kimi-for-coding"),
+    ):
+        register_route(
+            human,
+            agent_id=agent_id,
+            connection_id=connection_id,
+            route_id=route_id,
+            model_id=model_id,
+        )
+        human.join_room(
+            {
+                "room_id": "team",
+                "agent_id": agent_id,
+                "route_profile_id": route_id,
+            }
+        )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=ContextCapturingRunner,
+        credential_probe=lambda _route: True,
+    )
+
+    for body in ("first room question", "second room question"):
+        human.send_room_fanout(
+            {
+                "room_id": "team",
+                "task_id": f"context-{body.split()[0]}",
+                "subject": "Remember this room",
+                "body": body,
+            }
+        )
+        result = supervisor.run_cycle()
+        assert (result.claimed, result.completed) == (2, 2)
+
+    for agent_id in ("grok-peer", "kimi-peer"):
+        first_prompt, second_prompt = ContextCapturingRunner.messages_by_agent[
+            agent_id
+        ]
+        assert len(first_prompt) == 2
+        assert len(second_prompt) == 5
+        rendered = "\n".join(str(item["content"]) for item in second_prompt)
+        assert rendered.count("first room question") == 1
+        assert rendered.count("context reply from grok-peer") == 1
+        assert rendered.count("context reply from kimi-peer") == 1
+        assert "count=3" in str(second_prompt[0]["content"])
+        assert "second room question" in str(second_prompt[-1]["content"])
+
+    human.create_room({"room_id": "other", "name": "Other"})
+    human.join_room(
+        {
+            "room_id": "other",
+            "agent_id": "grok-peer",
+            "route_profile_id": "grok-route",
+        }
+    )
+    human.send_room_fanout(
+        {
+            "room_id": "other",
+            "task_id": "context-other",
+            "subject": "Isolated room",
+            "body": "other room question",
+        }
+    )
+    isolated = supervisor.run_cycle()
+    assert (isolated.claimed, isolated.completed) == (1, 1)
+    isolated_prompt = ContextCapturingRunner.messages_by_agent["grok-peer"][-1]
+    assert len(isolated_prompt) == 2
+    isolated_text = "\n".join(str(item["content"]) for item in isolated_prompt)
+    assert "other room question" in isolated_text
+    assert "first room question" not in isolated_text
+    assert "second room question" not in isolated_text
+    supervisor.close()
+
+
+def test_direct_dispatch_reply_stays_private_from_other_room_agents(
+    tmp_path: Path,
+) -> None:
+    ContextCapturingRunner.messages_by_agent = {}
+    human = make_bridge(tmp_path, "human-operator")
+    human.create_room({"room_id": "private-context", "name": "Private Context"})
+    for agent_id, connection_id, route_id in (
+        ("alpha-peer", "relay-alpha", "alpha-route"),
+        ("beta-peer", "relay-beta", "beta-route"),
+    ):
+        register_route(
+            human,
+            agent_id=agent_id,
+            connection_id=connection_id,
+            route_id=route_id,
+            model_id=f"{agent_id}-model",
+        )
+        human.join_room(
+            {
+                "room_id": "private-context",
+                "agent_id": agent_id,
+                "route_profile_id": route_id,
+            }
+        )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=ContextCapturingRunner,
+        credential_probe=lambda _route: True,
+    )
+    human.send_message(
+        {
+            "room_id": "private-context",
+            "recipient": "alpha-peer",
+            "route_profile_id": "alpha-route",
+            "task_id": "private-alpha",
+            "subject": "Private instruction",
+            "body": "ALPHA-PRIVATE-ROOT",
+        }
+    )
+    first = supervisor.run_cycle()
+    assert (first.claimed, first.completed) == (1, 1)
+
+    beta_root = human.send_message(
+        {
+            "room_id": "private-context",
+            "recipient": "beta-peer",
+            "route_profile_id": "beta-route",
+            "task_id": "private-beta",
+            "subject": "Separate instruction",
+            "body": "BETA-PRIVATE-ROOT",
+        }
+    )
+    beta = make_bridge(tmp_path, "beta-peer")
+    context = beta.room_prompt_context(beta_root["message_id"])
+    serialized = json.dumps(context)
+    assert "ALPHA-PRIVATE-ROOT" not in serialized
+    assert "context reply from alpha-peer" not in serialized
+    assert context["receipt"]["history_message_count"] == 0
+    supervisor.close()
+
+
+def test_room_fanout_delivers_reverified_attachments_to_every_agent(
+    tmp_path: Path,
+) -> None:
+    AttachmentCapturingRunner.messages = []
+    human = make_bridge(tmp_path, "human-operator")
+    human.create_room({"room_id": "team", "name": "Team"})
+    for agent_id, connection_id, route_id, model_id in (
+        ("grok-peer", "relay-grok", "grok-route", "grok-4.6"),
+        ("kimi-peer", "relay-kimi", "kimi-route", "kimi-for-coding"),
+    ):
+        register_route(
+            human,
+            agent_id=agent_id,
+            connection_id=connection_id,
+            route_id=route_id,
+            model_id=model_id,
+        )
+        human.join_room(
+            {
+                "room_id": "team",
+                "agent_id": agent_id,
+                "route_profile_id": route_id,
+            }
+        )
+    staged = stage_chat_attachment_payloads(
+        tmp_path,
+        (("chart.png", PNG), ("notes.txt", b"Room attachment notes.")),
+    )
+    human.send_room_fanout(
+        {
+            "room_id": "team",
+            "task_id": "fanout-attachments",
+            "subject": "Review attached evidence",
+            "body": "hello supervisor",
+            "artifact_paths": [item.relative_path for item in staged],
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=AttachmentCapturingRunner,
+        credential_probe=lambda _route: True,
+    )
+
+    result = supervisor.run_cycle()
+
+    assert (result.claimed, result.completed) == (2, 2)
+    assert len(AttachmentCapturingRunner.messages) == 2
+    for messages in AttachmentCapturingRunner.messages:
+        metadata = messages[1][VERIFIED_ATTACHMENT_MESSAGE_KEY]
+        assert isinstance(metadata, list)
+        assert [item["kind"] for item in metadata] == ["image", "text"]
+        assert all("absolute_path" not in item for item in metadata)
+        assert str(tmp_path) not in json.dumps(metadata, sort_keys=True)
+    supervisor.close()
+
+
+def test_room_fanout_fails_closed_when_attachment_changes_before_dispatch(
+    tmp_path: Path,
+) -> None:
+    AttachmentCapturingRunner.messages = []
+    human = make_bridge(tmp_path, "human-operator")
+    human.create_room({"room_id": "team", "name": "Team"})
+    register_route(
+        human,
+        agent_id="grok-peer",
+        connection_id="relay-grok",
+        route_id="grok-route",
+        model_id="grok-4.6",
+    )
+    human.join_room(
+        {
+            "room_id": "team",
+            "agent_id": "grok-peer",
+            "route_profile_id": "grok-route",
+        }
+    )
+    staged = stage_chat_attachment_payloads(tmp_path, (("chart.png", PNG),))
+    human.send_room_fanout(
+        {
+            "room_id": "team",
+            "task_id": "fanout-tamper",
+            "subject": "Review attached evidence",
+            "body": "hello supervisor",
+            "artifact_paths": [staged[0].relative_path],
+        }
+    )
+    target = tmp_path / staged[0].relative_path
+    target.write_bytes(PNG[:-1] + bytes([PNG[-1] ^ 1]))
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=AttachmentCapturingRunner,
+        credential_probe=lambda _route: True,
+    )
+
+    result = supervisor.run_cycle()
+
+    assert (result.claimed, result.completed, result.terminal_failures) == (1, 0, 1)
+    assert AttachmentCapturingRunner.messages == []
+    with sqlite3.connect(human.db_path) as connection:
+        dispatch = connection.execute(
+            "SELECT status, error_code FROM message_dispatches",
+        ).fetchone()
+    assert dispatch == ("failed", "attachment_integrity_failed")
+    supervisor.close()
+
+
 def test_supervisor_process_lock_precedes_bridge_construction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -753,14 +1213,16 @@ class CountingRunner:
     constructions = 0
     attempts = 0
 
-    def __init__(self, _config) -> None:
+    def __init__(self, config) -> None:
+        self.config = config
         self.__class__.constructions += 1
 
     def run(self, _messages, *, message_id=None) -> InferenceResult:
         self.__class__.attempts += 1
-        return InferenceResult(
-            assistant_message={"role": "assistant", "content": "bounded reply"},
-            receipt={"receipt_sha256": HEX_B},
+        return successful_inference_result(
+            self.config,
+            message_id=str(message_id),
+            content="bounded reply",
         )
 
 
@@ -1062,12 +1524,10 @@ class NeverReturningRunner(SuccessfulRunner):
             self.__class__.started.set()
             self.__class__.release.wait()
             self.__class__.returned.set()
-            return InferenceResult(
-                assistant_message={
-                    "role": "assistant",
-                    "content": "SENSITIVE_LATE_PROVIDER_RESPONSE",
-                },
-                receipt={"receipt_sha256": HEX_A},
+            return successful_inference_result(
+                self.config,
+                message_id=str(message_id),
+                content="SENSITIVE_LATE_PROVIDER_RESPONSE",
             )
         result = super().run(messages, message_id=message_id)
         if not self.__class__.release.is_set():
@@ -1092,9 +1552,10 @@ class CancellationIgnoringRunner(SuccessfulRunner):
     def run(self, messages, *, message_id=None) -> InferenceResult:
         self.__class__.started.set()
         self.__class__.release.wait()
-        return InferenceResult(
-            assistant_message={"role": "assistant", "content": "late reply"},
-            receipt={"receipt_sha256": HEX_A},
+        return successful_inference_result(
+            self.config,
+            message_id=str(message_id),
+            content="late reply",
         )
 
     def cancel(self) -> None:
@@ -1228,7 +1689,66 @@ def test_completed_inference_survives_transient_lease_renewal_error(
     supervisor.close()
 
 
-def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
+def test_completed_provider_call_is_never_retried_after_final_lease_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    register_route(human)
+    sent = human.send_message(
+        {
+            "recipient": "model-peer",
+            "task_id": "completed-provider-final-renewal-failed",
+            "subject": "Do not repeat a completed paid call",
+            "body": "hello supervisor",
+            "route_profile_id": "relay-one-model-a",
+        }
+    )
+
+    def reject_renewal(self, args):
+        raise RuntimeError("synthetic final renewal failure")
+
+    monkeypatch.setattr(Bridge, "renew_message_dispatch", reject_renewal)
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=SuccessfulRunner,
+        credential_probe=lambda _route: True,
+        lease_seconds=30,
+        lease_renew_interval_seconds=10,
+    )
+    calls_before = len(SuccessfulRunner.configs)
+
+    first = supervisor.run_cycle()
+    second = supervisor.run_cycle()
+
+    assert (first.claimed, first.terminal_failures, first.retryable_failures) == (
+        1,
+        1,
+        0,
+    )
+    assert second.claimed == 0
+    assert len(SuccessfulRunner.configs) == calls_before + 1
+    with sqlite3.connect(human.db_path) as connection:
+        dispatch = connection.execute(
+            "SELECT status, error_code, attempt_count FROM message_dispatches "
+            "WHERE message_id=?",
+            (sent["message_id"],),
+        ).fetchone()
+        replies = connection.execute(
+            "SELECT COUNT(*) FROM messages WHERE reply_to=?",
+            (sent["message_id"],),
+        ).fetchone()[0]
+    assert dispatch == (
+        "failed",
+        "provider_completed_lease_renewal_failed",
+        1,
+    )
+    assert replies == 0
+    supervisor.close()
+
+
+def test_runner_hard_deadline_is_terminal_when_provider_completion_is_ambiguous(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     clock = [1_000.0]
@@ -1266,7 +1786,12 @@ def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
         assert NeverReturningRunner.started.is_set()
         assert NeverReturningRunner.returned.is_set()
         assert elapsed < 1.0
-        assert (first.claimed, first.completed, first.retryable_failures) == (1, 0, 1)
+        assert (
+            first.claimed,
+            first.completed,
+            first.retryable_failures,
+            first.terminal_failures,
+        ) == (1, 0, 0, 1)
         with sqlite3.connect(human.db_path) as connection:
             dispatch = connection.execute(
                 "SELECT status, claimed_session_id, lease_token_sha256, "
@@ -1290,16 +1815,18 @@ def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
                 ).fetchone()[0]
             )
         assert dispatch == (
-            "retryable",
+            "failed",
             None,
             None,
             None,
             1,
-            "runner_hard_deadline_exceeded",
+            "provider_completion_ambiguous_hard_deadline",
         )
-        assert schedule == (1_001.0, "runner_hard_deadline_exceeded")
+        assert schedule is None
         assert renewal_count >= 1
-        assert failure_payload["error_code"] == "runner_hard_deadline_exceeded"
+        assert failure_payload["error_code"] == (
+            "provider_completion_ambiguous_hard_deadline"
+        )
         serialized_evidence = json.dumps(failure_payload, sort_keys=True)
         assert "PRIVATE_REQUEST_BODY" not in serialized_evidence
         assert "SENSITIVE_LATE_PROVIDER_RESPONSE" not in serialized_evidence
@@ -1312,10 +1839,6 @@ def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
             ).fetchone()[0]
         assert stopped_renewal_count == renewal_count
 
-        clock[0] = 1_002.0
-        recovered = supervisor.run_cycle()
-        assert (recovered.claimed, recovered.completed) == (1, 1)
-
         assert NeverReturningRunner.returned.wait(timeout=1.0)
         with sqlite3.connect(human.db_path) as connection:
             replies = connection.execute(
@@ -1327,8 +1850,8 @@ def test_runner_hard_deadline_stops_renewal_and_releases_retryable_claim(
                 "FROM message_dispatches WHERE message_id=?",
                 (sent["message_id"],),
             ).fetchone()
-        assert replies == [("audited reply",)]
-        assert final_dispatch == ("completed", 2, HEX_B)
+        assert replies == []
+        assert final_dispatch == ("failed", 1, None)
         assert not any(
             thread.name.startswith("peerbridge-runner-") and thread.is_alive()
             for thread in threading.enumerate()
@@ -1522,7 +2045,11 @@ def test_persistent_lease_renewal_failure_aborts_before_local_safety_window(
         assert NeverReturningRunner.started.is_set()
         assert NeverReturningRunner.returned.is_set()
         assert elapsed < 1.0
-        assert (result.claimed, result.retryable_failures) == (1, 1)
+        assert (result.claimed, result.retryable_failures, result.terminal_failures) == (
+            1,
+            0,
+            1,
+        )
         with sqlite3.connect(human.db_path) as connection:
             dispatch = connection.execute(
                 "SELECT status, error_code FROM message_dispatches "
@@ -1533,7 +2060,10 @@ def test_persistent_lease_renewal_failure_aborts_before_local_safety_window(
                 "SELECT COUNT(*) FROM messages WHERE reply_to=?",
                 (sent["message_id"],),
             ).fetchone()[0]
-        assert dispatch == ("retryable", "dispatch_lease_renewal_failed")
+        assert dispatch == (
+            "failed",
+            "provider_completion_ambiguous_lease_loss",
+        )
         assert replies == 0
     finally:
         NeverReturningRunner.release.set()
@@ -1596,7 +2126,7 @@ def test_runner_hard_deadline_does_not_block_other_routes(tmp_path: Path) -> Non
             result.completed,
             result.retryable_failures,
             result.terminal_failures,
-        ) == (2, 1, 1, 0)
+        ) == (2, 1, 0, 1)
         with sqlite3.connect(human.db_path) as connection:
             dispatches = dict(
                 connection.execute(
@@ -1607,7 +2137,7 @@ def test_runner_hard_deadline_does_not_block_other_routes(tmp_path: Path) -> Non
                 "SELECT reply_to, body FROM messages WHERE reply_to IS NOT NULL"
             ).fetchall()
         assert dispatches == {
-            hung["message_id"]: "retryable",
+            hung["message_id"]: "failed",
             healthy["message_id"]: "completed",
         }
         assert replies == [(healthy["message_id"], "audited reply")]
@@ -1665,15 +2195,13 @@ class ConsensusRunner:
         assert "bounded parallel discussion round" in messages[0]["content"]
         if self.__class__.barrier is not None:
             self.__class__.barrier.wait(timeout=2.0)
-        return InferenceResult(
-            assistant_message={
-                "role": "assistant",
-                "content": (
-                    f"{self.config.agent_id} accepts the bounded proposal.\n"
-                    "PEERBRIDGE_SIGNAL: CONSENSUS"
-                ),
-            },
-            receipt={"receipt_sha256": HEX_B},
+        return successful_inference_result(
+            self.config,
+            message_id=str(message_id),
+            content=(
+                f"{self.config.agent_id} accepts the bounded proposal.\n"
+                "PEERBRIDGE_SIGNAL: CONSENSUS"
+            ),
         )
 
 

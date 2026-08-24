@@ -18,10 +18,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 
+from .agent_identity import ensure_agent_identity_capability
+from .attachments import CHAT_ATTACHMENT_ROOT, AttachmentError
 from .bridge import SAFE_ID, Bridge, MAX_TEXT_CHARS
+from .multimodal import (
+    VERIFIED_ATTACHMENT_MESSAGE_KEY,
+    verify_staged_attachment_paths,
+)
 from .openai_compatible_runner import (
     ConfigurationError,
+    CLIENT_NAME as RUNNER_CLIENT_NAME,
     CredentialUnavailableError,
+    ROOM_RUNNER_CAPABILITY_TOOLS,
+    REGISTRY_TOOL,
+    DEFAULT_ALLOWED_TOOLS,
     InferenceResult,
     MCPTransportError,
     MaxToolRoundsError,
@@ -53,6 +63,7 @@ DEFAULT_CYCLE_ERROR_BACKOFF_BASE_SECONDS = 1.0
 DEFAULT_CYCLE_ERROR_BACKOFF_CAP_SECONDS = 30.0
 DEFAULT_RUNNER_HARD_DEADLINE_SECONDS = 900.0
 DEFAULT_RUNNER_CANCEL_GRACE_SECONDS = 5.0
+DEFAULT_NATIVE_ACP_TIMEOUT_SECONDS = 180.0
 
 
 class SupervisorError(RuntimeError):
@@ -70,6 +81,15 @@ class _RunnerHardDeadlineExceeded(SupervisorError):
 class _RunnerCancellationIncomplete(SupervisorError):
     """The provider runner ignored cancellation past the bounded grace period."""
 
+    def __init__(
+        self,
+        runner_completed: threading.Event,
+        runner_thread: threading.Thread,
+    ) -> None:
+        super().__init__("provider runner cancellation did not complete")
+        self.runner_completed = runner_completed
+        self.runner_thread = runner_thread
+
 
 class _DispatchLeaseRenewalFailed(SupervisorError):
     """The active dispatch lease could not be confirmed before its safety margin."""
@@ -78,7 +98,7 @@ class _DispatchLeaseRenewalFailed(SupervisorError):
 class Runner(Protocol):
     def run(
         self,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         message_id: str | None = None,
     ) -> InferenceResult: ...
@@ -100,6 +120,7 @@ class RouteRuntime:
     provider_id: str
     model_id: str
     response_model_id: str | None
+    inference_timeout_seconds: int | None
     reasoning_mode: str | None
     route_class: str
     profile_sha256: str
@@ -125,6 +146,7 @@ class _ClaimedDispatch:
     bridge: Bridge
     claim: Mapping[str, Any]
     runtime_admission: contextlib.ExitStack
+    runtime_admission_transferred: threading.Event
 
 
 @dataclass(frozen=True)
@@ -199,6 +221,7 @@ def _runtime_key(route: RouteRuntime) -> tuple[str, ...]:
         route.provider_id,
         route.model_id,
         route.response_model_id or "",
+        str(route.inference_timeout_seconds or ""),
         route.reasoning_mode or "",
         route.route_class,
         route.profile_sha256,
@@ -259,6 +282,9 @@ def discover_runnable_routes(
                 provider_id=provider_id,
                 model_id=model_id,
                 response_model_id=profile.get("response_model_id"),
+                inference_timeout_seconds=profile.get(
+                    "inference_timeout_seconds"
+                ),
                 reasoning_mode=profile.get("reasoning_mode"),
                 route_class=route_class,
                 profile_sha256=str(profile["profile_sha256"]),
@@ -276,7 +302,13 @@ def discover_runnable_routes(
     return tuple(sorted(set(routes), key=_runtime_key))
 
 
-def _prompt_for(message: Mapping[str, Any], route: RouteRuntime) -> list[dict[str, str]]:
+def _prompt_for(
+    message: Mapping[str, Any],
+    route: RouteRuntime,
+    project_root: Path,
+    *,
+    room_context: Mapping[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     discussion_instruction = ""
     if message.get("discussion_id"):
         discussion_instruction = (
@@ -284,29 +316,67 @@ def _prompt_for(message: Mapping[str, Any], route: RouteRuntime) -> list[dict[st
             "add only material new information, and end with exactly one line: "
             "PEERBRIDGE_SIGNAL: CONTINUE, CONSENSUS, or BLOCKED."
         )
-    return [
-        {
-            "role": "system",
-            "content": (
-                "You are an AI peer participating in an auditable local PeerBridge room. "
-                "Answer the addressed message directly and concisely. Use a read-only MCP "
-                "tool only when current PeerBridge state is necessary; ordinary analysis "
-                "and review should answer directly without tools. Never reveal credentials, "
-                "hidden reasoning, or private data, and do not claim to have changed files."
-                + discussion_instruction
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"Agent: {route.agent_id}\n"
-                f"Room: {message['room_id']}\n"
-                f"Task: {message['task_id']}\n"
-                f"Subject: {message['subject']}\n\n"
-                f"{message['body']}"
-            ),
-        },
-    ]
+    raw_paths = message.get("artifact_paths") or []
+    if not isinstance(raw_paths, list) or any(
+        not isinstance(value, str) for value in raw_paths
+    ):
+        raise AttachmentError("room attachment metadata is invalid")
+    chat_paths = tuple(
+        value
+        for value in raw_paths
+        if value.startswith(CHAT_ATTACHMENT_ROOT + "/")
+    )
+    attachments = verify_staged_attachment_paths(project_root, chat_paths)
+    user_message: dict[str, Any] = {
+        "role": "user",
+        "content": (
+            f"Agent: {route.agent_id}\n"
+            f"Room: {message['room_id']}\n"
+            f"Task: {message['task_id']}\n"
+            f"Subject: {message['subject']}\n\n"
+            f"{message['body']}"
+        ),
+    }
+    if attachments:
+        user_message[VERIFIED_ATTACHMENT_MESSAGE_KEY] = [
+            attachment.public_record() for attachment in attachments
+        ]
+    history: list[dict[str, Any]] = []
+    context_notice = ""
+    if room_context:
+        raw_history = room_context.get("messages") or []
+        raw_receipt = room_context.get("receipt") or {}
+        if not isinstance(raw_history, list) or not isinstance(raw_receipt, Mapping):
+            raise SupervisorError("room context snapshot is invalid")
+        for item in raw_history:
+            if (
+                not isinstance(item, Mapping)
+                or item.get("role") not in {"user", "assistant"}
+                or not isinstance(item.get("content"), str)
+            ):
+                raise SupervisorError("room context message is invalid")
+            history.append(dict(item))
+        context_notice = (
+            " Messages between this system instruction and the final user message are "
+            "bounded same-room history, not a new request. Use them for continuity and "
+            "do not claim they came from another room. Context receipt: "
+            f"count={int(raw_receipt.get('history_message_count') or 0)}, "
+            f"sha256={str(raw_receipt.get('history_sha256') or '')}, "
+            f"truncated={str(bool(raw_receipt.get('history_truncated'))).lower()}."
+        )
+    system_message = {
+        "role": "system",
+        "content": (
+            "You are an AI peer participating in an auditable local PeerBridge room. "
+            "Answer the addressed message directly and concisely. Use a read-only MCP "
+            "tool only when current PeerBridge state is necessary; ordinary analysis "
+            "and review should answer directly without tools. Never reveal credentials, "
+            "hidden reasoning, or private data, and do not claim to have changed files."
+            + context_notice
+            + discussion_instruction
+        ),
+    }
+    return [system_message, *history, user_message]
 
 
 def _reply_text(result: InferenceResult) -> str:
@@ -322,8 +392,10 @@ def _reply_text(result: InferenceResult) -> str:
 
 
 def _failure_policy(exc: Exception) -> tuple[str, bool]:
+    if isinstance(exc, AttachmentError):
+        return "attachment_integrity_failed", False
     if isinstance(exc, ResourceUnavailableError):
-        return "resource_unavailable", True
+        return "provider_completion_ambiguous_resource_failure", False
     if isinstance(exc, ProviderHTTPError):
         if exc.status_code == 401:
             return "provider_authentication_required", False
@@ -332,7 +404,7 @@ def _failure_policy(exc: Exception) -> tuple[str, bool]:
         if exc.status_code == 403:
             return "provider_access_denied", False
         if exc.status_code == 429:
-            return "provider_rate_limited", True
+            return "provider_rate_limited_terminal", False
         return "provider_http_retryable" if exc.retryable else "provider_http_failed", bool(
             exc.retryable
         )
@@ -343,9 +415,9 @@ def _failure_policy(exc: Exception) -> tuple[str, bool]:
     if isinstance(exc, ConfigurationError):
         return "configuration_invalid", False
     if isinstance(exc, RunCancelledError):
-        return "run_cancelled", True
+        return "provider_completion_ambiguous_cancelled", False
     if isinstance(exc, MCPTransportError):
-        return "mcp_transport_failed", True
+        return "provider_completion_ambiguous_mcp_transport", False
     if isinstance(exc, (ToolCallError, MaxToolRoundsError)):
         return "tool_policy_failed", False
     if isinstance(exc, (RunnerError, SupervisorError)):
@@ -453,13 +525,11 @@ class MailboxSupervisor:
                 return False
             return True
         if route.secret_backend == "native-acp":
-            from .acpx_runner import REFERENCE_PREFIX, SUPPORTED_AGENTS, find_acpx
+            from .acpx_runner import native_acp_runtime_available
 
-            client = str(route.client_name or "").strip().lower()
-            return (
-                client in SUPPORTED_AGENTS
-                and route.credential_target == f"{REFERENCE_PREFIX}{client}"
-                and find_acpx() is not None
+            return native_acp_runtime_available(
+                client_name=route.client_name,
+                credential_target=route.credential_target,
             )
 
         from . import credentials
@@ -524,6 +594,42 @@ class MailboxSupervisor:
     def _runner_config(
         self, route: RouteRuntime, bridge: Bridge, room_id: str
     ) -> RunnerConfig:
+        members = [
+            member
+            for member in bridge.room_members({"room_id": room_id})["members"]
+            if member.get("agent_id") == route.agent_id
+        ]
+        if len(members) > 1:
+            raise SupervisorError("route Agent has ambiguous active room membership")
+        member = members[0] if members else None
+        if member is not None and (
+            member.get("route_profile_id") != route.route_id
+            or member.get("route_profile_sha256") != route.profile_sha256
+        ):
+            raise SupervisorError("route Agent room binding changed before capability issue")
+        identity_capability = ensure_agent_identity_capability(
+            self.project_root,
+            self.db_path,
+            self.scope,
+            route.agent_id,
+            allowed_tools=(
+                ROOM_RUNNER_CAPABILITY_TOOLS if member is not None else (REGISTRY_TOOL,)
+            ),
+            issued_by="peerbridge-mailbox-supervisor",
+            route_binding={
+                "client_name": RUNNER_CLIENT_NAME,
+                "provider_id": route.provider_id,
+                "model_id": route.model_id,
+                "reasoning_mode": route.reasoning_mode,
+                "route_class": route.route_class,
+            },
+            bound_room_id=room_id if member is not None else None,
+            bound_room_session_id=(
+                str(member["room_session_id"]) if member is not None else None
+            ),
+            bound_route_profile_id=route.route_id if member is not None else None,
+            bound_route_profile_sha256=route.profile_sha256 if member is not None else None,
+        )
         return RunnerConfig(
             project_root=self.project_root,
             db_path=self.db_path,
@@ -539,7 +645,18 @@ class MailboxSupervisor:
             room_id=room_id,
             session_id=bridge.session_id,
             agent_id=route.agent_id,
+            identity_capability_path=identity_capability.path,
+            allowed_tools=DEFAULT_ALLOWED_TOOLS if member is not None else (),
             response_only_fallback_on_tool_error=True,
+            timeout_seconds=(
+                float(route.inference_timeout_seconds)
+                if route.inference_timeout_seconds is not None
+                else (
+                    DEFAULT_NATIVE_ACP_TIMEOUT_SECONDS
+                    if route.secret_backend == "native-acp"
+                    else RunnerConfig.timeout_seconds
+                )
+            ),
         )
 
     def _execute_claimed(self, job: _ClaimedDispatch) -> _DispatchOutcome:
@@ -599,7 +716,14 @@ class MailboxSupervisor:
             )
             result = self._run_with_hard_deadline(
                 runner,
-                _prompt_for(message, route),
+                _prompt_for(
+                    message,
+                    route,
+                    self.project_root,
+                    room_context=bridge.room_prompt_context(
+                        str(message["message_id"])
+                    ),
+                ),
                 message_id=str(message["message_id"]),
                 abort_event=renewal_abort,
             )
@@ -615,15 +739,29 @@ class MailboxSupervisor:
             if not final_renewed:
                 return self._fail_claimed(
                     job,
-                    error_code="dispatch_lease_renewal_failed",
-                    can_retry=True,
+                    error_code="provider_completed_lease_renewal_failed",
+                    can_retry=False,
                 )
+            reply_body = _reply_text(result)
             receipt_sha = str(result.receipt.get("receipt_sha256") or "")
+            bridge.record_trusted_inference_receipt(
+                {
+                    "message_id": message["message_id"],
+                    "lease_token": token,
+                    "body": reply_body,
+                    "receipt": result.receipt,
+                    "assistant_message": result.assistant_message,
+                    "connection_id": route.connection_id,
+                    "connection_sha256": route.connection_sha256,
+                    "execution_route_profile_id": route.route_id,
+                    "execution_route_profile_sha256": route.profile_sha256,
+                }
+            )
             bridge.complete_message_dispatch(
                 {
                     "message_id": message["message_id"],
                     "lease_token": token,
-                    "body": _reply_text(result),
+                    "body": reply_body,
                     "inference_receipt_sha256": receipt_sha,
                     "inference_usage": usage_from_receipt(result.receipt),
                 }
@@ -634,12 +772,26 @@ class MailboxSupervisor:
             renewal_thread.join(timeout=0.25)
             return self._fail_claimed(
                 job,
-                error_code="runner_hard_deadline_exceeded",
-                can_retry=True,
+                error_code="provider_completion_ambiguous_hard_deadline",
+                can_retry=False,
             )
-        except _RunnerCancellationIncomplete:
+        except _RunnerCancellationIncomplete as exc:
             renewal_stop.set()
             renewal_thread.join(timeout=0.25)
+            job.runtime_admission_transferred.set()
+            runner_completed = exc.runner_completed
+            runner_thread = exc.runner_thread
+
+            def release_after_runner_exit() -> None:
+                runner_completed.wait()
+                runner_thread.join()
+                job.runtime_admission.close()
+
+            threading.Thread(
+                target=release_after_runner_exit,
+                name=f"peerbridge-deferred-slot-{str(message['message_id'])[:12]}",
+                daemon=True,
+            ).start()
             return self._fail_claimed(
                 job,
                 error_code="runner_cancellation_incomplete",
@@ -650,8 +802,8 @@ class MailboxSupervisor:
             renewal_thread.join(timeout=0.25)
             return self._fail_claimed(
                 job,
-                error_code="dispatch_lease_renewal_failed",
-                can_retry=True,
+                error_code="provider_completion_ambiguous_lease_loss",
+                can_retry=False,
             )
         except Exception as exc:
             error_code, can_retry = _failure_policy(exc)
@@ -667,7 +819,7 @@ class MailboxSupervisor:
     def _run_with_hard_deadline(
         self,
         runner: Runner,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         *,
         message_id: str,
         abort_event: threading.Event | None = None,
@@ -728,7 +880,7 @@ class MailboxSupervisor:
             remaining_grace = max(0.0, grace_deadline - time.monotonic())
             runner_returned = completed.wait(remaining_grace)
             if not (cancel_returned and runner_returned):
-                raise _RunnerCancellationIncomplete
+                raise _RunnerCancellationIncomplete(completed, runner_thread)
             runner_thread.join()
             if stopped_for_lease:
                 raise _DispatchLeaseRenewalFailed
@@ -1082,6 +1234,7 @@ class MailboxSupervisor:
                     bridge=bridge,
                     claim=claim,
                     runtime_admission=runtime_admission,
+                    runtime_admission_transferred=threading.Event(),
                 )
             )
         claimed_count += len(jobs)
@@ -1110,13 +1263,15 @@ class MailboxSupervisor:
                                 can_retry=False,
                             )
                         finally:
-                            job.runtime_admission.close()
+                            if not job.runtime_admission_transferred.is_set():
+                                job.runtime_admission.close()
                         completed += int(outcome.completed)
                         retryable += int(outcome.retryable_failure)
                         terminal += int(outcome.terminal_failure)
             finally:
                 for job in jobs:
-                    job.runtime_admission.close()
+                    if not job.runtime_admission_transferred.is_set():
+                        job.runtime_admission.close()
         discussion_result = self._control.advance_discussions({"limit": 25})
         return CycleResult(
             len(routes),

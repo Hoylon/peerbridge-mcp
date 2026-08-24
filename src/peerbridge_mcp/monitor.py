@@ -21,10 +21,11 @@ import webbrowser
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
-from typing import Any, Callable, Iterable, Mapping
+from tkinter import filedialog, font as tkfont, messagebox, ttk
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from . import __version__
+from .agent_identity import ensure_agent_identity_capability
 from .announcements import (
     Announcement,
     AnnouncementConfig,
@@ -44,7 +45,14 @@ from .agent_install import (
     launch_agent_installer,
 )
 from .attachments import stage_chat_attachments
-from .bridge import DEFAULT_ROOM_ID, Bridge
+from .authorized_sessions import AuthorizedSessionError, AuthorizedSessionRegistry
+from .bridge import (
+    CONTROL_ROOM_WORKFLOW_ID,
+    DEFAULT_ROOM_ID,
+    DEFAULT_ROOM_ROLE,
+    Bridge,
+    stable_sha256,
+)
 from .ccswitch import (
     SUPPORTED_APPS as CC_SWITCH_APPS,
     CcSwitchError,
@@ -67,6 +75,7 @@ from .credentials import (
     store_local_provider_endpoint,
     store_provider_credentials,
 )
+from .desktop_cockpit import AgentCockpit
 from .feedback import (
     FeedbackBundle,
     FeedbackConfig,
@@ -74,26 +83,69 @@ from .feedback import (
     deliver_feedback_bundle,
     feedback_mailto,
 )
+from .guided_room_workflows import (
+    MAX_GUIDED_ROOM_AGENTS,
+    GuidedRoomWorkflowError,
+    guided_operation_id,
+    guided_room_readiness,
+    guided_room_workflow_plan,
+    validate_guided_room_start,
+)
 from .localization import (
     LABEL_LOCALES,
     LOCALE_LABELS,
+    SUPPORTED_THEMES,
     SUPPORTED_LOCALES,
+    THEME_LABELS,
     LocalizationError,
     default_preferences,
     load_preferences,
     save_preferences,
     translate,
 )
+from .managed_workflows import ManagedWorkflowRunner
 from .openai_compatible_runner import (
     ProviderModelRegistry,
     RunnerError,
     discover_provider_models,
 )
+from .release_gate import ReleaseGateService
+from .room_discussion_tracker import RoomDiscussionTracker
 from .secret_scan import contains_secret, redact_secrets
+from .session_contract import linked_room_session_target, native_room_session_contract
+from .trust_workflows_ui import TrustWorkflowsPage
 from .updates import UpdateCheckResult, check_for_updates
+from .verification_engine import VerificationTriggerEngine
+
+
+def runtime_build_sha256(path: Path | None = None) -> str:
+    """Return the full path-free digest for the running source or frozen binary."""
+
+    target = path or Path(sys.executable if getattr(sys, "frozen", False) else __file__)
+    hasher = hashlib.sha256()
+    try:
+        with target.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                hasher.update(chunk)
+    except OSError:
+        return "unavailable"
+    return hasher.hexdigest()
+
+
+def runtime_build_identity(path: Path | None = None) -> str:
+    """Return a compact display digest that distinguishes local builds."""
+
+    digest = runtime_build_sha256(path)
+    return digest[:12] if digest != "unavailable" else digest
 
 
 APP_VERSION = __version__
+APP_BUILD_SHA256 = runtime_build_sha256()
+APP_BUILD_ID = (
+    APP_BUILD_SHA256[:12]
+    if APP_BUILD_SHA256 != "unavailable"
+    else APP_BUILD_SHA256
+)
 WINDOW_TITLE = "PeerBridge MCP Control Room"
 WINDOW_TITLE_LIVE = f"{WINDOW_TITLE} // LIVE"
 DEFAULT_INSTANCE_MUTEX = r"Local\PeerBridgeMcpControlRoomV1"
@@ -107,6 +159,13 @@ NO_ROUTE_LABEL = "chat.route.unregistered"
 PROVIDER_DEFAULT_MODEL_LABEL = "chat.model.default"
 PROVIDER_DEFAULT_REASONING_LABEL = "chat.reasoning.default"
 HUMAN_AGENT_ID = "human-operator"
+ROOM_ROLE_IDS = (
+    DEFAULT_ROOM_ROLE,
+    "researcher",
+    "implementer",
+    "reviewer",
+    "custom",
+)
 SAFE_ROUTE_ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
 SAFE_CHAT_ARTIFACT_PATH = re.compile(
     r"\.peerbridge-artifacts/chat/([0-9a-f]{64})(\.[a-z0-9]{1,10})\Z"
@@ -116,6 +175,41 @@ DEFAULT_MONITOR_SNAPSHOT_LIMIT = 120
 DEFAULT_ROOM_PAGE_SIZE = 60
 CHAT_PAGE_MIN_CONTENT_HEIGHT = 860
 CHAT_HISTORY_MIN_HEIGHT = 250
+WINDOWS_UI_SCALE_FACTORS = (1.0, 1.25, 1.5)
+TK_POINTS_PER_INCH = 72.0
+WINDOWS_BASE_DPI = 96.0
+SIDEBAR_WIDTH = 300
+MODERN_SIDEBAR_WIDTH = 232
+MODERN_INSPECTOR_BREAKPOINT = 1120
+MODERN_INSPECTOR_WIDTH = 292
+MODERN_CHAT_MAX_WIDTH = 1040
+MODERN_CHAT_MIN_GUTTER = 28
+MODERN_SIDEBAR_BG = "#f2f3f6"
+MODERN_CARD_BG = "#ffffff"
+MODERN_USER_BUBBLE_BG = "#edf2f8"
+MODERN_NAV_ACTIVE_BG = "#e6ebf2"
+MODERN_WORKSPACE_BG = "#f6f7f9"
+SIDEBAR_SCROLLBAR_WIDTH = 16
+SIDEBAR_SCROLLBAR_STYLE = "Sidebar.Vertical.TScrollbar"
+ROOM_AGENT_CARD_WIDTH = 166
+ROOM_AGENT_CARD_PAD_X = 4
+ROOM_AGENT_CARD_OUTER_WIDTH = ROOM_AGENT_CARD_WIDTH + (ROOM_AGENT_CARD_PAD_X * 2)
+ROOM_AGENT_STRIP_HEADER_WIDTH = 95
+ROOM_AGENT_OVERFLOW_WIDTH = 58
+ROOM_AGENT_DEFAULT_VISIBLE_LIMIT = 5
+ROOM_AGENT_DETAIL_TEXT_SIZE = 9
+SIDEBAR_TEXT_SIZE = 9
+AGENT_LIBRARY_CANVAS_WIDTH = 222
+AGENT_LIBRARY_CANVAS_HEIGHT = 176
+AGENT_LIBRARY_COLUMNS = 2
+AGENT_LIBRARY_VISIBLE_ROWS = 3
+AGENT_LIBRARY_VISIBLE_CAPACITY = AGENT_LIBRARY_COLUMNS * AGENT_LIBRARY_VISIBLE_ROWS
+AGENT_LIBRARY_CARD_WIDTH = 104
+AGENT_LIBRARY_CARD_HEIGHT = 50
+AGENT_LIBRARY_COLUMN_STRIDE = 108
+AGENT_LIBRARY_CARD_STRIDE = 57
+AGENT_LIBRARY_TOP_MARGIN = 5
+TUTORIAL_BODY_TEXT_SIZE = 11
 USAGE_TABLE_COLUMNS = (
     "provider",
     "model",
@@ -125,11 +219,94 @@ USAGE_TABLE_COLUMNS = (
     "output",
     "total",
 )
+USAGE_PERIOD_KEYS = ("today", "7d", "30d", "all")
+TUTORIAL_PAGE_KEYS = (
+    "cockpit",
+    "chat",
+    "work",
+    "review",
+    "change",
+    "audit",
+    "connect",
+    "memory",
+    "trust",
+    "feedback",
+    "usage",
+    "announcement",
+)
+MODERN_NAV_GROUPS = (
+    ("workspace", ("cockpit", "chat", "work")),
+    ("governance", ("review", "change", "audit", "trust")),
+    ("system", ("connect", "memory", "feedback", "usage", "announcement")),
+)
+MODERN_INSPECTOR_KEYS = ("agents", "workflow", "evidence")
+MODERN_NAV_ICONS = {
+    "cockpit": "⌂",
+    "chat": "▣",
+    "work": "✓",
+    "review": "◇",
+    "change": "±",
+    "audit": "◎",
+    "connect": "↔",
+    "memory": "◫",
+    "trust": "◆",
+    "feedback": "✎",
+    "usage": "▥",
+    "announcement": "○",
+}
+
+
+def modern_navigation_pages() -> tuple[str, ...]:
+    """Return the grouped Modern navigation contract in display order."""
+
+    return tuple(
+        page_key
+        for _group_key, page_keys in MODERN_NAV_GROUPS
+        for page_key in page_keys
+    )
+
+
+def modern_navigation_is_complete() -> bool:
+    """Keep the alternative shell feature-complete with the Pixel shell."""
+
+    pages = modern_navigation_pages()
+    return len(pages) == len(set(pages)) and set(pages) == set(TUTORIAL_PAGE_KEYS)
+
+
+def modern_chat_content_geometry(viewport_width: int) -> tuple[int, int]:
+    """Return a centered, readable Modern chat width and its left offset."""
+
+    width = max(1, int(viewport_width))
+    available = max(1, width - (MODERN_CHAT_MIN_GUTTER * 2))
+    content_width = min(MODERN_CHAT_MAX_WIDTH, available)
+    return content_width, max(0, (width - content_width) // 2)
+TUTORIAL_DIAGRAM_SPECS = {
+    "cockpit": ("cockpit", ((0.16, 0.18), (0.33, 0.58), (0.78, 0.58))),
+    "chat": ("chat", ((0.18, 0.16), (0.15, 0.53), (0.62, 0.82))),
+    "work": ("table", ((0.18, 0.16), (0.34, 0.48), (0.72, 0.83))),
+    "review": ("table", ((0.18, 0.16), (0.47, 0.48), (0.72, 0.83))),
+    "change": ("table", ((0.18, 0.16), (0.59, 0.48), (0.72, 0.83))),
+    "audit": ("table", ((0.18, 0.16), (0.74, 0.48), (0.72, 0.83))),
+    "connect": ("connect", ((0.24, 0.20), (0.27, 0.53), (0.70, 0.82))),
+    "memory": ("table", ((0.18, 0.16), (0.41, 0.48), (0.72, 0.83))),
+    "trust": ("trust", ((0.18, 0.15), (0.28, 0.54), (0.76, 0.75))),
+    "feedback": ("feedback", ((0.24, 0.20), (0.32, 0.55), (0.76, 0.82))),
+    "usage": ("usage", ((0.22, 0.15), (0.24, 0.39), (0.70, 0.73))),
+    "announcement": ("announcement", ((0.24, 0.18), (0.26, 0.53), (0.76, 0.62))),
+}
 MESSAGE_PRIORITIES = ("low", "normal", "high", "critical")
 AUTOMATION_MODE_TO_KEY = {
     "off": "chat.mode.off",
     "once": "chat.mode.once",
     "discussion": "chat.mode.discussion",
+}
+DISCUSSION_STATUS_TO_KEY = {
+    "active": "chat.discussion.status.active",
+    "paused": "chat.discussion.status.paused",
+    "completed": "chat.discussion.status.completed",
+    "stopped": "chat.discussion.status.stopped",
+    "failed": "chat.discussion.status.failed",
+    "blocked": "chat.discussion.status.blocked",
 }
 MCP_NATIVE = "MCP_NATIVE"
 MCP_TOOL_LOOP = "MCP_TOOL_LOOP"
@@ -154,21 +331,58 @@ MCP_NATIVE_CLIENTS = frozenset(
     }
 )
 
-COLORS = {
-    "bg": "#101419",
-    "panel": "#171d24",
-    "panel_2": "#202832",
-    "line": "#36414f",
-    "text": "#e8edf2",
-    "muted": "#91a0ad",
-    "cyan": "#5dd9e8",
-    "amber": "#ffc857",
-    "green": "#67d391",
-    "red": "#ff6b6b",
-    "purple": "#b8a1ff",
-    "blue": "#68a7ff",
-    "black": "#080b0f",
+COLOR_PALETTES = {
+    "pixel": {
+        "bg": "#101419",
+        "panel": "#171d24",
+        "panel_2": "#202832",
+        "line": "#36414f",
+        "text": "#e8edf2",
+        "muted": "#91a0ad",
+        "cyan": "#5dd9e8",
+        "amber": "#ffc857",
+        "green": "#67d391",
+        "red": "#ff6b6b",
+        "purple": "#b8a1ff",
+        "blue": "#68a7ff",
+        "black": "#080b0f",
+    },
+    "modern": {
+        "bg": "#f6f7f9",
+        "panel": "#ffffff",
+        "panel_2": "#eef1f5",
+        "line": "#d8dde6",
+        "text": "#151922",
+        "muted": "#667085",
+        "cyan": "#245fdb",
+        "amber": "#8a5b17",
+        "green": "#24805c",
+        "red": "#b64646",
+        "purple": "#7257a8",
+        "blue": "#315fc4",
+        "black": "#ffffff",
+    },
 }
+COLORS = dict(COLOR_PALETTES["pixel"])
+ACTIVE_THEME = "pixel"
+PIXEL_FONT_FAMILY = "Cascadia Mono"
+MODERN_FONT_FAMILY = "Segoe UI Variable Text"
+UI_FONT_FAMILY = PIXEL_FONT_FAMILY
+
+
+def apply_color_palette(theme: str) -> dict[str, str]:
+    """Apply one bounded built-in palette before any desktop widgets exist."""
+
+    global ACTIVE_THEME, UI_FONT_FAMILY
+    if theme not in SUPPORTED_THEMES:
+        raise ValueError("unsupported UI theme")
+    ACTIVE_THEME = theme
+    UI_FONT_FAMILY = (
+        MODERN_FONT_FAMILY if theme == "modern" else PIXEL_FONT_FAMILY
+    )
+    COLORS.clear()
+    COLORS.update(COLOR_PALETTES[theme])
+    return dict(COLORS)
 
 
 def windows_instance_mutex_name(instance_id: str | None = None) -> str:
@@ -415,6 +629,26 @@ def room_agent_card_groups(
     return rows[:limit], rows[limit:]
 
 
+def room_agent_visible_limit(strip_width: int, card_count: int) -> int:
+    """Use the actual strip width before collapsing room Agents into +N."""
+    count = max(0, int(card_count))
+    if count == 0:
+        return 0
+    width = max(0, int(strip_width))
+    if width <= 1:
+        return min(count, ROOM_AGENT_DEFAULT_VISIBLE_LIMIT)
+    available = max(0, width - ROOM_AGENT_STRIP_HEADER_WIDTH)
+    all_capacity = available // ROOM_AGENT_CARD_OUTER_WIDTH
+    if count <= all_capacity:
+        return count
+    overflow_capacity = max(
+        1,
+        (max(0, available - ROOM_AGENT_OVERFLOW_WIDTH))
+        // ROOM_AGENT_CARD_OUTER_WIDTH,
+    )
+    return min(count, overflow_capacity)
+
+
 def incremental_render_mode(
     previous: tuple[str, ...] | None,
     current: tuple[str, ...],
@@ -455,6 +689,65 @@ def chat_split_sash_position(
         max(0, available - min_history_height),
     )
     return max(0, available - composer_height)
+
+
+def vertical_scroll_fraction_to_reveal(
+    *,
+    widget_top: int,
+    widget_bottom: int,
+    viewport_top: float,
+    viewport_height: int,
+    content_height: int,
+) -> float:
+    """Return the canvas yview fraction that fully reveals one child widget."""
+    content = max(1, int(content_height))
+    viewport = max(1, int(viewport_height))
+    maximum_offset = max(0.0, float(content - viewport))
+    current = min(max(0.0, float(viewport_top)), maximum_offset)
+    if widget_top < current:
+        target = float(widget_top)
+    elif widget_bottom > current + viewport:
+        target = float(widget_bottom - viewport)
+    else:
+        target = current
+    target = min(max(0.0, target), maximum_offset)
+    return target / content
+
+
+def tutorial_diagram_spec(
+    page_key: str,
+) -> tuple[str, tuple[tuple[float, float], ...]]:
+    """Return a privacy-safe schematic and its three numbered callouts."""
+
+    try:
+        return TUTORIAL_DIAGRAM_SPECS[page_key]
+    except KeyError as exc:
+        raise ValueError(f"unsupported tutorial page: {page_key}") from exc
+
+
+def tk_scaling_for_windows_factor(scale_factor: float) -> float:
+    """Translate a Windows display scale factor into Tk pixels per point."""
+    factor = float(scale_factor)
+    if factor not in WINDOWS_UI_SCALE_FACTORS:
+        raise ValueError(f"unsupported Windows UI scale factor: {factor}")
+    return (WINDOWS_BASE_DPI * factor) / TK_POINTS_PER_INCH
+
+
+def centered_transient_geometry(
+    *,
+    parent_x: int,
+    parent_y: int,
+    parent_width: int,
+    parent_height: int,
+    width: int,
+    height: int,
+) -> str:
+    """Place a transient inside its parent, including on negative-coordinate monitors."""
+    window_width = max(1, int(width))
+    window_height = max(1, int(height))
+    x = int(parent_x) + max(0, (int(parent_width) - window_width) // 2)
+    y = int(parent_y) + max(0, (int(parent_height) - window_height) // 2)
+    return f"{window_width}x{window_height}{x:+d}{y:+d}"
 
 
 def chat_bubble_metrics(canvas_width: int) -> tuple[int, int]:
@@ -1113,6 +1406,15 @@ class Snapshot:
     route_profiles: tuple[dict[str, Any], ...]
     provider_connections: tuple[dict[str, Any], ...]
     memories: tuple[dict[str, Any], ...]
+    operations: tuple[dict[str, Any], ...]
+    schedules: tuple[dict[str, Any], ...]
+    capabilities: tuple[dict[str, Any], ...]
+    capability_grants: tuple[dict[str, Any], ...]
+    permission_decisions: tuple[dict[str, Any], ...]
+    execution_bindings: tuple[dict[str, Any], ...]
+    task_briefings: tuple[dict[str, Any], ...]
+    decision_conflicts: tuple[dict[str, Any], ...]
+    trust_records: tuple[dict[str, Any], ...]
     messages: tuple[dict[str, Any], ...]
     message_dispatches: tuple[dict[str, Any], ...]
     usage_totals: dict[str, Any]
@@ -1120,6 +1422,7 @@ class Snapshot:
     usage_by_model: tuple[dict[str, Any], ...]
     usage_model_totals: tuple[dict[str, Any], ...]
     usage_daily: tuple[dict[str, Any], ...]
+    usage_periods: dict[str, dict[str, Any]]
     usage_recent: tuple[dict[str, Any], ...]
     peer_calls: tuple[dict[str, Any], ...]
     peer_reviews: tuple[dict[str, Any], ...]
@@ -1154,6 +1457,51 @@ class Snapshot:
                     if self.memories
                     else None
                 ),
+                "operation": (
+                    self.operations[0].get("operation_sha256")
+                    if self.operations
+                    else None
+                ),
+                "schedule": (
+                    self.schedules[0].get("schedule_sha256")
+                    if self.schedules
+                    else None
+                ),
+                "capability": (
+                    self.capabilities[0].get("capability_sha256")
+                    if self.capabilities
+                    else None
+                ),
+                "grant": (
+                    self.capability_grants[0].get("grant_sha256")
+                    if self.capability_grants
+                    else None
+                ),
+                "permission": (
+                    self.permission_decisions[0].get("decision_sha256")
+                    if self.permission_decisions
+                    else None
+                ),
+                "binding": (
+                    self.execution_bindings[0].get("binding_sha256")
+                    if self.execution_bindings
+                    else None
+                ),
+                "briefing": (
+                    self.task_briefings[0].get("briefing_sha256")
+                    if self.task_briefings
+                    else None
+                ),
+                "conflict": (
+                    self.decision_conflicts[0].get("finding_sha256")
+                    if self.decision_conflicts
+                    else None
+                ),
+                "trust": (
+                    self.trust_records[0].get("trust_sha256")
+                    if self.trust_records
+                    else None
+                ),
             },
         }
         return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
@@ -1168,6 +1516,15 @@ class BridgeReader:
         "room_automation_policies",
         "room_discussions",
         "memories",
+        "governance_operations",
+        "workflow_schedules",
+        "capability_registry",
+        "capability_grants",
+        "permission_decisions",
+        "execution_bindings",
+        "task_briefings",
+        "decision_conflict_findings",
+        "trust_records",
         "message_route_receipts",
         "messages",
         "message_dispatches",
@@ -1180,8 +1537,9 @@ class BridgeReader:
         "events",
     )
 
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, project_root: Path | None = None) -> None:
         self.db_path = db_path.resolve()
+        self.project_root = project_root.resolve() if project_root is not None else None
         self._token_connection: sqlite3.Connection | None = None
 
     def connect(self) -> sqlite3.Connection:
@@ -1218,6 +1576,372 @@ class BridgeReader:
     @staticmethod
     def _rows(connection: sqlite3.Connection, query: str, params: tuple[Any, ...] = ()) -> tuple[dict[str, Any], ...]:
         return tuple(dict(row) for row in connection.execute(query, params).fetchall())
+
+    @staticmethod
+    def _usage_period_where(
+        period: str,
+        scope: str | None,
+        *,
+        timestamp: str = "recorded_utc",
+    ) -> tuple[str, tuple[Any, ...]]:
+        if period not in USAGE_PERIOD_KEYS:
+            raise ValueError(f"unsupported usage period: {period}")
+        clauses: list[str] = []
+        params: list[Any] = []
+        if scope is not None:
+            clauses.append("scope=?")
+            params.append(scope)
+        boundaries = {
+            "today": "datetime('now', 'start of day')",
+            "7d": "datetime('now', 'start of day', '-6 days')",
+            "30d": "datetime('now', 'start of day', '-29 days')",
+        }
+        if period in boundaries:
+            clauses.append(f"datetime({timestamp}) >= {boundaries[period]}")
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        return where, tuple(params)
+
+    @staticmethod
+    def _usage_trend_projection(alias: str = "usage") -> str:
+        prefix = f"{alias}." if alias else ""
+        return f"""COUNT({prefix}message_id) AS completed_dispatches,
+                    COALESCE(SUM({prefix}total_calls), 0) AS provider_calls,
+                    COALESCE(SUM({prefix}reported_calls), 0) AS reported_calls,
+                    CASE WHEN COUNT({prefix}message_id) = 0 THEN 0
+                         ELSE SUM({prefix}input_tokens) END AS input_tokens,
+                    CASE WHEN COUNT({prefix}message_id) = 0 THEN 0
+                         ELSE SUM({prefix}output_tokens) END AS output_tokens,
+                    CASE WHEN COUNT({prefix}message_id) = 0 THEN 0
+                         ELSE SUM({prefix}total_tokens) END AS total_tokens,
+                    CASE WHEN COUNT({prefix}message_id) = 0 THEN 0
+                         ELSE SUM({prefix}cached_input_tokens) END AS cached_input_tokens,
+                    CASE WHEN COUNT({prefix}message_id) = 0 THEN 0
+                         ELSE SUM({prefix}reasoning_tokens) END AS reasoning_tokens,
+                    COALESCE(SUM({prefix}input_tokens_reported_calls), 0)
+                        AS input_tokens_reported_calls,
+                    COALESCE(SUM({prefix}output_tokens_reported_calls), 0)
+                        AS output_tokens_reported_calls,
+                    COALESCE(SUM({prefix}total_tokens_reported_calls), 0)
+                        AS total_tokens_reported_calls,
+                    COALESCE(SUM({prefix}cached_input_tokens_reported_calls), 0)
+                        AS cached_input_tokens_reported_calls,
+                    COALESCE(SUM({prefix}reasoning_tokens_reported_calls), 0)
+                        AS reasoning_tokens_reported_calls"""
+
+    def _usage_trend(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        period: str,
+        scope: str | None,
+    ) -> tuple[tuple[dict[str, Any], ...], str, bool]:
+        projection = self._usage_trend_projection()
+        scope_join = " AND usage.scope=?" if scope is not None else ""
+        params: tuple[Any, ...] = (scope,) if scope is not None else ()
+        if period == "today":
+            rows = self._rows(
+                connection,
+                f"""WITH RECURSIVE hours(hour_number) AS (
+                            SELECT 0
+                            UNION ALL
+                            SELECT hour_number + 1 FROM hours WHERE hour_number < 23
+                        )
+                        SELECT printf('%02d:00', hours.hour_number) AS period_label,
+                               date('now') || 'T' || printf('%02d:00Z', hours.hour_number)
+                                   AS period_key,
+                               {projection}
+                          FROM hours
+                     LEFT JOIN inference_usage AS usage
+                            ON strftime('%H', usage.recorded_utc) = printf('%02d', hours.hour_number)
+                           AND datetime(usage.recorded_utc) >= datetime('now', 'start of day')
+                           {scope_join}
+                      GROUP BY hours.hour_number
+                      ORDER BY hours.hour_number""",
+                params,
+            )
+            return rows, "hour", False
+        if period in {"7d", "30d"}:
+            days = 6 if period == "7d" else 29
+            rows = self._rows(
+                connection,
+                f"""WITH RECURSIVE days(utc_date) AS (
+                            SELECT date('now', '-{days} days')
+                            UNION ALL
+                            SELECT date(utc_date, '+1 day') FROM days
+                             WHERE utc_date < date('now')
+                        )
+                        SELECT days.utc_date AS period_label,
+                               days.utc_date AS period_key,
+                               {projection}
+                          FROM days
+                     LEFT JOIN inference_usage AS usage
+                            ON substr(usage.recorded_utc, 1, 10) = days.utc_date
+                           {scope_join}
+                      GROUP BY days.utc_date
+                      ORDER BY days.utc_date""",
+                params,
+            )
+            return rows, "day", False
+
+        where, all_params = self._usage_period_where("all", scope)
+        monthly_projection = self._usage_trend_projection("")
+        rows = self._rows(
+            connection,
+            f"""SELECT substr(recorded_utc, 1, 7) AS period_label,
+                       substr(recorded_utc, 1, 7) AS period_key,
+                       {monthly_projection}
+                  FROM inference_usage{where}
+                 GROUP BY substr(recorded_utc, 1, 7)
+                 ORDER BY period_key DESC
+                 LIMIT 241""",
+            all_params,
+        )
+        truncated = len(rows) > 240
+        return tuple(reversed(rows[:240])), "month", truncated
+
+    def _usage_period_snapshot(
+        self,
+        connection: sqlite3.Connection,
+        *,
+        period: str,
+        scope: str | None,
+    ) -> dict[str, Any]:
+        where, params = self._usage_period_where(period, scope)
+        total_row = connection.execute(
+            f"""SELECT COUNT(*) AS completed_dispatches,
+                        COALESCE(SUM(total_calls), 0) AS provider_calls,
+                        COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                        SUM(input_tokens) AS input_tokens,
+                        SUM(output_tokens) AS output_tokens,
+                        SUM(total_tokens) AS total_tokens,
+                        SUM(cached_input_tokens) AS cached_input_tokens,
+                        SUM(reasoning_tokens) AS reasoning_tokens,
+                        COALESCE(SUM(input_tokens_reported_calls), 0)
+                            AS input_tokens_reported_calls,
+                        COALESCE(SUM(output_tokens_reported_calls), 0)
+                            AS output_tokens_reported_calls,
+                        COALESCE(SUM(total_tokens_reported_calls), 0)
+                            AS total_tokens_reported_calls,
+                        COALESCE(SUM(cached_input_tokens_reported_calls), 0)
+                            AS cached_input_tokens_reported_calls,
+                        COALESCE(SUM(reasoning_tokens_reported_calls), 0)
+                            AS reasoning_tokens_reported_calls,
+                        COALESCE(SUM(total_tokens_derived), 0)
+                            AS derived_total_dispatches,
+                        SUM(CASE WHEN usage_status='reported' THEN 1 ELSE 0 END)
+                            AS fully_reported_dispatches,
+                        SUM(CASE WHEN usage_status='partial' THEN 1 ELSE 0 END)
+                            AS partial_dispatches,
+                        SUM(CASE WHEN usage_status='unavailable' THEN 1 ELSE 0 END)
+                            AS unavailable_dispatches
+                   FROM inference_usage{where}""",
+            params,
+        ).fetchone()
+        totals = dict(total_row)
+        dispatch_where, dispatch_params = self._usage_period_where(
+            period, scope, timestamp="updated_utc"
+        )
+        dispatch_rows = connection.execute(
+            f"""SELECT status, COUNT(*) AS count
+                   FROM message_dispatches{dispatch_where}
+                  GROUP BY status""",
+            dispatch_params,
+        ).fetchall()
+        totals["dispatch_statuses"] = {
+            str(row["status"]): int(row["count"]) for row in dispatch_rows
+        }
+        by_model = self._rows(
+            connection,
+            f"""SELECT COALESCE(provider_id, '--') AS provider_id,
+                        COALESCE(model_id, '--') AS model_id,
+                        COUNT(*) AS completed_dispatches,
+                        COALESCE(SUM(total_calls), 0) AS provider_calls,
+                        COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                        SUM(input_tokens) AS input_tokens,
+                        SUM(output_tokens) AS output_tokens,
+                        SUM(total_tokens) AS total_tokens,
+                        SUM(cached_input_tokens) AS cached_input_tokens,
+                        SUM(reasoning_tokens) AS reasoning_tokens,
+                        COALESCE(SUM(input_tokens_reported_calls), 0)
+                            AS input_tokens_reported_calls,
+                        COALESCE(SUM(output_tokens_reported_calls), 0)
+                            AS output_tokens_reported_calls,
+                        COALESCE(SUM(total_tokens_reported_calls), 0)
+                            AS total_tokens_reported_calls,
+                        COALESCE(SUM(cached_input_tokens_reported_calls), 0)
+                            AS cached_input_tokens_reported_calls,
+                        COALESCE(SUM(reasoning_tokens_reported_calls), 0)
+                            AS reasoning_tokens_reported_calls,
+                        COALESCE(SUM(total_tokens_derived), 0)
+                            AS derived_total_dispatches
+                   FROM inference_usage{where}
+                  GROUP BY provider_id, model_id
+                  ORDER BY total_tokens DESC, provider_calls DESC, model_id
+                  LIMIT 100""",
+            params,
+        )
+        by_model_total = self._rows(
+            connection,
+            f"""SELECT COALESCE(model_id, '--') AS model_id,
+                        COUNT(*) AS completed_dispatches,
+                        COALESCE(SUM(total_calls), 0) AS provider_calls,
+                        COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                        SUM(input_tokens) AS input_tokens,
+                        SUM(output_tokens) AS output_tokens,
+                        SUM(total_tokens) AS total_tokens,
+                        SUM(cached_input_tokens) AS cached_input_tokens,
+                        SUM(reasoning_tokens) AS reasoning_tokens,
+                        COALESCE(SUM(input_tokens_reported_calls), 0)
+                            AS input_tokens_reported_calls,
+                        COALESCE(SUM(output_tokens_reported_calls), 0)
+                            AS output_tokens_reported_calls,
+                        COALESCE(SUM(total_tokens_reported_calls), 0)
+                            AS total_tokens_reported_calls,
+                        COALESCE(SUM(cached_input_tokens_reported_calls), 0)
+                            AS cached_input_tokens_reported_calls,
+                        COALESCE(SUM(reasoning_tokens_reported_calls), 0)
+                            AS reasoning_tokens_reported_calls
+                   FROM inference_usage{where}
+                  GROUP BY model_id
+                  ORDER BY total_tokens DESC, provider_calls DESC, model_id
+                  LIMIT 100""",
+            params,
+        )
+        by_provider = self._rows(
+            connection,
+            f"""SELECT COALESCE(provider_id, '--') AS provider_id,
+                        COUNT(*) AS completed_dispatches,
+                        COALESCE(SUM(total_calls), 0) AS provider_calls,
+                        COALESCE(SUM(reported_calls), 0) AS reported_calls,
+                        SUM(input_tokens) AS input_tokens,
+                        SUM(output_tokens) AS output_tokens,
+                        SUM(total_tokens) AS total_tokens,
+                        COALESCE(SUM(input_tokens_reported_calls), 0)
+                            AS input_tokens_reported_calls,
+                        COALESCE(SUM(output_tokens_reported_calls), 0)
+                            AS output_tokens_reported_calls,
+                        COALESCE(SUM(total_tokens_reported_calls), 0)
+                            AS total_tokens_reported_calls,
+                        CASE
+                          WHEN SUM(CASE WHEN substr(recorded_utc, 1, 10) = date('now')
+                                        THEN 1 ELSE 0 END) = 0 THEN 0
+                          ELSE SUM(CASE WHEN substr(recorded_utc, 1, 10) = date('now')
+                                        THEN total_tokens END)
+                        END AS today_tokens,
+                        COALESCE(SUM(CASE
+                          WHEN substr(recorded_utc, 1, 10) = date('now')
+                          THEN total_tokens_reported_calls ELSE 0 END), 0)
+                            AS today_total_tokens_reported_calls
+                   FROM inference_usage{where}
+                  GROUP BY provider_id
+                  ORDER BY total_tokens DESC, provider_calls DESC, provider_id
+                  LIMIT 12""",
+            params,
+        )
+        trend, granularity, trend_truncated = self._usage_trend(
+            connection, period=period, scope=scope
+        )
+        return {
+            "period": period,
+            "totals": totals,
+            "by_provider": by_provider,
+            "by_model": by_model,
+            "model_totals": by_model_total,
+            "trend": trend,
+            "granularity": granularity,
+            "trend_truncated": trend_truncated,
+        }
+
+    def _trust_rows(
+        self,
+        connection: sqlite3.Connection,
+        where: str,
+        params: tuple[Any, ...],
+        limit: int,
+    ) -> tuple[dict[str, Any], ...]:
+        rows = self._rows(
+            connection,
+            f"SELECT * FROM trust_records{where} "
+            "ORDER BY created_utc DESC, rowid DESC LIMIT ?",
+            (*params, limit),
+        )
+        projected = []
+        for raw in rows:
+            row = dict(raw)
+            bindings = safe_json(row.get("source_bindings_json"), [])
+            related = safe_json(row.get("related_record_ids_json"), [])
+            if not isinstance(bindings, list):
+                bindings = []
+            if not isinstance(related, list):
+                related = []
+            payload = {
+                "scope": row.get("scope"),
+                "record_id": row.get("record_id"),
+                "task_id": row.get("task_id"),
+                "actor": row.get("actor"),
+                "stage": row.get("stage"),
+                "statement": row.get("statement"),
+                "source_bindings": bindings,
+                "related_record_ids": related,
+                "created_utc": row.get("created_utc"),
+            }
+            integrity_valid = stable_sha256(payload) == row.get("trust_sha256")
+            live_bindings = [self._trust_binding_freshness(item) for item in bindings]
+            if not integrity_valid:
+                freshness = "invalid"
+            elif self.project_root is None:
+                freshness = "unavailable"
+            elif any(item.get("stale") for item in live_bindings):
+                freshness = "stale"
+            else:
+                freshness = "fresh"
+            row.update(
+                {
+                    "source_bindings": live_bindings,
+                    "related_record_ids": related,
+                    "integrity_valid": integrity_valid,
+                    "freshness": freshness,
+                    "stale": freshness in {"stale", "invalid"},
+                }
+            )
+            projected.append(row)
+        return tuple(projected)
+
+    def _trust_binding_freshness(self, value: Any) -> dict[str, Any]:
+        binding = dict(value) if isinstance(value, dict) else {"path": str(value)}
+        if self.project_root is None:
+            return {**binding, "stale": None, "stale_reason": "project_root_unavailable"}
+        relative = str(binding.get("path") or "").replace("\\", "/")
+        candidate = Path(relative)
+        if not relative or candidate.is_absolute() or ".." in candidate.parts:
+            return {**binding, "stale": True, "stale_reason": "unsafe_source_path"}
+        resolved = (self.project_root / candidate).resolve()
+        try:
+            resolved.relative_to(self.project_root)
+        except ValueError:
+            return {**binding, "stale": True, "stale_reason": "unsafe_source_path"}
+        if not resolved.is_file():
+            return {**binding, "stale": True, "stale_reason": "source_missing"}
+        hasher = hashlib.sha256()
+        size = 0
+        try:
+            with resolved.open("rb") as handle:
+                while chunk := handle.read(1024 * 1024):
+                    hasher.update(chunk)
+                    size += len(chunk)
+        except OSError:
+            return {**binding, "stale": True, "stale_reason": "source_unreadable"}
+        live_sha = hasher.hexdigest()
+        stale = size != int(binding.get("bytes") or -1) or live_sha != str(
+            binding.get("sha256") or ""
+        )
+        return {
+            **binding,
+            "stale": stale,
+            "stale_reason": "source_changed" if stale else None,
+            "live_bytes": size,
+            "live_sha256": live_sha,
+        }
 
     def snapshot(
         self,
@@ -1302,6 +2026,55 @@ class BridgeReader:
                     memory_count_params,
                 ).fetchone()[0]
             )
+            operations = self._rows(
+                connection,
+                f"SELECT * FROM governance_operations{where} "
+                "ORDER BY updated_utc DESC, operation_id LIMIT ?",
+                (*params, limit),
+            )
+            schedules = self._rows(
+                connection,
+                f"SELECT * FROM workflow_schedules{where} "
+                "ORDER BY updated_utc DESC, schedule_id LIMIT ?",
+                (*params, limit),
+            )
+            capabilities = self._rows(
+                connection,
+                f"SELECT * FROM capability_registry{where} "
+                "ORDER BY created_utc DESC, capability_id, registry_version LIMIT ?",
+                (*params, limit),
+            )
+            capability_grants = self._rows(
+                connection,
+                f"SELECT * FROM capability_grants{where} "
+                "ORDER BY created_utc DESC, rowid DESC LIMIT ?",
+                (*params, limit),
+            )
+            permission_decisions = self._rows(
+                connection,
+                f"SELECT * FROM permission_decisions{where} "
+                "ORDER BY created_utc DESC, decision_id LIMIT ?",
+                (*params, limit),
+            )
+            execution_bindings = self._rows(
+                connection,
+                f"SELECT * FROM execution_bindings{where} "
+                "ORDER BY updated_utc DESC, binding_id LIMIT ?",
+                (*params, limit),
+            )
+            task_briefings = self._rows(
+                connection,
+                f"SELECT * FROM task_briefings{where} "
+                "ORDER BY created_utc DESC, briefing_id LIMIT ?",
+                (*params, limit),
+            )
+            decision_conflicts = self._rows(
+                connection,
+                f"SELECT * FROM decision_conflict_findings{where} "
+                "ORDER BY created_utc DESC, finding_id LIMIT ?",
+                (*params, limit),
+            )
+            trust_records = self._trust_rows(connection, where, params, limit)
             message_where = "WHERE m.scope=?" if scope is not None else ""
             message_params: tuple[Any, ...] = (
                 (scope, limit) if scope is not None else (limit,)
@@ -1499,6 +2272,14 @@ class BridgeReader:
                       ORDER BY days.utc_date""",
                 params,
             )
+            usage_periods = {
+                period: self._usage_period_snapshot(
+                    connection,
+                    period=period,
+                    scope=scope,
+                )
+                for period in USAGE_PERIOD_KEYS
+            }
             usage_recent = self._rows(
                 connection,
                 f"SELECT * FROM inference_usage{where} "
@@ -1544,6 +2325,15 @@ class BridgeReader:
             route_profiles=route_profiles,
             provider_connections=provider_connections,
             memories=memories,
+            operations=operations,
+            schedules=schedules,
+            capabilities=capabilities,
+            capability_grants=capability_grants,
+            permission_decisions=permission_decisions,
+            execution_bindings=execution_bindings,
+            task_briefings=task_briefings,
+            decision_conflicts=decision_conflicts,
+            trust_records=trust_records,
             messages=messages,
             message_dispatches=message_dispatches,
             usage_totals=usage_totals,
@@ -1551,6 +2341,7 @@ class BridgeReader:
             usage_by_model=usage_by_model,
             usage_model_totals=usage_model_totals,
             usage_daily=usage_daily,
+            usage_periods=usage_periods,
             usage_recent=usage_recent,
             peer_calls=calls,
             peer_reviews=reviews,
@@ -1645,6 +2436,8 @@ class BridgeReader:
             member_rows = connection.execute(
                 f"""SELECT rm.*, rp.client_name, rp.provider_id, rp.model_id,
                             rp.reasoning_mode, rp.route_class,
+                            COALESCE(rmr.role_id, ?) AS role_id,
+                            rmr.role_label, rmr.role_sha256,
                             CASE WHEN EXISTS(
                                 SELECT 1 FROM agent_presence ap
                                 WHERE ap.scope=rm.scope AND ap.agent_id=rm.agent_id
@@ -1653,9 +2446,13 @@ class BridgeReader:
                     FROM room_memberships rm
                     LEFT JOIN route_profiles rp
                       ON rp.scope=rm.scope AND rp.route_id=rm.route_profile_id
+                    LEFT JOIN room_member_roles rmr
+                      ON rmr.scope=rm.scope AND rmr.room_id=rm.room_id
+                     AND rmr.agent_id=rm.agent_id
+                     AND rmr.room_session_id=rm.room_session_id
                     WHERE rm.scope=? AND rm.room_id=?{member_status_clause}
                     ORDER BY rm.status, rm.agent_id""",
-                (cutoff, scope, room_id),
+                (DEFAULT_ROOM_ROLE, cutoff, scope, room_id),
             ).fetchall()
             members = tuple(
                 {**dict(row), "online": bool(row["online"])} for row in member_rows
@@ -1839,6 +2636,26 @@ class BridgeReader:
         }
 
 
+MCP_HUMAN_CLIENT_TOOLS = (
+    "bind_guided_discussion",
+    "cancel_operation",
+    "control_discussion",
+    "create_room",
+    "enqueue_workflow",
+    "join_room",
+    "leave_room",
+    "list_agents",
+    "list_rooms",
+    "poll_messages",
+    "post_room_message",
+    "room_members",
+    "send_message",
+    "send_room_fanout",
+    "set_room_automation",
+    "set_room_member_role",
+)
+
+
 class McpHumanClient:
     """Use the bridge's stdio MCP tool path for explicit human messages."""
 
@@ -1860,6 +2677,21 @@ class McpHumanClient:
             raise ValueError("invalid human client identity")
         self.agent_id = agent_id
         self.client_name = client_name
+        Bridge(
+            self.project_root,
+            self.db_path,
+            self.agent_id,
+            self.scope,
+            client_name=self.client_name,
+        )
+        self.identity_capability = ensure_agent_identity_capability(
+            self.project_root,
+            self.db_path,
+            self.scope,
+            self.agent_id,
+            allowed_tools=MCP_HUMAN_CLIENT_TOOLS,
+            issued_by="peerbridge-control-room",
+        )
 
     @staticmethod
     def _python_executable() -> str:
@@ -1879,6 +2711,8 @@ class McpHumanClient:
             str(self.db_path),
             "--agent-id",
             self.agent_id,
+            "--identity-capability",
+            str(self.identity_capability.path),
             "--scope",
             self.scope,
             "--allow-tool",
@@ -1969,11 +2803,34 @@ class McpHumanClient:
         room_id: str,
         agent_id: str,
         route_profile_id: str | None = None,
+        role_id: str | None = None,
+        role_label: str | None = None,
     ) -> dict[str, Any]:
         payload = {"room_id": room_id, "agent_id": agent_id}
         if route_profile_id:
             payload["route_profile_id"] = route_profile_id
+        if role_id:
+            payload["role_id"] = role_id
+            if role_label:
+                payload["role_label"] = role_label
         return self.call_tool("join_room", payload)
+
+    def set_room_member_role(
+        self,
+        *,
+        room_id: str,
+        agent_id: str,
+        role_id: str,
+        role_label: str | None = None,
+    ) -> dict[str, Any]:
+        payload = {
+            "room_id": room_id,
+            "agent_id": agent_id,
+            "role_id": role_id,
+        }
+        if role_label:
+            payload["role_label"] = role_label
+        return self.call_tool("set_room_member_role", payload)
 
     def leave_room(self, *, room_id: str, agent_id: str) -> dict[str, Any]:
         return self.call_tool("leave_room", {"room_id": room_id, "agent_id": agent_id})
@@ -2137,6 +2994,49 @@ class McpHumanClient:
             },
         )
 
+    def enqueue_workflow(
+        self,
+        *,
+        operation_id: str,
+        workflow_id: str,
+        task_text: str,
+        working_directory: str,
+        resource_key: str,
+        max_attempts: int,
+        timeout_seconds: int,
+    ) -> dict[str, Any]:
+        return self.call_tool(
+            "enqueue_workflow",
+            {
+                "operation_id": operation_id,
+                "workflow_id": workflow_id,
+                "task_text": task_text,
+                "working_directory": working_directory,
+                "resource_key": resource_key,
+                "max_attempts": max_attempts,
+                "timeout_seconds": timeout_seconds,
+            },
+        )
+
+    def cancel_operation(
+        self, *, operation_id: str, reason: str
+    ) -> dict[str, Any]:
+        return self.call_tool(
+            "cancel_operation",
+            {"operation_id": operation_id, "reason": reason},
+        )
+
+    def bind_guided_discussion(
+        self, *, operation_id: str, discussion_id: str
+    ) -> dict[str, Any]:
+        return self.call_tool(
+            "bind_guided_discussion",
+            {
+                "operation_id": operation_id,
+                "discussion_id": discussion_id,
+            },
+        )
+
     def self_test(self) -> dict[str, Any]:
         with tempfile.TemporaryDirectory(prefix="mcp_pixel_send_test_") as temp:
             test_root = Path(temp)
@@ -2234,20 +3134,44 @@ class DetailTree(tk.Frame):
 class PixelMonitor:
     REFRESH_MS = 2000
 
-    def __init__(self, project_root: Path, db_path: Path, scope: str, refresh_ms: int = 1500) -> None:
+    def __init__(
+        self,
+        project_root: Path,
+        db_path: Path,
+        scope: str,
+        refresh_ms: int = 1500,
+        *,
+        ui_scale_factor: float | None = None,
+        theme: str | None = None,
+        locale: str | None = None,
+        hidden_self_test: bool = False,
+    ) -> None:
         self.project_root = project_root.resolve()
         self.scope = scope
+        self.ui_scale_factor = ui_scale_factor
         self.REFRESH_MS = max(500, min(int(refresh_ms), 10000))
         # Run the append-only schema migration before the read-only monitor opens.
         Bridge(self.project_root, db_path, "control-room-migrator", scope)
-        self.reader = BridgeReader(db_path)
+        self.reader = BridgeReader(db_path, self.project_root)
         self.human_client = McpHumanClient(self.project_root, db_path, scope)
+        control_room_bridge = Bridge(
+            self.project_root, db_path, HUMAN_AGENT_ID, scope
+        )
+        self.release_gate_service = ReleaseGateService.for_control_room_ui(
+            control_room_bridge
+        )
+        self.authorized_sessions = AuthorizedSessionRegistry(control_room_bridge)
         try:
             ui_preferences = load_preferences(self.project_root)
             self._preferences_load_error: str | None = None
         except LocalizationError as exc:
             ui_preferences = default_preferences()
             self._preferences_load_error = str(exc)
+        selected_theme = theme or str(ui_preferences["theme"])
+        selected_locale = locale or str(ui_preferences["locale"])
+        if selected_locale not in SUPPORTED_LOCALES:
+            raise LocalizationError("unsupported UI locale")
+        apply_color_palette(selected_theme)
         try:
             announcement_preferences = load_announcement_preferences(self.project_root)
             self._announcement_preferences_load_error: str | None = None
@@ -2256,12 +3180,24 @@ class PixelMonitor:
             self._announcement_preferences_load_error = str(exc)
         configure_windows_app_identity()
         self.root = tk.Tk()
+        self._hidden_self_test = hidden_self_test
+        if hidden_self_test:
+            # Tk can map the root during constructor-time layout updates. Hide it
+            # immediately so release verification never flashes or steals focus.
+            self.root.withdraw()
+            with contextlib.suppress(tk.TclError):
+                self.root.attributes("-alpha", 0.0)
+        if ui_scale_factor is not None:
+            self.root.tk.call(
+                "tk", "scaling", tk_scaling_for_windows_factor(ui_scale_factor)
+            )
         self.root.title(WINDOW_TITLE)
-        self.root.geometry("1320x820")
+        self.root.geometry("1440x900" if selected_theme == "modern" else "1320x820")
         self.root.minsize(980, 650)
         self.root.configure(bg=COLORS["bg"])
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._app_icon: tk.PhotoImage | None = None
+        self._sidebar_brand_icon: tk.PhotoImage | None = None
         self._windows_icon_handles: tuple[int, ...] = ()
         self._window_icon_after_id: str | None = None
         self._install_window_icon()
@@ -2279,15 +3215,34 @@ class PixelMonitor:
         ] = queue.SimpleQueue()
         self._ui_generation = 0
         self._closing = False
+        self._trust_action_in_progress = False
         self._last_agent_canvas_signature = ""
         self._last_room_seats_signature = ""
         self._last_room_agent_cards_signature = ""
+        self._room_agent_card_capacity = -1
         self._chat_render_query = ""
+        self._chat_render_room_id = ""
         self._chat_render_row_signatures: tuple[str, ...] | None = None
+        self._chat_follow_latest_on_open = False
+        self._chat_layout_history_width = 0
+        self._modern_workspace_positioned_width = 0
+        self.modern_toolbar_options_visible = False
+        self.modern_more_nav_visible = False
+        self.modern_room_settings_visible = False
+        self.modern_inspector_user_override: bool | None = None
+        self.modern_inspector_is_visible = True
+        self.modern_composer_advanced = False
+        self.modern_agent_editor_visible = False
+        self.modern_agent_library_visible = False
+        self.modern_recent_room_buttons: list[tk.Widget] = []
         self.paused = tk.BooleanVar(value=False)
         self.search = tk.StringVar(value="")
-        self.locale = tk.StringVar(value=str(ui_preferences["locale"]))
+        self.locale = tk.StringVar(value=selected_locale)
         self.locale_label = tk.StringVar(value=LOCALE_LABELS[self.locale.get()])
+        self.theme = tk.StringVar(value=selected_theme)
+        self.theme_choice = tk.StringVar(
+            value=THEME_LABELS[self.locale.get()][selected_theme]
+        )
         self.refresh_status = tk.StringVar(value="")
         self._last_successful_refresh: datetime | None = None
         self.tutorial_completed = bool(ui_preferences["tutorial_completed"])
@@ -2306,8 +3261,10 @@ class PixelMonitor:
         self._announcement_cursors = dict(announcement_preferences["cursors"])
         self._announcement_after_id: str | None = None
         self._announcement_window: tk.Toplevel | None = None
+        self._pending_announcement_popup_rows: tuple[Announcement, ...] = ()
         self._feedback_reflow_after_id: str | None = None
         self._tutorial_window: tk.Toplevel | None = None
+        self._tutorial_select_page: Callable[[str], None] | None = None
         # Empty means initial render should select the first real room agent.
         # Once a human explicitly selects broadcast, refreshes preserve it.
         self.message_recipient = tk.StringVar(value="")
@@ -2321,7 +3278,9 @@ class PixelMonitor:
         self.message_model = tk.StringVar(value="")
         self.message_reasoning = tk.StringVar(value="")
         self.message_task = tk.StringVar(value=f"human-chat-{datetime.now().strftime('%Y%m%d')}")
-        self.message_subject = tk.StringVar(value="HUMAN INTERVENTION")
+        self.message_subject = tk.StringVar(
+            value=translate(self.locale.get(), "chat.default_subject")
+        )
         self.message_status = tk.StringVar(
             value=translate(self.locale.get(), "chat.message_hint")
         )
@@ -2340,6 +3299,7 @@ class PixelMonitor:
         self.connection_route_id = tk.StringVar(value="")
         self.connection_model = tk.StringVar(value="")
         self.connection_response_model = tk.StringVar(value="")
+        self.connection_timeout_seconds = tk.StringVar(value="60")
         self.connection_reasoning = tk.StringVar(value="")
         self.connection_status = tk.StringVar(
             value=translate(self.locale.get(), "connection.status.initial")
@@ -2379,19 +3339,27 @@ class PixelMonitor:
         )
         self._ccswitch_providers: dict[str, CcSwitchProvider] = {}
         self.room_choice = tk.StringVar(value="")
-        self.room_status = tk.StringVar(value="ROOMS LOADING...")
+        self.room_status = tk.StringVar(
+            value=translate(self.locale.get(), "chat.rooms_loading")
+        )
         self.room_automation_choice = tk.StringVar(
             value=translate(self.locale.get(), AUTOMATION_MODE_TO_KEY["once"])
         )
         self.room_round_limit = tk.StringVar(value="4")
         self.room_message_limit = tk.StringVar(value="40")
         self.room_stagnation_limit = tk.StringVar(value="2")
-        self.discussion_status = tk.StringVar(value="DISCUSSION // IDLE")
+        self.discussion_status = tk.StringVar(
+            value=translate(self.locale.get(), "chat.discussion.idle")
+        )
+        self.guided_workflow_status = tk.StringVar(value="")
         self._active_discussion: dict[str, Any] | None = None
         self.seat_agent = tk.StringVar(value="")
         self.seat_provider_choice = tk.StringVar(value="")
         self.seat_model_choice = tk.StringVar(value="")
         self.seat_reasoning_choice = tk.StringVar(value="")
+        self.seat_role_choice = tk.StringVar(value="")
+        self.seat_custom_role = tk.StringVar(value="")
+        self._seat_role_labels: dict[str, str] = {}
         self.seat_status = tk.StringVar(
             value=translate(self.locale.get(), "chat.seat_hint")
         )
@@ -2402,6 +3370,7 @@ class PixelMonitor:
         self._rooms: dict[str, dict[str, Any]] = {}
         self._room_ids_by_label: dict[str, str] = {}
         self._room_members: tuple[dict[str, Any], ...] = ()
+        self._room_view_unavailable = False
         self._room_messages: tuple[dict[str, Any], ...] = ()
         self._room_history_stack: list[int | None] = [None]
         self._room_page_has_older = False
@@ -2429,6 +3398,7 @@ class PixelMonitor:
         self._codex_catalog_error: str | None = None
         self._selected_room_seat_agent: str | None = None
         self.room_refresh_in_progress = False
+        self._room_refresh_pending = False
         self.room_action_in_progress = False
         self._last_room_refresh = 0.0
         self._last_room_view_signature = ""
@@ -2438,14 +3408,35 @@ class PixelMonitor:
         self.send_in_progress = False
         self._send_token_sequence = 0
         self._active_send_token: int | None = None
-        self.active_page = "chat"
+        self.active_page = "cockpit"
         self.nav_buttons: dict[str, tk.Button] = {}
         self.pages: dict[str, tk.Frame] = {}
+        self._localized_label_widgets: dict[str, list[tk.Label]] = {}
         self._configure_styles()
+        self._install_text_editing_bindings()
         self._build_layout()
+        workflow_bridge = Bridge(
+            self.project_root,
+            db_path,
+            CONTROL_ROOM_WORKFLOW_ID,
+            scope,
+        )
+        self.workflow_runner = ManagedWorkflowRunner(
+            workflow_bridge,
+            self.cockpit.manager,
+        )
+        self.room_discussion_tracker = RoomDiscussionTracker(workflow_bridge)
+        self.verification_engine = VerificationTriggerEngine(workflow_bridge)
+        self.trust_workflows.set_verification_callbacks(
+            status_provider=self.verification_engine.status,
+            request_scan=self.verification_engine.request_scan,
+        )
         self._apply_locale(save=False)
         self.search.trace_add("write", lambda *_: self.render(force=True))
         self._schedule_ui_pump()
+        self.verification_engine.start()
+        self.room_discussion_tracker.start()
+        self.workflow_runner.start()
         self.refresh(force=True)
         self._schedule_announcement_check(1500)
         self.root.after(900, self.refresh_official_agent_statuses)
@@ -2455,6 +3446,217 @@ class PixelMonitor:
     def _t(self, key: str) -> str:
         locale = getattr(self, "locale", None)
         return translate(locale.get() if locale is not None else "zh-Hant", key)
+
+    def _navigation_label(self, key: str) -> str:
+        """Keep numbered Pixel navigation while Modern reads like a workspace."""
+        text = self._t(f"nav.{key}")
+        if ACTIVE_THEME == "modern":
+            prefix, separator, remainder = text.partition("  ")
+            if separator and prefix.strip().isdigit():
+                text = remainder.lstrip()
+            icon = MODERN_NAV_ICONS.get(key, "·")
+            return f"{icon}   {text}"
+        return text
+
+    def _localized_label(
+        self,
+        parent: tk.Misc,
+        key: str,
+        **kwargs: Any,
+    ) -> tk.Label:
+        label = tk.Label(parent, text=self._t(key), **kwargs)
+        self._localized_label_widgets.setdefault(key, []).append(label)
+        return label
+
+    def _discussion_status_text(self, status: Any) -> str:
+        key = DISCUSSION_STATUS_TO_KEY.get(
+            str(status or "").strip().lower(),
+            "chat.discussion.status.unknown",
+        )
+        return self._t(key)
+
+    def _room_state_text(self, state: Any) -> str:
+        key = {
+            "online": "chat.state.online",
+            "offline": "chat.state.offline",
+            "control": "chat.state.control",
+            "active": "chat.state.active",
+            "unrouted": "chat.state.unrouted",
+        }.get(str(state or "").strip().lower())
+        return self._t(key) if key else str(state or "--")
+
+    @staticmethod
+    def _text_widget_is_editable(widget: Any) -> bool:
+        try:
+            state = str(widget.cget("state"))
+        except (AttributeError, tk.TclError):
+            state = "normal"
+        if state in {"disabled", "readonly"}:
+            return False
+        try:
+            ttk_states = set(widget.state())
+        except (AttributeError, tk.TclError, TypeError):
+            ttk_states = set()
+        return not bool({"disabled", "readonly"} & ttk_states)
+
+    @staticmethod
+    def _text_widget_selection(widget: Any) -> tuple[Any, Any] | None:
+        try:
+            if str(widget.winfo_class()) == "Text":
+                ranges = widget.tag_ranges("sel")
+                if len(ranges) >= 2:
+                    return ranges[0], ranges[1]
+                return None
+            return widget.index("sel.first"), widget.index("sel.last")
+        except (AttributeError, tk.TclError, ValueError):
+            return None
+
+    def _copy_text_widget_selection(self, widget: Any) -> bool:
+        selection = self._text_widget_selection(widget)
+        if selection is None:
+            return False
+        try:
+            if str(widget.winfo_class()) == "Text":
+                value = widget.get(selection[0], selection[1])
+            else:
+                raw = widget.get()
+                value = raw[int(selection[0]) : int(selection[1])]
+            self.root.clipboard_clear()
+            self.root.clipboard_append(value)
+        except (AttributeError, tk.TclError, TypeError, ValueError):
+            return False
+        return True
+
+    def _cut_text_widget_selection(self, widget: Any) -> bool:
+        if not self._text_widget_is_editable(widget):
+            return False
+        selection = self._text_widget_selection(widget)
+        if selection is None or not self._copy_text_widget_selection(widget):
+            return False
+        try:
+            widget.delete(selection[0], selection[1])
+        except (AttributeError, tk.TclError):
+            return False
+        return True
+
+    def _paste_into_text_widget(self, widget: Any) -> bool:
+        if not self._text_widget_is_editable(widget):
+            return False
+        try:
+            value = self.root.clipboard_get()
+        except (AttributeError, tk.TclError):
+            return False
+        selection = self._text_widget_selection(widget)
+        try:
+            if selection is not None:
+                widget.delete(selection[0], selection[1])
+            widget.insert("insert", value)
+        except (AttributeError, tk.TclError):
+            return False
+        return True
+
+    @staticmethod
+    def _select_all_text_widget(widget: Any) -> bool:
+        try:
+            if str(widget.winfo_class()) == "Text":
+                widget.tag_add("sel", "1.0", "end-1c")
+                widget.mark_set("insert", "end-1c")
+                widget.see("insert")
+            else:
+                widget.selection_range(0, "end")
+                widget.icursor("end")
+        except (AttributeError, tk.TclError):
+            return False
+        return True
+
+    @staticmethod
+    def _shortcut(handler: Callable[[Any], Any]) -> Callable[[Any], str]:
+        def invoke(event: Any) -> str:
+            handler(event.widget)
+            return "break"
+
+        return invoke
+
+    def _show_text_context_menu(self, event: Any) -> str:
+        widget = event.widget
+        try:
+            widget.focus_set()
+        except (AttributeError, tk.TclError):
+            return "break"
+        selection = self._text_widget_selection(widget)
+        editable = self._text_widget_is_editable(widget)
+        try:
+            self.root.clipboard_get()
+            can_paste = editable
+        except tk.TclError:
+            can_paste = False
+        menu = tk.Menu(self.root, tearoff=False)
+        menu.add_command(
+            label=self._t("edit.cut"),
+            command=lambda: self._cut_text_widget_selection(widget),
+            state="normal" if editable and selection is not None else "disabled",
+        )
+        menu.add_command(
+            label=self._t("edit.copy"),
+            command=lambda: self._copy_text_widget_selection(widget),
+            state="normal" if selection is not None else "disabled",
+        )
+        menu.add_command(
+            label=self._t("edit.paste"),
+            command=lambda: self._paste_into_text_widget(widget),
+            state="normal" if can_paste else "disabled",
+        )
+        menu.add_separator()
+        menu.add_command(
+            label=self._t("edit.select_all"),
+            command=lambda: self._select_all_text_widget(widget),
+        )
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
+    def _install_text_editing_bindings(self) -> None:
+        bindings = {
+            "<Control-a>": self._shortcut(self._select_all_text_widget),
+            "<Control-A>": self._shortcut(self._select_all_text_widget),
+            "<Control-c>": self._shortcut(self._copy_text_widget_selection),
+            "<Control-C>": self._shortcut(self._copy_text_widget_selection),
+            "<Control-v>": self._shortcut(self._paste_into_text_widget),
+            "<Control-V>": self._shortcut(self._paste_into_text_widget),
+            "<Control-x>": self._shortcut(self._cut_text_widget_selection),
+            "<Control-X>": self._shortcut(self._cut_text_widget_selection),
+            "<Control-Insert>": self._shortcut(self._copy_text_widget_selection),
+            "<Shift-Insert>": self._shortcut(self._paste_into_text_widget),
+            "<Shift-Delete>": self._shortcut(self._cut_text_widget_selection),
+            "<Button-3>": self._show_text_context_menu,
+        }
+        for widget_class in ("Entry", "TEntry", "Text", "TCombobox"):
+            for sequence, handler in bindings.items():
+                self.root.bind_class(widget_class, sequence, handler)
+
+    def _place_transient(self, window: tk.Toplevel, width: int, height: int) -> None:
+        self.root.update_idletasks()
+        window.geometry(
+            centered_transient_geometry(
+                parent_x=self.root.winfo_rootx(),
+                parent_y=self.root.winfo_rooty(),
+                parent_width=self.root.winfo_width(),
+                parent_height=self.root.winfo_height(),
+                width=width,
+                height=height,
+            )
+        )
+
+    def _tutorial_is_open(self) -> bool:
+        try:
+            return bool(
+                self._tutorial_window is not None
+                and self._tutorial_window.winfo_exists()
+            )
+        except tk.TclError:
+            return False
 
     def _library_selection_text(self, agent_id: str | None = None) -> str:
         if agent_id:
@@ -2487,9 +3689,15 @@ class PixelMonitor:
         if png_path.is_file():
             try:
                 self._app_icon = tk.PhotoImage(file=str(png_path))
+                longest_edge = max(self._app_icon.width(), self._app_icon.height())
+                subsample = max(1, (longest_edge + 27) // 28)
+                self._sidebar_brand_icon = self._app_icon.subsample(
+                    subsample, subsample
+                )
                 self.root.iconphoto(True, self._app_icon)
             except tk.TclError:
                 self._app_icon = None
+                self._sidebar_brand_icon = None
         self._windows_icon_handles = apply_windows_window_icon(self.root, ico_path)
         if sys.platform == "win32":
             # Tk replaces its native top-level during initial mapping. Reapply the
@@ -2526,12 +3734,27 @@ class PixelMonitor:
             self.show_page("chat")
             self.sidebar_frame.grid_remove()
             self.toolbar_frame.grid_remove()
-            self.room_seats_frame.grid_remove()
+            modern_inspector = getattr(self, "modern_chat_inspector", None)
+            modern_workspace = getattr(self, "modern_chat_workspace", None)
+            if modern_inspector is not None and modern_workspace is not None:
+                with contextlib.suppress(tk.TclError):
+                    modern_workspace.forget(modern_inspector)
+            else:
+                self.room_seats_frame.grid_remove()
             self.page_host.grid_configure(padx=0, pady=0)
         else:
             self.sidebar_frame.grid()
             self.toolbar_frame.grid()
-            self.room_seats_frame.grid()
+            modern_inspector = getattr(self, "modern_chat_inspector", None)
+            modern_workspace = getattr(self, "modern_chat_workspace", None)
+            if modern_inspector is not None and modern_workspace is not None:
+                with contextlib.suppress(tk.TclError):
+                    if str(modern_inspector) not in modern_workspace.panes():
+                        modern_workspace.add(
+                            modern_inspector, minsize=320, stretch="never"
+                        )
+            else:
+                self.room_seats_frame.grid()
             self.page_host.grid_configure(padx=12, pady=(0, 12))
         try:
             self.root.attributes("-fullscreen", self.chat_focus_mode)
@@ -2545,19 +3768,1386 @@ class PixelMonitor:
         self.root.after_idle(self._layout_chat_after_resize)
         self.root.after(100, self._layout_chat_after_resize)
 
-    def _layout_chat_after_resize(self) -> None:
-        """Reflow the split and bubbles after fullscreen geometry settles."""
+    def _show_modern_inspector(self, key: str) -> None:
+        if ACTIVE_THEME != "modern" or key not in MODERN_INSPECTOR_KEYS:
+            return
+        frames = getattr(self, "modern_inspector_frames", {})
+        frame = frames.get(key)
+        if frame is None:
+            return
+        frame.tkraise()
+        self.modern_inspector_active = key
+        for candidate, button in self.modern_inspector_buttons.items():
+            selected = candidate == key
+            button.configure(
+                bg=MODERN_NAV_ACTIVE_BG if selected else COLORS["panel"],
+                fg=COLORS["text"] if selected else COLORS["muted"],
+            )
+
+    def _modern_inspector_present(self) -> bool:
+        workspace = getattr(self, "modern_chat_workspace", None)
+        inspector = getattr(self, "modern_chat_inspector", None)
+        if workspace is None or inspector is None:
+            return False
+        try:
+            return str(inspector) in {str(pane) for pane in workspace.panes()}
+        except tk.TclError:
+            return False
+
+    def _sync_modern_inspector_visibility(self, workspace_width: int | None = None) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        workspace = getattr(self, "modern_chat_workspace", None)
+        inspector = getattr(self, "modern_chat_inspector", None)
+        button = getattr(self, "modern_inspector_toggle_button", None)
+        if workspace is None or inspector is None:
+            return
+        try:
+            width = max(1, int(workspace_width or workspace.winfo_width()))
+            desired = (
+                self.modern_inspector_user_override
+                if self.modern_inspector_user_override is not None
+                else width >= MODERN_INSPECTOR_BREAKPOINT
+            )
+            present = self._modern_inspector_present()
+            if desired and not present:
+                workspace.add(
+                    inspector,
+                    minsize=268,
+                    width=MODERN_INSPECTOR_WIDTH,
+                    stretch="never",
+                )
+            elif not desired and present:
+                workspace.forget(inspector)
+            self.modern_inspector_is_visible = bool(desired)
+            if button is not None:
+                button.configure(
+                    text=self._t(
+                        "modern.room.hide_context"
+                        if desired
+                        else "modern.room.show_context"
+                    )
+                )
+        except (tk.TclError, TypeError, ValueError):
+            return
+
+    def _toggle_modern_inspector(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_inspector_user_override = not self._modern_inspector_present()
+        self._sync_modern_inspector_visibility()
+        self.root.after_idle(self._layout_chat_after_resize)
+
+    def _toggle_modern_toolbar_options(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_toolbar_options_visible = not self.modern_toolbar_options_visible
+        for widget in getattr(self, "modern_toolbar_option_widgets", ()):
+            with contextlib.suppress(tk.TclError):
+                if self.modern_toolbar_options_visible:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
+        button = getattr(self, "modern_toolbar_options_button", None)
+        if button is not None:
+            button.configure(
+                text=(
+                    self._t("modern.toolbar.close_options")
+                    if self.modern_toolbar_options_visible
+                    else self._t("modern.toolbar.options")
+                )
+            )
+
+    def _toggle_modern_agent_library(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_agent_library_visible = not self.modern_agent_library_visible
+        panel = getattr(self, "modern_agent_library_panel", None)
+        button = getattr(self, "modern_agent_library_button", None)
+        if panel is not None:
+            if self.modern_agent_library_visible:
+                panel.pack(fill="x", pady=(2, 8))
+            else:
+                panel.pack_forget()
+        if button is not None:
+            button.configure(
+                text=(
+                    self._t("modern.sidebar.hide_agents")
+                    if self.modern_agent_library_visible
+                    else self._t("modern.sidebar.show_agents")
+                )
+            )
+
+    def _toggle_modern_more_nav(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_more_nav_visible = not self.modern_more_nav_visible
+        frame = getattr(self, "modern_more_nav_frame", None)
+        button = getattr(self, "modern_more_nav_button", None)
+        if frame is not None:
+            if self.modern_more_nav_visible:
+                frame.pack(fill="x")
+            else:
+                frame.pack_forget()
+        if button is not None:
+            button.configure(
+                text=self._t(
+                    "modern.nav.less"
+                    if self.modern_more_nav_visible
+                    else "modern.nav.more"
+                )
+            )
+
+    def _select_modern_recent_room(self, room_id: str) -> None:
+        label = next(
+            (
+                candidate
+                for candidate, candidate_id in self._room_ids_by_label.items()
+                if candidate_id == room_id
+            ),
+            "",
+        )
+        if not label:
+            return
+        self.room_choice.set(label)
+        self._on_room_selected()
+        self.show_page("chat")
+
+    def _sync_modern_recent_rooms(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        frame = getattr(self, "modern_recent_rooms_frame", None)
+        if frame is None:
+            return
+        for button in self.modern_recent_room_buttons:
+            with contextlib.suppress(tk.TclError):
+                button.destroy()
+        self.modern_recent_room_buttons = []
+        rooms = sorted(
+            self._rooms.values(),
+            key=lambda row: str(row.get("updated_utc") or row.get("created_utc") or ""),
+            reverse=True,
+        )[:5]
+        if not rooms:
+            empty = tk.Label(
+                frame,
+                text=self._t("modern.rooms.empty"),
+                bg=MODERN_SIDEBAR_BG,
+                fg=COLORS["muted"],
+                anchor="w",
+                padx=10,
+                pady=7,
+                font=(MODERN_FONT_FAMILY, 9),
+            )
+            empty.pack(fill="x")
+            self.modern_recent_room_buttons.append(empty)
+            return
+        for row in rooms:
+            room_id = str(row.get("room_id") or "")
+            active = room_id == self.selected_room_id
+            name = str(row.get("name") or room_id or self._t("modern.rooms.unnamed"))
+            count = int(row.get("message_count") or 0)
+            updated_text = utc_text(
+                row.get("updated_utc") or row.get("created_utc")
+            ).rsplit(" ", 1)[-1][:5]
+            row_bg = MODERN_NAV_ACTIVE_BG if active else MODERN_SIDEBAR_BG
+            room_row = tk.Frame(
+                frame,
+                bg=row_bg,
+                highlightthickness=0,
+            )
+            room_row.pack(fill="x", pady=1, ipady=1)
+            tk.Frame(
+                room_row,
+                bg=COLORS["blue"] if active else row_bg,
+                width=3,
+            ).pack(side="left", fill="y")
+            room_content = tk.Frame(room_row, bg=row_bg)
+            room_content.pack(side="left", fill="x", expand=True, padx=(7, 6), pady=4)
+            room_content.grid_columnconfigure(0, weight=1)
+            name_button = tk.Button(
+                room_content,
+                text=clip(name, 22),
+                command=lambda value=room_id: self._select_modern_recent_room(value),
+                bg=row_bg,
+                fg=COLORS["text"],
+                activebackground=MODERN_NAV_ACTIVE_BG,
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                anchor="w",
+                padx=0,
+                pady=0,
+                font=(MODERN_FONT_FAMILY, 9, "bold" if active else "normal"),
+            )
+            name_button.grid(row=0, column=0, sticky="ew")
+            time_button = tk.Button(
+                room_content,
+                text=updated_text,
+                command=lambda value=room_id: self._select_modern_recent_room(value),
+                bg=row_bg,
+                fg=COLORS["muted"],
+                activebackground=MODERN_NAV_ACTIVE_BG,
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                padx=0,
+                pady=0,
+                font=(MODERN_FONT_FAMILY, 7),
+            )
+            time_button.grid(row=0, column=1, sticky="e")
+            count_button = tk.Button(
+                room_content,
+                text=self._t("modern.rooms.messages").format(count=count),
+                command=lambda value=room_id: self._select_modern_recent_room(value),
+                bg=row_bg,
+                fg=COLORS["muted"],
+                activebackground=MODERN_NAV_ACTIVE_BG,
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                anchor="w",
+                padx=0,
+                pady=0,
+                font=(MODERN_FONT_FAMILY, 7),
+            )
+            count_button.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(1, 0))
+            self.modern_recent_room_buttons.append(room_row)
+
+    def _toggle_modern_room_settings(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_room_settings_visible = not self.modern_room_settings_visible
+        self._reflow_modern_room_bar(
+            self.modern_room_bar,
+            self.modern_limit_frame,
+            self.modern_discussion_controls,
+        )
+
+    def _toggle_modern_composer_advanced(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_composer_advanced = not self.modern_composer_advanced
+        self._configure_chat_composer_layout(self._chat_composer_compact)
+        self.root.after_idle(self._layout_chat_after_resize)
+
+    def _toggle_modern_agent_editor(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        self.modern_agent_editor_visible = not self.modern_agent_editor_visible
+        self._reflow_modern_room_inspector(
+            self.room_seats_frame,
+            self.modern_role_bar,
+            self.modern_seat_scroll,
+            self.modern_guided_panel,
+        )
+
+    def _sync_modern_chat_context(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        title_label = getattr(self, "modern_room_title_label", None)
+        context_label = getattr(self, "modern_room_context_label", None)
+        room_id = str(getattr(self, "selected_room_id", "") or "")
+        room = getattr(self, "_rooms", {}).get(room_id, {})
+        room_name = str(
+            room.get("name")
+            or room_id
+            or self._t("modern.rooms.unnamed")
+        )
+        room_messages = tuple(getattr(self, "_room_messages", ()) or ())
+        focus_title = ""
+        for message in reversed(room_messages):
+            subject = str(message.get("subject") or "").strip()
+            if subject and not str(message.get("reply_to") or "").strip():
+                focus_title = subject
+                break
+        if not focus_title:
+            focus_title = room_name
+        members = tuple(getattr(self, "_room_members", ()) or ())
+        active_agents = sum(
+            1
+            for row in members
+            if str(row.get("status") or "active").lower() == "active"
+            and str(row.get("agent_id") or "") != HUMAN_AGENT_ID
+        )
+        messages = int(room.get("message_count") or len(room_messages))
+        context = self._t("modern.room.context").format(
+            scope=clip(self.scope, 32),
+            count=active_agents,
+            messages=messages,
+        )
+        if title_label is not None:
+            title_label.configure(text=clip(room_name, 52))
+        if context_label is not None:
+            context_label.configure(text=context)
+        if getattr(self, "active_page", "") == "chat":
+            page_title = getattr(self, "page_title", None)
+            if page_title is not None:
+                page_title.configure(text=clip(focus_title, 58))
+            scope_label = getattr(self, "modern_toolbar_scope_label", None)
+            if scope_label is not None:
+                scope_label.configure(text=f"{clip(room_name, 24)}  ·  {context}")
+
+    @staticmethod
+    def _modern_agent_presentation(sender: str) -> tuple[str, str, str, str]:
+        sender_key = sender.lower()
+        sender_style = {
+            "codex-main": ("Codex", "C", "#e8f0fe", "#315c9f"),
+            "claude-code": ("Claude Code", "CL", "#f2edf9", "#72579b"),
+            "grok-relay": ("Grok", "G", "#edf1f4", "#4f5b66"),
+            "grok-official": ("Grok", "G", "#edf1f4", "#4f5b66"),
+            "kimi-relay": ("Kimi", "K", "#edf4f1", "#39725f"),
+            "peerbridge-orchestrator": ("PeerBridge", "PB", "#eef2f7", "#385d83"),
+        }
+        return sender_style.get(
+            sender_key,
+            (
+                sender,
+                "".join(part[:1] for part in sender.split("-")[:2]).upper() or "?",
+                "#f4f6f8",
+                "#5d6873",
+            )
+        )
+
+    def _render_modern_agent_inspector(self) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        frame = getattr(self, "modern_agents_summary_frame", None)
+        if frame is None:
+            return
+        for child in frame.winfo_children():
+            child.destroy()
+        cards = tuple(
+            card
+            for card in room_agent_cards(
+                self.selected_room_id,
+                self._room_members,
+                self._library_agents,
+            )
+            if str(card.get("agent_id") or "") != HUMAN_AGENT_ID
+        )
+        room_rows = tuple(
+            room_messages(
+                getattr(self, "_room_messages", ()) or (),
+                self.selected_room_id,
+            )
+        )
+        room_message_ids = {
+            str(row.get("message_id"))
+            for row in room_rows
+            if row.get("message_id")
+        }
+        snapshot = getattr(self, "snapshot", None)
+        dispatches = tuple(
+            row
+            for row in (getattr(snapshot, "message_dispatches", ()) if snapshot else ())
+            if str(row.get("message_id") or "") in room_message_ids
+        )
+        dispatch_by_agent: dict[str, dict[str, Any]] = {}
+        for row in dispatches:
+            agent_id = str(row.get("agent_id") or "")
+            if agent_id:
+                dispatch_by_agent[agent_id] = row
+        replied_agents = {
+            str(row.get("sender") or "")
+            for row in room_rows
+            if str(row.get("sender") or "") not in {"", HUMAN_AGENT_ID}
+        }
+        status_counts: dict[str, int] = {}
+        for row in dispatches:
+            status = str(row.get("status") or "unknown").lower()
+            status_counts[status] = status_counts.get(status, 0) + 1
+        completed = max(status_counts.get("completed", 0), len(replied_agents))
+        in_flight = status_counts.get("claimed", 0) + status_counts.get("retryable", 0)
+        failed = status_counts.get("failed", 0)
+        header = tk.Frame(frame, bg=COLORS["panel"])
+        header.pack(fill="x", padx=12, pady=(10, 6))
+        tk.Label(
+            header,
+            text=self._t("modern.inspector.room_status"),
+            bg=COLORS["panel"],
+            fg=COLORS["text"],
+            font=(MODERN_FONT_FAMILY, 11, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            header,
+            text=self._t("modern.inspector.seat_count").format(count=len(cards)),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            font=(MODERN_FONT_FAMILY, 9),
+        ).pack(side="right")
+
+        metrics = tk.Frame(frame, bg=COLORS["panel_2"], height=44)
+        metrics.pack(fill="x", padx=12, pady=(0, 8))
+        metrics.pack_propagate(False)
+        metric_specs = (
+            (self._t("modern.inspector.messages"), len(room_rows)),
+            (self._t("modern.inspector.completed"), completed),
+            (self._t("modern.inspector.in_flight"), in_flight),
+            (self._t("modern.inspector.failed"), failed),
+        )
+        for column in range(len(metric_specs)):
+            metrics.grid_columnconfigure(column, weight=1, uniform="modern-room-metric")
+        metrics.grid_rowconfigure(0, weight=1)
+        for index, (label, value) in enumerate(metric_specs):
+            metric = tk.Frame(
+                metrics,
+                bg=COLORS["panel_2"],
+                highlightthickness=0,
+            )
+            metric.grid(
+                row=0,
+                column=index,
+                sticky="nsew",
+                padx=(0, 1) if index < len(metric_specs) - 1 else 0,
+            )
+            tk.Label(
+                metric,
+                text=str(value),
+                bg=COLORS["panel_2"],
+                fg=COLORS["text"],
+                anchor="center",
+                font=(MODERN_FONT_FAMILY, 10, "bold"),
+            ).pack(fill="x", pady=(5, 0))
+            tk.Label(
+                metric,
+                text=label,
+                bg=COLORS["panel_2"],
+                fg=COLORS["muted"],
+                anchor="center",
+                font=(MODERN_FONT_FAMILY, 7),
+            ).pack(fill="x", pady=(0, 4))
+
+        target = max(len(cards), 1)
+        progress_ratio = min(completed / target, 1.0)
+        progress = tk.Frame(frame, bg=COLORS["panel"])
+        progress.pack(fill="x", padx=12, pady=(0, 8))
+        tk.Label(
+            progress,
+            text=self._t("modern.inspector.reply_progress").format(
+                completed=completed,
+                total=len(cards),
+            ),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            anchor="w",
+            font=(MODERN_FONT_FAMILY, 8),
+        ).pack(fill="x")
+        track = tk.Frame(progress, bg=COLORS["panel_2"], height=4)
+        track.pack(fill="x", pady=(5, 0))
+        track.pack_propagate(False)
+        bar = tk.Frame(track, bg=COLORS["green"], height=4)
+        bar.place(relx=0, rely=0, relwidth=progress_ratio, relheight=1)
+
+        if not cards:
+            tk.Label(
+                frame,
+                text=self._t("chat.no_agents"),
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                anchor="w",
+                padx=12,
+                pady=12,
+                font=(MODERN_FONT_FAMILY, 9),
+            ).pack(fill="x")
+        for card in cards:
+            agent_id = str(card.get("agent_id") or "")
+            online = str(card.get("state") or "").upper() in {"ONLINE", "CONTROL"}
+            dispatch_status = str(
+                dispatch_by_agent.get(agent_id, {}).get("status") or ""
+            ).lower()
+            if agent_id in replied_agents:
+                state_key = "modern.agent.replied"
+                state_color = COLORS["green"]
+            elif dispatch_status == "claimed":
+                state_key = "modern.agent.working"
+                state_color = COLORS["blue"]
+            elif dispatch_status == "retryable":
+                state_key = "modern.agent.retrying"
+                state_color = COLORS["amber"]
+            elif dispatch_status == "failed":
+                state_key = "modern.agent.failed"
+                state_color = COLORS["red"]
+            else:
+                state_key = "chat.state.online" if online else "chat.state.offline"
+                state_color = COLORS["green"] if online else COLORS["muted"]
+            row = tk.Frame(
+                frame,
+                bg=COLORS["panel"],
+                highlightthickness=0,
+            )
+            row.pack(fill="x", padx=12, pady=1)
+            avatar = tk.Label(
+                row,
+                text=str(card.get("agent_id") or "?")[:2].upper(),
+                width=3,
+                height=1,
+                bg=COLORS["panel_2"],
+                fg=COLORS["text"],
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+            avatar.pack(side="left", padx=(4, 8), pady=5, ipady=3)
+            detail = tk.Frame(row, bg=COLORS["panel"])
+            detail.pack(side="left", fill="x", expand=True, pady=4)
+            tk.Label(
+                detail,
+                text=clip(str(card.get("agent_id") or "unknown"), 24),
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            ).pack(fill="x")
+            runtime = "/".join(
+                str(value)
+                for value in (card.get("model_id"), card.get("reasoning_mode"))
+                if value
+            ) or self._t("chat.route.none")
+            tk.Label(
+                detail,
+                text=clip(runtime, 32),
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8),
+            ).pack(fill="x")
+            tk.Label(
+                row,
+                text=self._t(state_key),
+                bg=COLORS["panel"],
+                fg=state_color,
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            ).pack(side="right", padx=(6, 8))
+
+        divider = tk.Frame(frame, bg=COLORS["line"], height=1)
+        divider.pack(fill="x", padx=12, pady=(8, 7))
+        tk.Label(
+            frame,
+            text=self._t("modern.inspector.automation"),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            anchor="w",
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        ).pack(fill="x", padx=12)
+        automation = tk.Frame(
+            frame,
+            bg=COLORS["panel_2"],
+            highlightthickness=0,
+        )
+        automation.pack(fill="x", padx=12, pady=(5, 10))
+        tk.Label(
+            automation,
+            text=self._t("modern.inspector.automation_value").format(
+                mode=self.room_automation_choice.get(),
+                rounds=self.room_round_limit.get(),
+            ),
+            bg=COLORS["panel_2"],
+            fg=COLORS["text"],
+            anchor="w",
+            justify="left",
+            wraplength=248,
+            font=(MODERN_FONT_FAMILY, 9, "bold"),
+        ).pack(fill="x", padx=9, pady=7)
+
+    def _build_modern_evidence_panel(self, parent: tk.Frame) -> tk.Frame:
+        frame = tk.Frame(parent, bg=COLORS["panel"], bd=0)
+        frame.grid_columnconfigure(0, weight=1)
+        frame.grid_columnconfigure(1, weight=1)
+        title = self._localized_label(
+            frame,
+            "modern.inspector.evidence",
+            bg=COLORS["panel"],
+            fg=COLORS["text"],
+            anchor="w",
+            font=(MODERN_FONT_FAMILY, 11, "bold"),
+        )
+        title.grid(row=0, column=0, columnspan=2, sticky="ew", padx=12, pady=(12, 4))
+        self.modern_evidence_intro = tk.Label(
+            frame,
+            text=self._t("modern.inspector.evidence_intro"),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            justify="left",
+            anchor="w",
+            wraplength=300,
+            font=(MODERN_FONT_FAMILY, 9),
+        )
+        self.modern_evidence_intro.grid(
+            row=1, column=0, columnspan=2, sticky="ew", padx=12, pady=(0, 10)
+        )
+        status_specs = (
+            ("discussion", self.discussion_status),
+            ("workflow", self.guided_workflow_status),
+            ("seat", self.seat_status),
+        )
+        for row, (status_key, variable) in enumerate(status_specs, start=2):
+            label = self._localized_label(
+                frame,
+                f"modern.status.{status_key}",
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+            label.grid(row=row, column=0, sticky="nw", padx=(12, 6), pady=4)
+            tk.Label(
+                frame,
+                textvariable=variable,
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                justify="left",
+                anchor="w",
+                wraplength=205,
+                font=(MODERN_FONT_FAMILY, 8),
+            ).grid(row=row, column=1, sticky="ew", padx=(4, 12), pady=4)
+
+        divider = tk.Frame(frame, bg=COLORS["line"], height=1)
+        divider.grid(row=5, column=0, columnspan=2, sticky="ew", padx=12, pady=10)
+        self.modern_evidence_buttons: dict[str, tk.Button] = {}
+        for index, page_key in enumerate(
+            ("work", "review", "audit", "trust", "memory", "usage")
+        ):
+            button = tk.Button(
+                frame,
+                text=self._t(f"modern.open.{page_key}"),
+                command=lambda value=page_key: self.show_page(value),
+                bg=COLORS["panel_2"],
+                fg=COLORS["text"],
+                activebackground=COLORS["line"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                anchor="w",
+                padx=10,
+                pady=8,
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            )
+            button.grid(
+                row=6 + index // 2,
+                column=index % 2,
+                sticky="ew",
+                padx=(12 if index % 2 == 0 else 4, 4 if index % 2 == 0 else 12),
+                pady=4,
+            )
+            self.modern_evidence_buttons[page_key] = button
+        return frame
+
+    def _reflow_modern_room_bar(
+        self,
+        room_bar: tk.Frame,
+        limit_frame: tk.Frame,
+        controls: tk.Frame,
+    ) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        managed = (
+            self.modern_room_identity_frame,
+            self.room_bar_label,
+            self.room_combo,
+            self.room_status_label,
+            self.chat_focus_button,
+            self.new_room_button,
+            self.operator_room_button,
+            self.older_history_button,
+            self.latest_history_button,
+            self.auto_label,
+            self.room_automation_combo,
+            limit_frame,
+            self.apply_automation_button,
+            controls,
+            self.discussion_status_label,
+            self.modern_room_settings_button,
+            self.modern_inspector_toggle_button,
+        )
+        for widget in managed:
+            widget.grid_forget()
+        for column in range(8):
+            room_bar.grid_columnconfigure(column, weight=0)
+        room_bar.grid_columnconfigure(0, weight=1)
+        self.modern_room_settings_button.grid(row=0, column=4, padx=3, pady=6)
+        self.modern_room_settings_button.configure(
+            text=self._t(
+                "modern.room.hide_settings"
+                if self.modern_room_settings_visible
+                else "modern.room.settings"
+            ),
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["muted"],
+            activebackground=COLORS["panel_2"],
+            relief="flat",
+            bd=0,
+            font=(MODERN_FONT_FAMILY, 8),
+        )
+        self.chat_focus_button.configure(
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["text"],
+            activebackground=COLORS["panel_2"],
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        )
+        self.modern_inspector_toggle_button.grid(
+            row=0, column=5, padx=3, pady=6
+        )
+        self.modern_inspector_toggle_button.configure(
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["muted"],
+            activebackground=COLORS["panel_2"],
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            font=(MODERN_FONT_FAMILY, 8),
+        )
+        self.chat_focus_button.grid(row=0, column=6, padx=(3, 18), pady=6)
+        if not self.modern_room_settings_visible:
+            return
+        for widget in (
+            self.new_room_button,
+            self.operator_room_button,
+            self.older_history_button,
+            self.latest_history_button,
+            self.apply_automation_button,
+        ):
+            widget.configure(
+                relief="flat",
+                bd=0,
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+        self.room_bar_label.configure(
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["muted"],
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        )
+        self.room_status_label.configure(
+            bg=MODERN_WORKSPACE_BG, font=(MODERN_FONT_FAMILY, 8)
+        )
+        self.auto_label.configure(
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["muted"],
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        )
+        limit_frame.configure(bg=MODERN_WORKSPACE_BG)
+        controls.configure(bg=MODERN_WORKSPACE_BG)
+        self.room_bar_label.grid(row=1, column=0, sticky="w", padx=(24, 6), pady=(2, 5))
+        self.room_combo.grid(row=1, column=1, columnspan=3, sticky="ew", padx=4, pady=(2, 5))
+        self.new_room_button.grid(row=1, column=4, padx=4, pady=(2, 5))
+        self.operator_room_button.grid(row=1, column=5, padx=4, pady=(2, 5))
+        self.older_history_button.grid(row=2, column=0, padx=(24, 4), pady=4)
+        self.latest_history_button.grid(row=2, column=1, sticky="w", padx=4, pady=4)
+        self.auto_label.grid(row=2, column=2, sticky="e", padx=(8, 4), pady=4)
+        self.room_automation_combo.grid(row=2, column=3, sticky="ew", padx=4, pady=4)
+        limit_frame.grid(row=2, column=4, columnspan=2, sticky="e", padx=(8, 18), pady=4)
+        self.apply_automation_button.grid(row=3, column=0, padx=(24, 4), pady=(4, 9))
+        controls.grid(row=3, column=1, columnspan=3, sticky="w", padx=4, pady=(4, 9))
+        self.discussion_status_label.grid(
+            row=3, column=4, columnspan=3, sticky="ew", padx=(8, 18), pady=(4, 9)
+        )
+        self.room_status_label.grid(
+            row=4, column=0, columnspan=7, sticky="ew", padx=24, pady=(0, 10)
+        )
+
+    def _reflow_modern_room_inspector(
+        self,
+        seats: tk.Frame,
+        role_bar: tk.Frame,
+        seat_scroll: ttk.Scrollbar,
+        guided: tk.Frame,
+    ) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        for widget in seats.grid_slaves():
+            widget.grid_remove()
+        for column in range(7):
+            seats.grid_columnconfigure(column, weight=0)
+        seats.grid_columnconfigure(1, weight=1)
+        seats.grid_rowconfigure(12, weight=0)
+        self.modern_agents_summary_frame.grid(
+            row=0, column=0, columnspan=2, sticky="ew"
+        )
+        self.modern_manage_agents_button.grid(
+            row=1, column=1, sticky="e", padx=12, pady=(2, 10)
+        )
+        self.modern_manage_agents_button.configure(
+            text=self._t(
+                "modern.agents.done"
+                if self.modern_agent_editor_visible
+                else "modern.agents.manage"
+            )
+        )
+        if not self.modern_agent_editor_visible:
+            self._render_modern_agent_inspector()
+            return
+        self.room_seats_label.grid_configure(
+            row=2, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 5)
+        )
+        field_widgets = (
+            ("agent", self.seat_agent_combo),
+            ("provider", self.seat_provider_combo),
+            ("model", self.seat_model_combo),
+            ("reasoning", self.seat_reasoning_combo),
+        )
+        if not hasattr(self, "modern_seat_field_labels"):
+            self.modern_seat_field_labels = {}
+        for row, (field_key, widget) in enumerate(field_widgets, start=3):
+            label = self.modern_seat_field_labels.get(field_key)
+            if label is None:
+                label = self._localized_label(
+                    seats,
+                    f"modern.seat.{field_key}",
+                    bg=COLORS["panel_2"],
+                    fg=COLORS["muted"],
+                    anchor="w",
+                    font=(MODERN_FONT_FAMILY, 8, "bold"),
+                )
+                self.modern_seat_field_labels[field_key] = label
+            label.grid(row=row, column=0, sticky="w", padx=(10, 5), pady=4)
+            widget.grid_configure(
+                row=row,
+                column=1,
+                columnspan=1,
+                sticky="ew",
+                padx=(4, 10),
+                pady=4,
+            )
+        self.add_seat_button.grid_configure(row=7, column=0, sticky="ew", padx=(10, 4))
+        self.remove_seat_button.grid_configure(row=7, column=1, sticky="ew", padx=(4, 10))
+        role_bar.grid_configure(
+            row=8, column=0, columnspan=2, sticky="ew", padx=10, pady=(8, 4)
+        )
+        for column in range(7):
+            role_bar.grid_columnconfigure(column, weight=0)
+        role_bar.grid_columnconfigure(1, weight=1)
+        self.seat_role_label.grid_configure(row=0, column=0, sticky="w")
+        self.seat_role_combo.grid_configure(row=0, column=1, columnspan=1, sticky="ew")
+        self.seat_custom_role_entry.grid_configure(
+            row=1, column=0, columnspan=2, sticky="ew"
+        )
+        self.apply_role_button.grid_configure(row=2, column=0, sticky="ew")
+        self.view_live_work_button.grid_configure(row=2, column=1, sticky="ew")
+        self.seat_role_note.grid_configure(
+            row=3, column=0, columnspan=2, sticky="ew"
+        )
+        self.seat_role_note.configure(wraplength=275)
+        self.seat_status_label.grid_configure(
+            row=9, column=0, columnspan=2, sticky="ew", padx=10
+        )
+        self.room_seat_tree.configure(
+            displaycolumns=("agent", "role", "state"), height=4
+        )
+        self.room_seat_tree.grid_configure(
+            row=10, column=0, columnspan=2, sticky="nsew", padx=(10, 10), pady=(0, 10)
+        )
+        seat_scroll.grid_configure(
+            row=10, column=1, sticky="nse", padx=(0, 10), pady=(0, 10)
+        )
+
+        guided.grid_columnconfigure(0, weight=1)
+        guided.grid_columnconfigure(1, weight=0)
+        self.guided_workflow_title.grid_configure(
+            row=0, column=0, columnspan=2, sticky="w", padx=10, pady=(10, 4)
+        )
+        self.guided_workflow_detail.grid_configure(
+            row=1, column=0, columnspan=2, sticky="ew", padx=10, pady=4
+        )
+        self.guided_workflow_detail.configure(wraplength=285)
+        self.guided_workflow_button.grid_configure(
+            row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=6
+        )
+        self.guided_workflow_status_label.grid_configure(
+            row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=(4, 10)
+        )
+        self.guided_workflow_status_label.configure(wraplength=285)
+
+    def _sync_sidebar_scrollregion(self, _event: Any = None) -> None:
+        try:
+            bounds = self.sidebar_canvas.bbox("all")
+            if bounds is not None:
+                self.sidebar_canvas.configure(scrollregion=bounds)
+        except (AttributeError, tk.TclError):
+            return
+
+    def _resize_sidebar_viewport(self, event: Any) -> None:
+        try:
+            self.sidebar_canvas.itemconfigure(
+                self.sidebar_window, width=max(1, int(event.width))
+            )
+            self._sync_sidebar_scrollregion()
+        except (AttributeError, tk.TclError, ValueError):
+            return
+
+    def _scroll_sidebar(self, event: Any) -> str:
+        try:
+            delta = int(getattr(event, "delta", 0))
+            if delta:
+                self.sidebar_canvas.yview_scroll(-1 if delta > 0 else 1, "units")
+        except (AttributeError, tk.TclError, ValueError):
+            pass
+        return "break"
+
+    def _sidebar_widget_visible(self, widget: tk.Widget) -> bool:
+        try:
+            viewport_top = self.sidebar_canvas.winfo_rooty()
+            viewport_bottom = viewport_top + self.sidebar_canvas.winfo_height()
+            widget_top = widget.winfo_rooty()
+            widget_bottom = widget_top + widget.winfo_height()
+            return bool(
+                widget.winfo_ismapped()
+                and widget_top >= viewport_top
+                and widget_bottom <= viewport_bottom
+            )
+        except (AttributeError, tk.TclError):
+            return False
+
+    def _reveal_sidebar_widget(self, widget: tk.Widget) -> bool:
         try:
             self.root.update_idletasks()
-            self._resize_chat_page_viewport()
-            total_height = self.chat_split.winfo_height()
-            composer_height = self.chat_composer.winfo_reqheight()
-            sash_y = chat_split_sash_position(total_height, composer_height)
-            self.chat_split.sash_place(0, 0, sash_y)
-            self.chat_canvas.configure(scrollregion=self.chat_canvas.bbox("all"))
-        except tk.TclError:
+            if self._sidebar_widget_visible(widget):
+                return True
+            bounds = self.sidebar_canvas.bbox(self.sidebar_window)
+            if bounds is None:
+                return False
+            content_top = self.sidebar_content.winfo_rooty()
+            widget_top = widget.winfo_rooty() - content_top
+            widget_bottom = widget_top + widget.winfo_height()
+            fraction = vertical_scroll_fraction_to_reveal(
+                widget_top=widget_top,
+                widget_bottom=widget_bottom,
+                viewport_top=float(self.sidebar_canvas.canvasy(0)),
+                viewport_height=self.sidebar_canvas.winfo_height(),
+                content_height=bounds[3] - bounds[1],
+            )
+            self.sidebar_canvas.yview_moveto(fraction)
+            self.root.update_idletasks()
+            return self._sidebar_widget_visible(widget)
+        except (AttributeError, tk.TclError, ValueError):
+            return False
+
+    def _configure_chat_composer_layout(self, compact: bool) -> None:
+        widgets = (
+            *self.composer_labels.values(),
+            self.recipient_combo,
+            self.priority_combo,
+            self.message_task_entry,
+            self.profile_combo,
+            self.model_combo,
+            self.reasoning_combo,
+            self.manage_sources_button,
+            self.message_subject_entry,
+            self.message_body,
+            self.chat_attach_button,
+            self.chat_clear_attachments_button,
+            self.chat_attachment_label,
+            self.modern_composer_advanced_button,
+            self.modern_composer_prompt_label,
+            self.send_button,
+            self.message_status_label,
+        )
+        for widget in widgets:
+            widget.grid_forget()
+        for column in range(8):
+            self.chat_composer.grid_columnconfigure(column, weight=0, minsize=0)
+
+        if ACTIVE_THEME == "modern":
+            self.chat_composer.grid_columnconfigure(2, weight=1, minsize=120)
+            self.modern_composer_prompt_label.grid(
+                row=0,
+                column=0,
+                columnspan=8,
+                sticky="w",
+                padx=14,
+                pady=(5, 0),
+            )
+            self.message_body.configure(
+                height=1,
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                insertbackground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                highlightthickness=0,
+                font=(MODERN_FONT_FAMILY, 10),
+            )
+            self.message_body.grid(
+                row=1,
+                column=0,
+                columnspan=8,
+                sticky="ew",
+                padx=14,
+                pady=(1, 0),
+            )
+            self.chat_attach_button.configure(
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                activebackground=COLORS["panel_2"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                font=(MODERN_FONT_FAMILY, 8),
+            )
+            self.chat_attach_button.grid(
+                row=2, column=0, sticky="w", padx=(12, 2), pady=(0, 2)
+            )
+            self.chat_clear_attachments_button.configure(
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                relief="flat",
+                bd=0,
+                font=(MODERN_FONT_FAMILY, 8),
+            )
+            self.chat_clear_attachments_button.grid(
+                row=2, column=1, sticky="w", padx=2, pady=(0, 2)
+            )
+            self.recipient_combo.configure(width=20)
+            self.recipient_combo.grid(
+                row=2, column=2, sticky="w", padx=4, pady=(0, 2)
+            )
+            self.modern_composer_advanced_button.configure(
+                text=self._t(
+                    "modern.composer.simple"
+                    if self.modern_composer_advanced
+                    else "modern.composer.advanced"
+                )
+            )
+            self.modern_composer_advanced_button.grid(
+                row=2, column=3, sticky="w", padx=4, pady=(0, 2)
+            )
+            self.send_button.configure(width=8)
+            self.send_button.configure(
+                text="↑",
+                width=3,
+                padx=6,
+                pady=3,
+                bg="#172033",
+                fg="#ffffff",
+                activebackground="#26334c",
+                activeforeground="#ffffff",
+                relief="flat",
+                bd=0,
+                font=(MODERN_FONT_FAMILY, 12, "bold"),
+            )
+            self.send_button.grid(
+                row=2, column=7, sticky="e", padx=(6, 12), pady=(0, 2)
+            )
+            status_row = 3
+            if self._chat_attachment_paths:
+                self.chat_attachment_label.grid(
+                    row=3,
+                    column=0,
+                    columnspan=8,
+                    sticky="ew",
+                    padx=12,
+                    pady=(0, 1),
+                )
+                status_row = 4
+            if self.modern_composer_advanced:
+                label_positions = {
+                    "to": (4, 0),
+                    "priority": (4, 2),
+                    "task": (4, 4),
+                    "provider": (5, 0),
+                    "model": (5, 2),
+                    "reasoning": (5, 4),
+                    "subject": (6, 0),
+                }
+                for key, (row, column) in label_positions.items():
+                    self.composer_labels[key].configure(
+                        bg=COLORS["panel"],
+                        fg=COLORS["muted"],
+                        font=(MODERN_FONT_FAMILY, 8, "bold"),
+                    )
+                    self.composer_labels[key].grid(
+                        row=row,
+                        column=column,
+                        sticky="w",
+                        padx=(12 if column == 0 else 6, 3),
+                        pady=3,
+                    )
+                self.recipient_combo.grid(
+                    row=4, column=1, sticky="ew", padx=3, pady=3
+                )
+                self.priority_combo.grid(row=4, column=3, sticky="ew", padx=3, pady=3)
+                self.message_task_entry.grid(
+                    row=4, column=5, columnspan=3, sticky="ew", padx=(3, 12), pady=3
+                )
+                self.profile_combo.grid(row=5, column=1, sticky="ew", padx=3, pady=3)
+                self.model_combo.grid(row=5, column=3, sticky="ew", padx=3, pady=3)
+                self.reasoning_combo.grid(row=5, column=5, sticky="ew", padx=3, pady=3)
+                self.manage_sources_button.configure(
+                    bg=COLORS["panel_2"],
+                    fg=COLORS["text"],
+                    relief="flat",
+                    bd=0,
+                    font=(MODERN_FONT_FAMILY, 8, "bold"),
+                )
+                self.manage_sources_button.grid(
+                    row=5, column=7, sticky="ew", padx=(3, 12), pady=3
+                )
+                self.message_subject_entry.grid(
+                    row=6, column=1, columnspan=7, sticky="ew", padx=(3, 12), pady=3
+                )
+                status_row = 7
+            self.message_status_label.configure(
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                font=(MODERN_FONT_FAMILY, 8),
+            )
+            self.message_status_label.grid(
+                row=status_row,
+                column=0,
+                columnspan=8,
+                sticky="ew",
+                padx=12,
+                pady=(0, 2),
+            )
             return
-        if self.snapshot is not None and self.active_page == "chat":
+
+        if compact:
+            self.chat_composer.grid_columnconfigure(1, weight=1, minsize=120)
+            self.recipient_combo.configure(width=18)
+            self.profile_combo.configure(width=18)
+            self.model_combo.configure(width=14)
+            self.reasoning_combo.configure(width=12)
+            for row, key in enumerate(
+                ("to", "priority", "task", "provider", "model", "reasoning", "subject")
+            ):
+                self.composer_labels[key].grid(
+                    row=row,
+                    column=0,
+                    sticky="w",
+                    padx=(8, 4),
+                    pady=(4, 2),
+                )
+            self.recipient_combo.grid(
+                row=0, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=(4, 2)
+            )
+            self.priority_combo.grid(row=1, column=1, sticky="w", padx=4, pady=2)
+            self.message_task_entry.grid(
+                row=2, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=2
+            )
+            self.profile_combo.grid(row=3, column=1, sticky="ew", padx=4, pady=2)
+            self.manage_sources_button.grid(
+                row=3, column=2, sticky="ew", padx=(4, 8), pady=2
+            )
+            self.model_combo.grid(
+                row=4, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=2
+            )
+            self.reasoning_combo.grid(
+                row=5, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=2
+            )
+            self.message_subject_entry.grid(
+                row=6, column=1, columnspan=2, sticky="ew", padx=(4, 8), pady=2
+            )
+            self.message_body.grid(
+                row=7, column=0, columnspan=3, sticky="ew", padx=8, pady=(5, 4)
+            )
+            self.chat_attach_button.grid(
+                row=8, column=0, sticky="w", padx=(8, 4), pady=2
+            )
+            self.chat_clear_attachments_button.grid(
+                row=8, column=1, sticky="w", padx=4, pady=2
+            )
+            self.send_button.grid(row=8, column=2, sticky="e", padx=8, pady=2)
+            self.chat_attachment_label.grid(
+                row=9, column=0, columnspan=3, sticky="ew", padx=8, pady=2
+            )
+            self.message_status_label.grid(
+                row=10, column=0, columnspan=3, sticky="ew", padx=8, pady=(2, 5)
+            )
+            return
+
+        self.chat_composer.grid_columnconfigure(7, weight=1, minsize=104)
+        self.recipient_combo.configure(width=23)
+        self.profile_combo.configure(width=23)
+        self.model_combo.configure(width=14)
+        self.reasoning_combo.configure(width=10)
+        label_positions = {
+            "to": (0, 0, (8, 4), 6),
+            "priority": (0, 2, (10, 4), 6),
+            "task": (0, 4, (10, 4), 6),
+            "provider": (1, 0, (8, 4), 4),
+            "model": (1, 2, (8, 4), 4),
+            "reasoning": (1, 4, (8, 4), 4),
+            "subject": (2, 0, (8, 4), 4),
+        }
+        for key, (row, column, padx, pady) in label_positions.items():
+            self.composer_labels[key].grid(
+                row=row, column=column, padx=padx, pady=pady
+            )
+        self.recipient_combo.grid(row=0, column=1, padx=4, pady=6)
+        self.priority_combo.grid(row=0, column=3, padx=4, pady=6)
+        self.message_task_entry.grid(
+            row=0, column=5, columnspan=3, sticky="ew", padx=4, pady=6
+        )
+        self.profile_combo.grid(row=1, column=1, padx=4, pady=4)
+        self.model_combo.grid(row=1, column=3, padx=4, pady=4)
+        self.reasoning_combo.grid(
+            row=1, column=5, columnspan=2, sticky="ew", padx=4, pady=4
+        )
+        self.manage_sources_button.grid(
+            row=1, column=7, sticky="ew", padx=(4, 8), pady=4
+        )
+        self.message_subject_entry.grid(
+            row=2, column=1, columnspan=7, sticky="ew", padx=4, pady=4
+        )
+        self.message_body.grid(
+            row=3, column=0, columnspan=8, sticky="ew", padx=8, pady=(5, 4)
+        )
+        self.chat_attach_button.grid(
+            row=4, column=0, sticky="w", padx=(8, 4), pady=(2, 2)
+        )
+        self.chat_clear_attachments_button.grid(
+            row=4, column=1, sticky="w", padx=4, pady=(2, 2)
+        )
+        self.chat_attachment_label.grid(
+            row=4, column=2, columnspan=5, sticky="ew", padx=4, pady=(2, 2)
+        )
+        self.send_button.grid(row=4, column=7, sticky="e", padx=8, pady=(2, 2))
+        self.message_status_label.grid(
+            row=5, column=0, columnspan=8, sticky="ew", padx=8, pady=(2, 5)
+        )
+
+    def _reflow_chat_composer(
+        self, event: Any = None, *, schedule_layout: bool = True
+    ) -> bool:
+        try:
+            width = max(
+                1, int(getattr(event, "width", self.chat_composer.winfo_width()))
+            )
+            compact = width < self._chat_composer_wide_required_width
+            wraplength = max(220, width - 24) if compact else 0
+            self.chat_attachment_label.configure(wraplength=wraplength, justify="left")
+            self.message_status_label.configure(wraplength=wraplength, justify="left")
+            if compact == self._chat_composer_compact:
+                return False
+            self._chat_composer_compact = compact
+            self._configure_chat_composer_layout(compact)
+            if schedule_layout and not self._closing:
+                self.root.after_idle(self._layout_chat_after_resize)
+            return True
+        except (AttributeError, tk.TclError, ValueError):
+            return False
+
+    def _reflow_modern_composer_shell(self, event: Any = None) -> None:
+        if ACTIVE_THEME != "modern":
+            return
+        try:
+            width = max(
+                1,
+                int(
+                    getattr(
+                        event,
+                        "width",
+                        self.chat_composer_pane.winfo_width(),
+                    )
+                ),
+            )
+            content_width, _offset = modern_chat_content_geometry(width)
+            horizontal_padding = max(0, (width - content_width) // 2)
+            self.chat_composer.grid_configure(
+                padx=(horizontal_padding, horizontal_padding)
+            )
+        except (AttributeError, tk.TclError, ValueError):
+            return
+
+    def _resize_chat_history_viewport(self, event: Any = None) -> None:
+        """Keep Modern messages readable on wide screens and fluid on small ones."""
+
+        try:
+            viewport_width = max(
+                1,
+                int(getattr(event, "width", self.chat_canvas.winfo_width())),
+            )
+            if ACTIVE_THEME == "modern":
+                content_width, offset = modern_chat_content_geometry(viewport_width)
+                self.chat_canvas.coords(self.chat_history_window, offset, 0)
+                self.chat_canvas.itemconfigure(
+                    self.chat_history_window,
+                    width=content_width,
+                )
+            else:
+                self.chat_canvas.coords(self.chat_history_window, 0, 0)
+                self.chat_canvas.itemconfigure(
+                    self.chat_history_window,
+                    width=viewport_width,
+                )
+            self._sync_chat_history_scrollregion()
+        except (AttributeError, tk.TclError, TypeError, ValueError):
+            return
+
+    def _sync_chat_history_scrollregion(self, _event: Any = None) -> None:
+        try:
+            bbox = self.chat_canvas.bbox("all")
+            if bbox is None:
+                return
+            viewport_width = max(1, int(self.chat_canvas.winfo_width()))
+            self.chat_canvas.configure(
+                scrollregion=(0, 0, viewport_width, max(1, int(bbox[3])))
+            )
+        except (AttributeError, tk.TclError, TypeError, ValueError):
+            return
+
+    def _layout_chat_after_resize(self) -> None:
+        """Reflow the split and bubbles after fullscreen geometry settles."""
+        history_width = 0
+        try:
+            self.root.update_idletasks()
+            if ACTIVE_THEME == "modern" and self.modern_chat_workspace is not None:
+                workspace_width = max(
+                    1, int(self.modern_chat_workspace.winfo_width())
+                )
+                self._sync_modern_inspector_visibility(workspace_width)
+                previous_workspace_width = int(
+                    self._modern_workspace_positioned_width or 0
+                )
+                if (
+                    previous_workspace_width <= 0
+                    or abs(workspace_width - previous_workspace_width) >= 64
+                ):
+                    inspector_width = min(
+                        308, max(268, workspace_width // 4)
+                    )
+                    center_width = max(520, workspace_width - inspector_width)
+                    if self._modern_inspector_present() and center_width < workspace_width:
+                        self.modern_chat_workspace.sash_place(0, center_width, 0)
+                    self._modern_workspace_positioned_width = workspace_width
+                    self.root.update_idletasks()
+            self._reflow_chat_composer(schedule_layout=False)
+            self.root.update_idletasks()
+            composer_pane = getattr(
+                self, "chat_composer_pane", self.chat_composer
+            )
+            minimum_composer_height = 116 if ACTIVE_THEME == "modern" else 215
+            composer_height = max(
+                minimum_composer_height, composer_pane.winfo_reqheight()
+            )
+            self.chat_split.paneconfigure(
+                composer_pane, minsize=composer_height
+            )
+            self.root.update_idletasks()
+            self._resize_chat_page_viewport()
+            self.root.update_idletasks()
+            total_height = self.chat_split.winfo_height()
+            sash_y = chat_split_sash_position(
+                total_height,
+                composer_height,
+                min_history_height=CHAT_HISTORY_MIN_HEIGHT,
+                min_composer_height=composer_height,
+            )
+            self.chat_split.sash_place(0, 0, sash_y)
+            self.root.update_idletasks()
+            self._resize_chat_page_viewport()
+            self.chat_canvas.configure(scrollregion=self.chat_canvas.bbox("all"))
+            history_width = max(1, int(self.chat_canvas.winfo_width()))
+        except (AttributeError, tk.TclError, ValueError):
+            return
+        previous_width = int(getattr(self, "_chat_layout_history_width", 0) or 0)
+        width_changed = previous_width <= 0 or abs(history_width - previous_width) >= 2
+        self._chat_layout_history_width = history_width
+        if (
+            width_changed
+            and self.snapshot is not None
+            and self.active_page == "chat"
+        ):
             self._chat_render_row_signatures = None
             self._render_chat(self.search.get().strip().lower())
 
@@ -2570,6 +5160,19 @@ class PixelMonitor:
             viewport_height = int(
                 getattr(event, "height", self.chat_page_canvas.winfo_height())
             )
+            if ACTIVE_THEME == "modern":
+                viewport_width = max(1, viewport_width)
+                viewport_height = max(1, viewport_height)
+                self.chat_page_canvas.itemconfigure(
+                    self.chat_page_window,
+                    width=viewport_width,
+                    height=viewport_height,
+                )
+                self.chat_page_canvas.configure(
+                    scrollregion=(0, 0, viewport_width, viewport_height)
+                )
+                self.chat_page_canvas.yview_moveto(0.0)
+                return
             requested_height = self.chat_page_content.winfo_reqheight()
             content_height = max(
                 1,
@@ -2638,6 +5241,25 @@ class PixelMonitor:
     def _automation_labels(self) -> tuple[str, ...]:
         return tuple(self._t(AUTOMATION_MODE_TO_KEY[mode]) for mode in AUTOMATION_MODE_TO_KEY)
 
+    def _room_role_from_label(self, label: str) -> str | None:
+        mapped = self._seat_role_labels.get(label)
+        if mapped:
+            return mapped
+        for locale in SUPPORTED_LOCALES:
+            for role_id in ROOM_ROLE_IDS:
+                if label == translate(locale, f"chat.role.{role_id}"):
+                    return role_id
+        return None
+
+    def _room_role_label(self, member: Mapping[str, Any]) -> str:
+        role_id = str(member.get("role_id") or DEFAULT_ROOM_ROLE)
+        if role_id == "custom":
+            custom = str(member.get("role_label") or "").strip()
+            return custom or self._t("chat.role.custom")
+        if role_id not in ROOM_ROLE_IDS:
+            role_id = DEFAULT_ROOM_ROLE
+        return self._t(f"chat.role.{role_id}")
+
     @staticmethod
     def _catalog_value_matches(value: str, key: str) -> bool:
         return any(value == translate(locale, key) for locale in SUPPORTED_LOCALES)
@@ -2647,7 +5269,25 @@ class PixelMonitor:
             self.project_root,
             locale=self.locale.get(),
             tutorial_completed=self.tutorial_completed,
+            theme=self.theme.get(),
         )
+
+    def _theme_from_label(self, label: str) -> str | None:
+        for labels in THEME_LABELS.values():
+            for theme, candidate in labels.items():
+                if label == candidate:
+                    return theme
+        return None
+
+    def _theme_changed(self, _event: Any = None) -> None:
+        selected = self._theme_from_label(self.theme_choice.get())
+        if selected is None:
+            return
+        changed = selected != self.theme.get()
+        self.theme.set(selected)
+        self._save_ui_preferences()
+        if changed:
+            self.refresh_status.set(self._t("toolbar.theme_restart"))
 
     def _save_announcement_preferences(self) -> None:
         save_announcement_preferences(
@@ -2672,6 +5312,10 @@ class PixelMonitor:
         automation_mode = (
             self._automation_mode_from_label(self.room_automation_choice.get()) or "once"
         )
+        seat_role_id = (
+            self._room_role_from_label(self.seat_role_choice.get())
+            or DEFAULT_ROOM_ROLE
+        )
         selected_recipient_id = self._recipient_ids.get(
             self.message_recipient.get(), self.message_recipient.get()
         )
@@ -2690,13 +5334,142 @@ class PixelMonitor:
             self.seat_reasoning_choice.get(), PROVIDER_DEFAULT_REASONING_LABEL
         )
         self.locale_label.set(LOCALE_LABELS.get(locale, LOCALE_LABELS["en"]))
+        self.theme_choice.set(THEME_LABELS[locale][self.theme.get()])
+        for key, widgets in self._localized_label_widgets.items():
+            for widget in tuple(widgets):
+                with contextlib.suppress(tk.TclError):
+                    if widget.winfo_exists():
+                        widget.configure(text=self._t(key))
         self.version_label.configure(
-            text=self._t("sidebar.version").format(version=APP_VERSION)
+            text=(
+                self._t("sidebar.version").format(version=APP_VERSION)
+                + "\n"
+                + self._t("sidebar.build").format(build=APP_BUILD_ID)
+            )
         )
         self.agent_library_label.configure(text=self._t("sidebar.agent_library"))
+        self.library_route_notice.configure(
+            text=self._t("sidebar.library_route_notice")
+        )
+        self.sidebar_scroll_hint.configure(text=self._t("sidebar.scroll_hint"))
         self.language_label.configure(text=self._t("toolbar.language"))
+        self.theme_title_label.configure(text=self._t("toolbar.theme"))
+        self.theme_combo.configure(
+            values=tuple(THEME_LABELS[locale][key] for key in SUPPORTED_THEMES)
+        )
         for key, button in self.nav_buttons.items():
-            button.configure(text=self._t(f"nav.{key}"))
+            button.configure(text=self._navigation_label(key))
+        for group_key, label in getattr(
+            self, "modern_nav_group_labels", {}
+        ).items():
+            label.configure(text=self._t(f"modern.nav.{group_key}"))
+        if ACTIVE_THEME == "modern":
+            new_room_button = getattr(self, "modern_sidebar_new_room_button", None)
+            if new_room_button is not None:
+                new_room_button.configure(text=self._t("modern.sidebar.new_room"))
+            projects_title = getattr(self, "modern_projects_title", None)
+            if projects_title is not None:
+                projects_title.configure(text=self._t("modern.projects.title"))
+            project_status = getattr(self, "modern_project_status_label", None)
+            if project_status is not None:
+                project_status.configure(
+                    text=self._t("modern.projects.local_active")
+                )
+            more_button = getattr(self, "modern_more_nav_button", None)
+            if more_button is not None:
+                more_button.configure(
+                    text=self._t(
+                        "modern.nav.less"
+                        if self.modern_more_nav_visible
+                        else "modern.nav.more"
+                    )
+                )
+            recent_title = getattr(self, "modern_recent_rooms_title", None)
+            if recent_title is not None:
+                recent_title.configure(text=self._t("modern.rooms.title"))
+            library_button = getattr(self, "modern_agent_library_button", None)
+            if library_button is not None:
+                library_button.configure(
+                    text=self._t(
+                        "modern.sidebar.hide_agents"
+                        if self.modern_agent_library_visible
+                        else "modern.sidebar.show_agents"
+                    )
+                )
+            account_role = getattr(self, "modern_account_role", None)
+            if account_role is not None:
+                account_role.configure(text=self._t("modern.account.role"))
+            options_button = getattr(self, "modern_toolbar_options_button", None)
+            if options_button is not None:
+                options_button.configure(
+                    text=self._t(
+                        "modern.toolbar.close_options"
+                        if self.modern_toolbar_options_visible
+                        else "modern.toolbar.options"
+                    )
+                )
+            connection = getattr(self, "modern_toolbar_connection_label", None)
+            if connection is not None:
+                unavailable = bool(getattr(self, "_room_view_unavailable", False))
+                connection.configure(
+                    text=self._t(
+                        "modern.toolbar.unavailable"
+                        if unavailable
+                        else "modern.toolbar.connected"
+                    ),
+                    fg=COLORS["red"] if unavailable else COLORS["green"],
+                )
+            room_settings = getattr(self, "modern_room_settings_button", None)
+            if room_settings is not None:
+                room_settings.configure(
+                    text=self._t(
+                        "modern.room.hide_settings"
+                        if self.modern_room_settings_visible
+                        else "modern.room.settings"
+                    )
+                )
+            agent_manager = getattr(self, "modern_manage_agents_button", None)
+            if agent_manager is not None:
+                agent_manager.configure(
+                    text=self._t(
+                        "modern.agents.done"
+                        if self.modern_agent_editor_visible
+                        else "modern.agents.manage"
+                    )
+                )
+            composer_button = getattr(
+                self, "modern_composer_advanced_button", None
+            )
+            if composer_button is not None:
+                composer_button.configure(
+                    text=self._t(
+                        "modern.composer.simple"
+                        if self.modern_composer_advanced
+                        else "modern.composer.advanced"
+                    )
+                )
+            for field_key, label in getattr(
+                self, "modern_seat_field_labels", {}
+            ).items():
+                label.configure(text=self._t(f"modern.seat.{field_key}"))
+            self._sync_modern_recent_rooms()
+            self._sync_modern_chat_context()
+            self._render_modern_agent_inspector()
+        for inspector_key, button in getattr(
+            self, "modern_inspector_buttons", {}
+        ).items():
+            button.configure(
+                text=self._t(f"modern.inspector.{inspector_key}")
+            )
+        for page_key, button in getattr(
+            self, "modern_evidence_buttons", {}
+        ).items():
+            button.configure(text=self._t(f"modern.open.{page_key}"))
+        modern_evidence_intro = getattr(self, "modern_evidence_intro", None)
+        if modern_evidence_intro is not None:
+            modern_evidence_intro.configure(
+                text=self._t("modern.inspector.evidence_intro")
+            )
         self.search_label.configure(text=self._t("toolbar.search"))
         self.pause_button.configure(text=self._t("toolbar.pause"))
         self.refresh_button.configure(text=self._t("toolbar.refresh"))
@@ -2737,9 +5510,36 @@ class PixelMonitor:
         self.resume_discussion_button.configure(text=self._t("chat.resume"))
         self.continue_discussion_button.configure(text=self._t("chat.continue"))
         self.stop_discussion_button.configure(text=self._t("chat.stop"))
+        self.guided_workflow_title.configure(text=self._t("chat.guided.title"))
+        self.guided_workflow_detail.configure(text=self._t("chat.guided.detail"))
+        self.guided_workflow_button.configure(text=self._t("chat.guided.start"))
         self.room_seats_label.configure(text=self._t("chat.room_seats"))
         self.add_seat_button.configure(text=self._t("chat.apply_seat"))
         self.remove_seat_button.configure(text=self._t("chat.remove_seat"))
+        self.seat_role_label.configure(text=self._t("chat.role"))
+        self.apply_role_button.configure(text=self._t("chat.apply_role"))
+        self.view_live_work_button.configure(text=self._t("chat.view_live_work"))
+        self.seat_role_note.configure(text=self._t("chat.role_no_authority"))
+        self._seat_role_labels = {
+            self._t(f"chat.role.{role_id}"): role_id for role_id in ROOM_ROLE_IDS
+        }
+        self.seat_role_combo.configure(values=tuple(self._seat_role_labels))
+        self.seat_role_choice.set(
+            next(
+                label
+                for label, role_id in self._seat_role_labels.items()
+                if role_id == seat_role_id
+            )
+        )
+        for column, key in (
+            ("agent", "chat.seat_column.agent"),
+            ("role", "chat.seat_column.role"),
+            ("session", "chat.seat_column.session"),
+            ("route", "chat.seat_column.route"),
+            ("state", "chat.seat_column.state"),
+        ):
+            self.room_seat_tree.heading(column, text=self._t(key))
+        self._on_seat_role_selected()
         self.manage_sources_button.configure(text=self._t("chat.manage_providers"))
         self.agent_install_frame.configure(text=self._t("agent_install.heading"))
         self.agent_install_intro.configure(text=self._t("agent_install.intro"))
@@ -2748,7 +5548,7 @@ class PixelMonitor:
         )
         for spec in installable_agent_specs():
             self._agent_install_docs_buttons[spec.agent_id].configure(
-                text=self._t("agent_install.docs")
+                text=self._t("agent_install.docs").format(name=spec.display_name)
             )
             status = self._agent_install_statuses.get(spec.agent_id)
             if spec.agent_id in self._agent_install_processes:
@@ -2776,7 +5576,7 @@ class PixelMonitor:
             if not spec.automatic_install_supported:
                 action_key = "agent_install.open_guide"
             self._agent_install_buttons[spec.agent_id].configure(
-                text=self._t(action_key)
+                text=self._t(action_key).format(name=spec.display_name)
             )
         self.connect_heading_label.configure(text=self._t("connect.heading"))
         self.connect_privacy_label.configure(text=self._t("connect.privacy"))
@@ -2793,6 +5593,18 @@ class PixelMonitor:
             button.configure(text=self._t(key))
         if not self.send_in_progress:
             self.send_button.configure(text=self._t("chat.send"))
+        if self._catalog_value_matches(
+            self.message_subject.get(), "chat.default_subject"
+        ):
+            self.message_subject.set(self._t("chat.default_subject"))
+        if self._catalog_value_matches(
+            self.room_status.get(), "chat.rooms_loading"
+        ):
+            self.room_status.set(self._t("chat.rooms_loading"))
+        if self._catalog_value_matches(
+            self.discussion_status.get(), "chat.discussion.idle"
+        ):
+            self.discussion_status.set(self._t("chat.discussion.idle"))
         if self._catalog_value_matches(self.message_status.get(), "chat.message_hint"):
             self.message_status.set(self._t("chat.message_hint"))
         elif self._catalog_value_matches(
@@ -2851,9 +5663,12 @@ class PixelMonitor:
             )
         for key, label in self.usage_kpi_labels.items():
             label.configure(text=self._t(f"usage.{key}"))
-        self.usage_provider_frame.configure(text=self._t("usage.platforms"))
-        self.usage_daily_frame.configure(text=self._t("usage.daily"))
-        self.usage_model_frame.configure(text=self._t("usage.models"))
+        self.usage_period_label.configure(text=self._t("usage.period"))
+        self.usage_timezone_label.configure(text=self._t("usage.timezone"))
+        for period, button in self.usage_period_buttons.items():
+            button.configure(text=self._t(f"usage.period.{period}"))
+        self._sync_usage_period_buttons()
+        self._sync_usage_section_titles()
         for column in USAGE_TABLE_COLUMNS:
             self.usage_tree.heading(column, text=self._t(f"usage.{column}"))
         self._sync_priority_choices()
@@ -2869,6 +5684,19 @@ class PixelMonitor:
         ):
             self.announcement_tree.tree.heading(column, text=self._t(key))
         self._render_announcements(self.search.get().strip().lower())
+        self.cockpit.apply_locale()
+        self.trust_workflows.apply_locale()
+        for column, key in (
+            ("type", "memory.heading.type"),
+            ("scope", "memory.heading.scope"),
+            ("authority", "memory.heading.authority"),
+            ("applicability", "memory.heading.applicability"),
+            ("status", "memory.heading.status"),
+            ("title", "memory.heading.title"),
+            ("supersession", "memory.heading.supersession"),
+            ("time", "memory.heading.time"),
+        ):
+            self.memory_tree.tree.heading(column, text=self._t(key))
         self.library_selection.set(
             self._library_selection_text(self.seat_agent.get().strip() or None)
         )
@@ -2877,164 +5705,614 @@ class PixelMonitor:
             self._render_presence()
         else:
             self._draw_agents(list(self._library_agents))
+        self._refresh_guided_workflow_readiness()
         self.show_page(self.active_page)
         if save:
             try:
                 self._save_ui_preferences()
             except (OSError, LocalizationError) as exc:
-                self.update_status.set(f"Preferences: {clip(exc, 100)}")
+                self.update_status.set(
+                    self._t("ui.preferences_error").format(error=clip(exc, 100))
+                )
         if self._tutorial_window is not None and self._tutorial_window.winfo_exists():
             self._tutorial_window.destroy()
             self._tutorial_window = None
             self.show_tutorial()
         if self.snapshot is not None:
             self.render(force=True)
+        if self.selected_room_id and not self.room_refresh_in_progress:
+            self._last_room_view_signature = ""
+            self.root.after_idle(lambda: self._request_room_refresh(force=True))
 
     def _configure_styles(self) -> None:
         style = ttk.Style(self.root)
         style.theme_use("clam")
+        modern = ACTIVE_THEME == "modern"
         style.configure(
             "Treeview",
             background=COLORS["panel"],
             fieldbackground=COLORS["panel"],
             foreground=COLORS["text"],
-            rowheight=30,
+            rowheight=32 if modern else 30,
             borderwidth=0,
-            font=("Cascadia Mono", 9),
+            font=(UI_FONT_FAMILY, 9),
         )
         style.map("Treeview", background=[("selected", COLORS["blue"])], foreground=[("selected", COLORS["black"])])
         style.configure(
             "Treeview.Heading",
             background=COLORS["panel_2"],
-            foreground=COLORS["amber"],
-            relief="raised",
-            borderwidth=1,
-            font=("Cascadia Mono", 9, "bold"),
+            foreground=COLORS["text"] if modern else COLORS["amber"],
+            relief="flat" if modern else "raised",
+            borderwidth=0 if modern else 1,
+            font=(UI_FONT_FAMILY, 9, "bold"),
         )
         style.map("Treeview.Heading", background=[("active", COLORS["line"])])
-        style.configure("Vertical.TScrollbar", background=COLORS["line"], troughcolor=COLORS["black"], arrowsize=14)
+        style.configure(
+            "Vertical.TScrollbar",
+            background=COLORS["line"],
+            troughcolor=COLORS["panel"],
+            borderwidth=0,
+            relief="flat",
+            arrowsize=12 if modern else 14,
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=COLORS["panel"],
+            background=COLORS["panel"],
+            foreground=COLORS["text"],
+            bordercolor=COLORS["line"],
+            lightcolor=COLORS["line"],
+            darkcolor=COLORS["line"],
+            arrowsize=12,
+            font=(UI_FONT_FAMILY, 9),
+        )
+        style.configure(
+            SIDEBAR_SCROLLBAR_STYLE,
+            background=COLORS["line"],
+            troughcolor=COLORS["panel"],
+            borderwidth=0,
+            relief="flat",
+            arrowsize=12 if modern else 14,
+        )
+        style.map(
+            SIDEBAR_SCROLLBAR_STYLE,
+            background=[
+                ("pressed", COLORS["line"]),
+                ("disabled", COLORS["line"]),
+                ("active", COLORS["line"]),
+            ],
+        )
+
+    def _apply_modern_widget_treatment(self) -> None:
+        """Flatten the live Tk hierarchy without changing the pixel layout contract."""
+
+        if ACTIVE_THEME != "modern":
+            return
+
+        font_classes = {
+            "Button",
+            "Checkbutton",
+            "Entry",
+            "Label",
+            "Labelframe",
+            "Listbox",
+            "Menubutton",
+            "Message",
+            "Radiobutton",
+            "Scale",
+            "Spinbox",
+        }
+
+        def modern_font(widget: tk.Misc) -> None:
+            if widget.winfo_class() not in font_classes:
+                return
+            try:
+                current = tkfont.Font(root=self.root, font=widget.cget("font")).actual()
+                traits: list[str] = []
+                if current.get("weight") == "bold":
+                    traits.append("bold")
+                if current.get("slant") == "italic":
+                    traits.append("italic")
+                if current.get("underline"):
+                    traits.append("underline")
+                if current.get("overstrike"):
+                    traits.append("overstrike")
+                font_spec: tuple[Any, ...] = (
+                    MODERN_FONT_FAMILY,
+                    int(current.get("size") or 9),
+                )
+                if traits:
+                    font_spec += (" ".join(traits),)
+                widget.configure(font=font_spec)
+            except (KeyError, tk.TclError, TypeError, ValueError):
+                return
+
+        def walk(widget: tk.Misc) -> None:
+            modern_font(widget)
+            widget_class = widget.winfo_class()
+            try:
+                if widget_class in {"Frame", "Labelframe"}:
+                    widget.configure(relief="flat", bd=0, highlightthickness=0)
+                elif widget_class == "Button":
+                    widget.configure(
+                        relief="flat",
+                        bd=0,
+                        highlightthickness=0,
+                        cursor="hand2",
+                    )
+                elif widget_class in {"Entry", "Text", "Listbox", "Spinbox"}:
+                    widget.configure(
+                        relief="flat",
+                        bd=0,
+                        highlightthickness=1,
+                        highlightbackground=COLORS["line"],
+                        highlightcolor=COLORS["blue"],
+                    )
+                elif widget_class == "Canvas" and int(widget.cget("highlightthickness")):
+                    widget.configure(
+                        highlightthickness=1,
+                        highlightbackground=COLORS["line"],
+                    )
+                elif widget_class == "Panedwindow":
+                    widget.configure(
+                        relief="flat",
+                        bd=0,
+                        sashrelief="flat",
+                        sashwidth=6,
+                    )
+            except (tk.TclError, TypeError, ValueError):
+                pass
+            for child in widget.winfo_children():
+                walk(child)
+
+        walk(self.root)
 
     def _build_layout(self) -> None:
         self.root.grid_rowconfigure(0, weight=1)
         self.root.grid_columnconfigure(1, weight=1)
-        sidebar = tk.Frame(self.root, bg=COLORS["black"], width=236, bd=2, relief="ridge")
+        sidebar_bg = (
+            MODERN_SIDEBAR_BG if ACTIVE_THEME == "modern" else COLORS["black"]
+        )
+        sidebar = tk.Frame(
+            self.root,
+            bg=sidebar_bg,
+            width=MODERN_SIDEBAR_WIDTH if ACTIVE_THEME == "modern" else SIDEBAR_WIDTH,
+            bd=0 if ACTIVE_THEME == "modern" else 2,
+            relief="flat" if ACTIVE_THEME == "modern" else "ridge",
+        )
         sidebar.grid(row=0, column=0, sticky="nsw")
         sidebar.grid_propagate(False)
         self.sidebar_frame = sidebar
 
-        title = tk.Label(
+        self.stats_label = self._localized_label(
             sidebar,
-            text="PEERBRIDGE\nCONTROL ROOM",
-            bg=COLORS["black"],
-            fg=COLORS["cyan"],
-            justify="left",
-            font=("Cascadia Mono", 17, "bold"),
-        )
-        title.pack(anchor="w", padx=18, pady=(18, 4))
-        self.version_label = tk.Label(
-            sidebar,
-            text=self._t("sidebar.version").format(version=APP_VERSION),
-            bg=COLORS["black"],
+            "sidebar.waiting_database",
+            bg=sidebar_bg,
             fg=COLORS["muted"],
-            font=("Cascadia Mono", 8),
+            justify="left",
+            anchor="sw",
+            font=("Cascadia Mono", SIDEBAR_TEXT_SIZE),
         )
-        self.version_label.pack(anchor="w", padx=18, pady=(0, 16))
+        if ACTIVE_THEME != "modern":
+            self.stats_label.pack(side="bottom", fill="x", padx=14, pady=6)
+        self.sidebar_scroll_hint = tk.Label(
+            sidebar,
+            text=self._t("sidebar.scroll_hint"),
+            bg=sidebar_bg,
+            fg=COLORS["amber"],
+            justify="center",
+            anchor="center",
+            font=("Cascadia Mono", SIDEBAR_TEXT_SIZE, "bold"),
+        )
+        if ACTIVE_THEME != "modern":
+            self.sidebar_scroll_hint.pack(side="bottom", fill="x", padx=10, pady=(2, 0))
+
+        sidebar_scroll_host = tk.Frame(sidebar, bg=sidebar_bg)
+        sidebar_scroll_host.pack(side="top", fill="both", expand=True)
+        sidebar_scroll_host.grid_rowconfigure(0, weight=1)
+        sidebar_scroll_host.grid_columnconfigure(0, weight=1)
+        self.sidebar_canvas = tk.Canvas(
+            sidebar_scroll_host,
+            width=(
+                MODERN_SIDEBAR_WIDTH if ACTIVE_THEME == "modern" else SIDEBAR_WIDTH
+            )
+            - SIDEBAR_SCROLLBAR_WIDTH
+            - 8,
+            bg=sidebar_bg,
+            highlightthickness=0,
+            bd=0,
+        )
+        self.sidebar_scrollbar = ttk.Scrollbar(
+            sidebar_scroll_host,
+            orient="vertical",
+            command=self.sidebar_canvas.yview,
+            style=SIDEBAR_SCROLLBAR_STYLE,
+        )
+        self.sidebar_canvas.configure(yscrollcommand=self.sidebar_scrollbar.set)
+        self.sidebar_canvas.grid(row=0, column=0, sticky="nsew")
+        self.sidebar_scrollbar.grid(row=0, column=1, sticky="ns", padx=(2, 1))
+        sidebar_content = tk.Frame(self.sidebar_canvas, bg=sidebar_bg)
+        self.sidebar_content = sidebar_content
+        self.sidebar_window = self.sidebar_canvas.create_window(
+            (0, 0), window=sidebar_content, anchor="nw"
+        )
+        sidebar_content.bind("<Configure>", self._sync_sidebar_scrollregion)
+        self.sidebar_canvas.bind("<Configure>", self._resize_sidebar_viewport)
+        self.sidebar_canvas.bind("<MouseWheel>", self._scroll_sidebar)
+        sidebar_content.bind("<MouseWheel>", self._scroll_sidebar)
+
+        brand_row = tk.Frame(sidebar_content, bg=sidebar_bg)
+        brand_row.pack(
+            fill="x",
+            padx=18 if ACTIVE_THEME == "modern" else 14,
+            pady=(17, 6) if ACTIVE_THEME == "modern" else (14, 4),
+        )
+        if ACTIVE_THEME == "modern" and self._sidebar_brand_icon is not None:
+            tk.Label(
+                brand_row,
+                image=self._sidebar_brand_icon,
+                bg=sidebar_bg,
+                bd=0,
+            ).pack(side="left", padx=(2, 9))
+        title = tk.Label(
+            brand_row,
+            text=(
+                "PeerBridge"
+                if ACTIVE_THEME == "modern"
+                else "PEERBRIDGE\nCONTROL ROOM"
+            ),
+            bg=sidebar_bg,
+            fg=COLORS["text"] if ACTIVE_THEME == "modern" else COLORS["cyan"],
+            justify="left",
+            font=(
+                UI_FONT_FAMILY,
+                16 if ACTIVE_THEME == "modern" else 17,
+                "bold",
+            ),
+        )
+        title.pack(side="left", anchor="w")
+        self.version_label = tk.Label(
+            sidebar_content,
+            text=(
+                self._t("sidebar.version").format(version=APP_VERSION)
+                + "\n"
+                + self._t("sidebar.build").format(build=APP_BUILD_ID)
+            ),
+            bg=sidebar_bg,
+            fg=COLORS["muted"],
+            justify="left",
+            font=("Cascadia Mono", SIDEBAR_TEXT_SIZE),
+        )
+        if ACTIVE_THEME != "modern":
+            self.version_label.pack(anchor="w", padx=18, pady=(0, 8))
+
+        agent_library_parent = sidebar_content
+        if ACTIVE_THEME == "modern":
+            agent_library_parent = tk.Frame(sidebar_content, bg=sidebar_bg)
+            self.modern_agent_library_panel = agent_library_parent
 
         self.agent_library_label = tk.Label(
-            sidebar,
+            agent_library_parent,
             text=self._t("sidebar.agent_library"),
-            bg=COLORS["black"],
+            bg=sidebar_bg,
             fg=COLORS["amber"],
-            font=("Cascadia Mono", 8, "bold"),
+            font=("Cascadia Mono", 10, "bold"),
         )
-        self.agent_library_label.pack(anchor="w", padx=18, pady=(0, 5))
-        agent_canvas_host = tk.Frame(sidebar, bg=COLORS["black"])
-        agent_canvas_host.pack(padx=16, fill="x")
+        self.agent_library_label.pack(anchor="w", padx=18, pady=(0, 3))
+        agent_canvas_host = tk.Frame(agent_library_parent, bg=sidebar_bg)
+        agent_canvas_host.pack(padx=6, fill="x")
         self.agent_canvas = tk.Canvas(
             agent_canvas_host,
-            width=184,
-            height=178,
+            width=AGENT_LIBRARY_CANVAS_WIDTH,
+            height=AGENT_LIBRARY_CANVAS_HEIGHT,
             bg=COLORS["panel"],
             highlightthickness=2,
             highlightbackground=COLORS["line"],
         )
-        agent_scrollbar = ttk.Scrollbar(
-            agent_canvas_host, orient="vertical", command=self.agent_canvas.yview
+        self.agent_scrollbar = ttk.Scrollbar(
+            agent_canvas_host,
+            orient="vertical",
+            command=self.agent_canvas.yview,
         )
-        self.agent_canvas.configure(yscrollcommand=agent_scrollbar.set)
+        self.agent_canvas.configure(yscrollcommand=self.agent_scrollbar.set)
         self.agent_canvas.pack(side="left", fill="x", expand=True)
-        agent_scrollbar.pack(side="right", fill="y")
+        self.agent_scrollbar.pack(side="right", fill="y", padx=(2, 0))
         self.agent_canvas.bind("<ButtonPress-1>", self._begin_library_drag)
         self.agent_canvas.bind("<B1-Motion>", self._move_library_drag)
         self.agent_canvas.bind("<ButtonRelease-1>", self._finish_library_drag)
         self.agent_canvas.bind("<Double-1>", self._add_library_agent_by_double_click)
         self.agent_canvas.bind("<MouseWheel>", self._scroll_agent_library)
         self._draw_agents([])
-        tk.Label(
-            sidebar,
+        self.library_selection_label = tk.Label(
+            agent_library_parent,
             textvariable=self.library_selection,
-            bg=COLORS["black"],
+            bg=sidebar_bg,
             fg=COLORS["muted"],
             anchor="w",
-            font=("Cascadia Mono", 7, "bold"),
-        ).pack(fill="x", padx=18, pady=(5, 0))
+            font=("Cascadia Mono", SIDEBAR_TEXT_SIZE, "bold"),
+        )
+        self.library_selection_label.pack(fill="x", padx=18, pady=(3, 0))
+        self.library_route_notice = tk.Label(
+            agent_library_parent,
+            text=self._t("sidebar.library_route_notice"),
+            bg=sidebar_bg,
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=244,
+            font=("Cascadia Mono", SIDEBAR_TEXT_SIZE),
+        )
+        self.library_route_notice.pack(fill="x", padx=18, pady=(3, 4))
 
-        nav_items = [
-            ("chat", self._t("nav.chat")),
-            ("work", self._t("nav.work")),
-            ("review", self._t("nav.review")),
-            ("change", self._t("nav.change")),
-            ("audit", self._t("nav.audit")),
-            ("connect", self._t("nav.connect")),
-            ("memory", self._t("nav.memory")),
-            ("feedback", self._t("nav.feedback")),
-            ("usage", self._t("nav.usage")),
-        ]
-        nav = tk.Frame(sidebar, bg=COLORS["black"])
-        nav.pack(fill="x", padx=12, pady=(8, 6))
+        if ACTIVE_THEME == "modern":
+            self.modern_sidebar_new_room_button = tk.Button(
+                sidebar_content,
+                text=self._t("modern.sidebar.new_room"),
+                command=self._open_create_room_dialog,
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                activebackground=COLORS["panel_2"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                highlightthickness=1,
+                highlightbackground=COLORS["line"],
+                anchor="w",
+                padx=12,
+                pady=9,
+                font=(MODERN_FONT_FAMILY, 10, "bold"),
+            )
+            self.modern_sidebar_new_room_button.pack(
+                fill="x", padx=14, pady=(6, 12)
+            )
+
+            self.modern_projects_title = tk.Label(
+                sidebar_content,
+                text=self._t("modern.projects.title"),
+                bg=sidebar_bg,
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+            self.modern_projects_title.pack(fill="x", padx=22, pady=(1, 4))
+            project_row = tk.Frame(
+                sidebar_content,
+                bg=COLORS["panel"],
+                highlightthickness=1,
+                highlightbackground=COLORS["line"],
+            )
+            project_row.pack(fill="x", padx=14, pady=(0, 12))
+            tk.Label(
+                project_row,
+                text="●",
+                bg=COLORS["panel"],
+                fg=COLORS["green"],
+                font=(MODERN_FONT_FAMILY, 7),
+            ).pack(side="left", padx=(10, 7), pady=9)
+            project_text = tk.Frame(project_row, bg=COLORS["panel"])
+            project_text.pack(side="left", fill="x", expand=True, pady=7)
+            self.modern_project_scope_label = tk.Label(
+                project_text,
+                text=clip(self.scope, 26),
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            )
+            self.modern_project_scope_label.pack(fill="x")
+            self.modern_project_status_label = tk.Label(
+                project_text,
+                text=self._t("modern.projects.local_active"),
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8),
+            )
+            self.modern_project_status_label.pack(fill="x")
+            tk.Label(
+                project_row,
+                text="›",
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                font=(MODERN_FONT_FAMILY, 12),
+            ).pack(side="right", padx=(4, 10))
+
+        nav = tk.Frame(sidebar_content, bg=sidebar_bg)
+        nav.pack(fill="x", padx=12, pady=(2, 2))
         self.nav_frame = nav
-        for key, text in nav_items:
+        self.modern_nav_group_labels: dict[str, tk.Label] = {}
+
+        def add_nav_button(key: str, parent: tk.Misc = nav) -> None:
             button = tk.Button(
-                nav,
-                text=text,
+                parent,
+                text=self._navigation_label(key),
                 command=lambda value=key: self.show_page(value),
                 anchor="w",
-                bg=COLORS["panel"],
+                bg=sidebar_bg if ACTIVE_THEME == "modern" else COLORS["panel"],
                 fg=COLORS["text"],
                 activebackground=COLORS["cyan"],
                 activeforeground=COLORS["black"],
-                relief="raised",
-                bd=2,
-                padx=12,
-                pady=5,
-                font=("Cascadia Mono", 10, "bold"),
+                relief="flat" if ACTIVE_THEME == "modern" else "raised",
+                bd=0 if ACTIVE_THEME == "modern" else 2,
+                highlightthickness=1 if ACTIVE_THEME == "modern" else 0,
+                highlightbackground=sidebar_bg,
+                highlightcolor=COLORS["line"],
+                padx=13 if ACTIVE_THEME == "modern" else 11,
+                pady=9 if ACTIVE_THEME == "modern" else 1,
+                font=(UI_FONT_FAMILY, 10, "bold" if ACTIVE_THEME != "modern" else "normal"),
             )
-            button.pack(fill="x", pady=2)
+            button.pack(fill="x", pady=1)
+            button.bind("<MouseWheel>", self._scroll_sidebar)
             self.nav_buttons[key] = button
 
-        self.stats_label = tk.Label(
-            sidebar,
-            text="WAITING FOR DB...",
-            bg=COLORS["black"],
-            fg=COLORS["muted"],
-            justify="left",
-            anchor="sw",
-            font=("Cascadia Mono", 8),
-        )
-        self.stats_label.pack(side="bottom", fill="x", padx=14, pady=12)
+        if ACTIVE_THEME == "modern":
+            if not modern_navigation_is_complete():
+                raise RuntimeError("Modern navigation is missing a PeerBridge page")
+            workspace_label = tk.Label(
+                nav,
+                text=self._t("modern.nav.workspace"),
+                bg=sidebar_bg,
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+            workspace_label.pack(fill="x", padx=9, pady=(1, 5))
+            self.modern_nav_group_labels["workspace"] = workspace_label
+            primary_pages = ("cockpit", "chat", "work", "review", "usage")
+            for key in primary_pages:
+                add_nav_button(key)
 
-        main = tk.Frame(self.root, bg=COLORS["bg"])
+            self.modern_more_nav_button = tk.Button(
+                nav,
+                text=self._t("modern.nav.more"),
+                command=self._toggle_modern_more_nav,
+                bg=sidebar_bg,
+                fg=COLORS["muted"],
+                activebackground=COLORS["panel_2"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                anchor="w",
+                padx=11,
+                pady=7,
+                font=(MODERN_FONT_FAMILY, 9),
+            )
+            self.modern_more_nav_button.pack(fill="x", pady=(2, 0))
+            self.modern_more_nav_frame = tk.Frame(nav, bg=sidebar_bg)
+            for group_key, page_keys in MODERN_NAV_GROUPS:
+                group_label = tk.Label(
+                    self.modern_more_nav_frame,
+                    text=self._t(f"modern.nav.{group_key}"),
+                    bg=sidebar_bg,
+                    fg=COLORS["muted"],
+                    anchor="w",
+                    font=(UI_FONT_FAMILY, 8, "bold"),
+                )
+                group_label.pack(fill="x", padx=9, pady=(10, 3))
+                self.modern_nav_group_labels[group_key] = group_label
+                for key in page_keys:
+                    if key not in primary_pages:
+                        add_nav_button(key, self.modern_more_nav_frame)
+
+            self.modern_recent_rooms_title = tk.Label(
+                sidebar_content,
+                text=self._t("modern.rooms.title"),
+                bg=sidebar_bg,
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+            self.modern_recent_rooms_title.pack(
+                fill="x", padx=22, pady=(16, 4)
+            )
+            self.modern_recent_rooms_frame = tk.Frame(
+                sidebar_content, bg=sidebar_bg
+            )
+            self.modern_recent_rooms_frame.pack(fill="x", padx=12)
+            self._sync_modern_recent_rooms()
+
+            self.modern_agent_library_button = tk.Button(
+                sidebar_content,
+                text=self._t("modern.sidebar.show_agents"),
+                command=self._toggle_modern_agent_library,
+                bg=sidebar_bg,
+                fg=COLORS["muted"],
+                activebackground=COLORS["panel_2"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                anchor="w",
+                padx=10,
+                pady=7,
+                font=(MODERN_FONT_FAMILY, 9),
+            )
+            self.modern_agent_library_button.pack(
+                fill="x", padx=12, pady=(10, 0)
+            )
+
+            account = tk.Frame(sidebar_content, bg=sidebar_bg)
+            account.pack(fill="x", padx=16, pady=(18, 12))
+            tk.Frame(account, bg=COLORS["line"], height=1).pack(
+                fill="x", pady=(0, 10)
+            )
+            avatar = tk.Label(
+                account,
+                text="HY",
+                bg="#071d38",
+                fg="#ffffff",
+                width=3,
+                height=1,
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            )
+            avatar.pack(side="left", padx=(0, 9), ipady=5)
+            account_text = tk.Frame(account, bg=sidebar_bg)
+            account_text.pack(side="left", fill="x", expand=True)
+            tk.Label(
+                account_text,
+                text="Hoylon",
+                bg=sidebar_bg,
+                fg=COLORS["text"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            ).pack(fill="x")
+            self.modern_account_role = tk.Label(
+                account_text,
+                text=self._t("modern.account.role"),
+                bg=sidebar_bg,
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8),
+            )
+            self.modern_account_role.pack(fill="x")
+        else:
+            for key in TUTORIAL_PAGE_KEYS:
+                add_nav_button(key)
+
+        main = tk.Frame(
+            self.root,
+            bg=MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["bg"],
+        )
         main.grid(row=0, column=1, sticky="nsew")
         main.grid_rowconfigure(1, weight=1)
         main.grid_columnconfigure(0, weight=1)
         self.main_frame = main
 
-        toolbar = tk.Frame(main, bg=COLORS["panel"], bd=2, relief="ridge", height=64)
-        toolbar.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
+        toolbar = tk.Frame(
+            main,
+            bg=COLORS["panel"],
+            bd=0 if ACTIVE_THEME == "modern" else 2,
+            relief="flat" if ACTIVE_THEME == "modern" else "ridge",
+            height=60 if ACTIVE_THEME == "modern" else 64,
+            highlightthickness=1 if ACTIVE_THEME == "modern" else 0,
+            highlightbackground=COLORS["line"],
+        )
+        toolbar.grid(
+            row=0,
+            column=0,
+            sticky="ew",
+            padx=0 if ACTIVE_THEME == "modern" else 12,
+            pady=0 if ACTIVE_THEME == "modern" else (12, 8),
+        )
         toolbar.grid_columnconfigure(2, weight=1)
         self.toolbar_frame = toolbar
-        self.page_title = tk.Label(toolbar, text=self._t("page.chat"), bg=COLORS["panel"], fg=COLORS["amber"], font=("Cascadia Mono", 14, "bold"))
-        self.page_title.grid(row=0, column=0, padx=14, pady=12, sticky="w")
+        self.page_title = tk.Label(
+            toolbar,
+            text=self._t("page.cockpit"),
+            bg=COLORS["panel"],
+            fg=COLORS["text"] if ACTIVE_THEME == "modern" else COLORS["amber"],
+            font=(
+                UI_FONT_FAMILY,
+                16 if ACTIVE_THEME == "modern" else 14,
+                "bold",
+            ),
+        )
+        self.page_title.grid(
+            row=0,
+            column=0,
+            padx=26 if ACTIVE_THEME == "modern" else 14,
+            pady=14 if ACTIVE_THEME == "modern" else 12,
+            sticky="w",
+        )
         self.search_label = tk.Label(
             toolbar,
             text=self._t("toolbar.search"),
@@ -3049,9 +6327,12 @@ class PixelMonitor:
             bg=COLORS["black"],
             fg=COLORS["text"],
             insertbackground=COLORS["cyan"],
-            relief="sunken",
-            bd=2,
-            font=("Cascadia Mono", 10),
+            relief="flat" if ACTIVE_THEME == "modern" else "sunken",
+            bd=0 if ACTIVE_THEME == "modern" else 2,
+            highlightthickness=1 if ACTIVE_THEME == "modern" else 0,
+            highlightbackground=COLORS["line"],
+            highlightcolor=COLORS["blue"],
+            font=(UI_FONT_FAMILY, 10),
         )
         search_entry.grid(row=0, column=2, sticky="ew", padx=10, ipady=6)
         self.pause_button = tk.Button(
@@ -3114,6 +6395,26 @@ class PixelMonitor:
         )
         self.locale_combo.pack(side="left")
         self.locale_combo.bind("<<ComboboxSelected>>", self._locale_changed)
+        self.theme_title_label = tk.Label(
+            language_cluster,
+            text=self._t("toolbar.theme"),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.theme_title_label.pack(side="left", padx=(14, 6))
+        self.theme_combo = ttk.Combobox(
+            language_cluster,
+            textvariable=self.theme_choice,
+            values=tuple(
+                THEME_LABELS[self.locale.get()][key] for key in SUPPORTED_THEMES
+            ),
+            state="readonly",
+            width=18,
+            font=("Cascadia Mono", 9),
+        )
+        self.theme_combo.pack(side="left")
+        self.theme_combo.bind("<<ComboboxSelected>>", self._theme_changed)
         self.help_button = tk.Button(
             toolbar,
             text=self._t("toolbar.help"),
@@ -3172,12 +6473,133 @@ class PixelMonitor:
             row=1, column=4, padx=(3, 12), pady=(0, 10), sticky="e"
         )
 
-        page_host = tk.Frame(main, bg=COLORS["bg"])
-        page_host.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        if ACTIVE_THEME == "modern":
+            for column in range(6):
+                toolbar.grid_columnconfigure(column, weight=0)
+            toolbar.grid_columnconfigure(0, weight=1)
+            self.page_title.grid_configure(
+                row=0, column=0, padx=(24, 12), pady=15, sticky="w"
+            )
+            self.modern_toolbar_scope_label = tk.Label(
+                toolbar,
+                text=self.scope,
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                font=(MODERN_FONT_FAMILY, 9),
+            )
+            self.modern_toolbar_scope_label.grid(
+                row=0, column=1, padx=8, pady=12, sticky="e"
+            )
+            self.modern_toolbar_connection_label = tk.Label(
+                toolbar,
+                text=self._t("modern.toolbar.connected"),
+                bg=COLORS["panel"],
+                fg=COLORS["green"],
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            )
+            self.modern_toolbar_connection_label.grid(
+                row=0, column=2, padx=8, pady=12, sticky="e"
+            )
+            self.modern_toolbar_options_button = tk.Button(
+                toolbar,
+                text=self._t("modern.toolbar.options"),
+                command=self._toggle_modern_toolbar_options,
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                activebackground=COLORS["panel_2"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                padx=10,
+                pady=6,
+                font=(MODERN_FONT_FAMILY, 9),
+            )
+            self.modern_toolbar_options_button.grid(
+                row=0, column=3, padx=(4, 2), pady=8, sticky="e"
+            )
+
+            self.search_label.grid_configure(
+                row=1, column=0, padx=(4, 4), pady=(4, 6), sticky="w"
+            )
+            search_entry.grid_configure(
+                row=1,
+                column=1,
+                columnspan=2,
+                sticky="ew",
+                padx=6,
+                pady=(4, 6),
+            )
+            self.pause_button.grid_configure(
+                row=1, column=3, padx=4, pady=(4, 6), sticky="e"
+            )
+            refresh_cluster.grid_configure(
+                row=1, column=4, padx=(4, 2), pady=(4, 6), sticky="e"
+            )
+            language_cluster.grid_configure(
+                row=2,
+                column=0,
+                columnspan=2,
+                padx=(4, 6),
+                pady=(2, 6),
+                sticky="w",
+            )
+            self.help_button.grid_configure(
+                row=2, column=2, padx=4, pady=(2, 6), sticky="w"
+            )
+            self.announcement_button.grid_configure(
+                row=2, column=3, padx=4, pady=(2, 6), sticky="e"
+            )
+            self.update_button.grid_configure(
+                row=2, column=4, padx=(4, 2), pady=(2, 6), sticky="e"
+            )
+            self.update_status_label.grid_configure(
+                row=3,
+                column=0,
+                columnspan=5,
+                padx=4,
+                pady=(0, 8),
+                sticky="ew",
+            )
+            self.modern_toolbar_option_widgets = (
+                self.search_label,
+                search_entry,
+                self.pause_button,
+                refresh_cluster,
+                language_cluster,
+                self.help_button,
+                self.announcement_button,
+                self.update_button,
+                self.update_status_label,
+            )
+            for widget in self.modern_toolbar_option_widgets:
+                widget.grid_remove()
+
+        page_host = tk.Frame(
+            main,
+            bg=MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["bg"],
+        )
+        page_host.grid(
+            row=1,
+            column=0,
+            sticky="nsew",
+            padx=0 if ACTIVE_THEME == "modern" else 12,
+            pady=0 if ACTIVE_THEME == "modern" else (0, 12),
+        )
         page_host.grid_rowconfigure(0, weight=1)
         page_host.grid_columnconfigure(0, weight=1)
         self.page_host = page_host
 
+        self.cockpit = AgentCockpit(
+            page_host,
+            project_root=self.project_root,
+            translate=self._t,
+            colors=COLORS,
+            external_sessions=self._cockpit_external_sessions,
+            room_sender=self._send_cockpit_room_message,
+            external_input_complete=self._finish_cockpit_room_input,
+        )
+        self.cockpit.set_room_context(self.selected_room_id)
+        self.pages["cockpit"] = self.cockpit.frame
         self._build_chat_page(page_host)
         self.work_tree = self._make_tree_page(
             page_host,
@@ -3204,79 +6626,265 @@ class PixelMonitor:
             page_host,
             "memory",
             [
-                ("scope", "SCOPE", 85),
-                ("room", "ROOM", 115),
-                ("owner", "OWNER", 125),
-                ("status", "STATUS", 85),
-                ("title", "TITLE", 330),
+                ("type", "TYPE", 90),
+                ("scope", "SCOPE", 80),
+                ("authority", "AUTHORITY", 125),
+                ("applicability", "APPLIES TO", 145),
+                ("status", "STATUS", 80),
+                ("title", "TITLE", 260),
+                ("supersession", "SUPERSESSION", 150),
                 ("time", "CREATED", 120),
-                ("hash", "SHA", 105),
             ],
         )
+        self.trust_workflows = TrustWorkflowsPage(
+            page_host,
+            project_root=self.project_root,
+            translate=self._t,
+            colors=COLORS,
+            execute_tool=self._execute_trust_tool,
+        )
+        self.pages["trust"] = self.trust_workflows.frame
         self._build_feedback_page(page_host)
         self._build_usage_page(page_host)
         self._build_announcements_page(page_host)
-        self.show_page("chat")
+        self._apply_modern_widget_treatment()
+        self.show_page("cockpit")
 
-    def show_tutorial(self) -> None:
-        if self._tutorial_window is not None and self._tutorial_window.winfo_exists():
+    def _draw_tutorial_diagram(self, canvas: tk.Canvas, page_key: str) -> None:
+        layout, markers = tutorial_diagram_spec(page_key)
+        canvas.delete("all")
+        width = max(560, canvas.winfo_width())
+        height = max(230, canvas.winfo_height())
+
+        def box(
+            left: float,
+            top: float,
+            right: float,
+            bottom: float,
+            *,
+            fill: str = COLORS["panel_2"],
+            outline: str = COLORS["line"],
+            line_width: int = 1,
+        ) -> None:
+            canvas.create_rectangle(
+                left * width,
+                top * height,
+                right * width,
+                bottom * height,
+                fill=fill,
+                outline=outline,
+                width=line_width,
+            )
+
+        box(0.02, 0.04, 0.98, 0.96, fill=COLORS["black"], line_width=2)
+        if layout == "cockpit":
+            box(0.05, 0.09, 0.95, 0.27)
+            box(0.05, 0.32, 0.33, 0.90)
+            box(0.36, 0.32, 0.64, 0.90)
+            box(0.67, 0.32, 0.95, 0.90)
+            for left in (0.08, 0.39, 0.70):
+                box(left, 0.72, left + 0.21, 0.84, fill=COLORS["panel"])
+        elif layout == "chat":
+            box(0.05, 0.09, 0.95, 0.25)
+            box(0.05, 0.30, 0.25, 0.72)
+            box(0.28, 0.30, 0.95, 0.72)
+            box(0.05, 0.77, 0.95, 0.91, fill=COLORS["panel"])
+            for top in (0.37, 0.50, 0.63):
+                box(0.33, top, 0.78 if top != 0.50 else 0.90, top + 0.07)
+        elif layout == "table":
+            box(0.05, 0.09, 0.95, 0.24)
+            box(0.05, 0.29, 0.95, 0.67)
+            for top in (0.37, 0.46, 0.55):
+                canvas.create_line(
+                    0.07 * width,
+                    top * height,
+                    0.93 * width,
+                    top * height,
+                    fill=COLORS["line"],
+                )
+            box(0.05, 0.72, 0.95, 0.91, fill=COLORS["panel"])
+        elif layout == "connect":
+            box(0.05, 0.09, 0.95, 0.34)
+            for top in (0.16, 0.23, 0.30):
+                canvas.create_line(
+                    0.08 * width,
+                    top * height,
+                    0.92 * width,
+                    top * height,
+                    fill=COLORS["line"],
+                )
+            box(0.05, 0.39, 0.95, 0.68)
+            box(0.05, 0.73, 0.95, 0.91, fill=COLORS["panel"])
+        elif layout == "trust":
+            for index in range(5):
+                box(0.05 + index * 0.18, 0.09, 0.21 + index * 0.18, 0.22)
+            box(0.05, 0.28, 0.45, 0.88)
+            box(0.49, 0.28, 0.95, 0.63)
+            box(0.49, 0.68, 0.95, 0.88, fill=COLORS["panel"])
+        elif layout == "feedback":
+            box(0.05, 0.09, 0.62, 0.28)
+            box(0.05, 0.33, 0.62, 0.68)
+            box(0.66, 0.09, 0.95, 0.68)
+            box(0.05, 0.73, 0.95, 0.91, fill=COLORS["panel"])
+        elif layout == "usage":
+            for index in range(4):
+                box(0.05 + index * 0.225, 0.09, 0.25 + index * 0.225, 0.22)
+                box(0.05 + index * 0.225, 0.28, 0.25 + index * 0.225, 0.48)
+            box(0.05, 0.54, 0.58, 0.91)
+            points = (
+                0.09 * width,
+                0.83 * height,
+                0.20 * width,
+                0.72 * height,
+                0.31 * width,
+                0.76 * height,
+                0.43 * width,
+                0.62 * height,
+                0.54 * width,
+                0.67 * height,
+            )
+            canvas.create_line(*points, fill=COLORS["cyan"], width=3)
+            box(0.62, 0.54, 0.95, 0.91, fill=COLORS["panel"])
+        else:
+            box(0.05, 0.09, 0.95, 0.27)
+            box(0.05, 0.32, 0.42, 0.90)
+            box(0.46, 0.32, 0.95, 0.90, fill=COLORS["panel"])
+
+        radius = 13
+        for number, (x_fraction, y_fraction) in enumerate(markers, start=1):
+            x = x_fraction * width
+            y = y_fraction * height
+            canvas.create_oval(
+                x - radius,
+                y - radius,
+                x + radius,
+                y + radius,
+                fill=COLORS["amber"],
+                outline=COLORS["black"],
+                width=2,
+            )
+            canvas.create_text(
+                x,
+                y,
+                text=str(number),
+                fill=COLORS["black"],
+                font=("Cascadia Mono", 10, "bold"),
+            )
+
+    def show_tutorial(self, page_key: str | None = None) -> None:
+        selected_page = page_key or getattr(self, "active_page", "cockpit")
+        if selected_page not in TUTORIAL_PAGE_KEYS:
+            selected_page = "cockpit"
+        if self._tutorial_is_open():
+            assert self._tutorial_window is not None
+            if self._tutorial_select_page is not None:
+                self._tutorial_select_page(selected_page)
             self._tutorial_window.deiconify()
             self._tutorial_window.lift()
             self._tutorial_window.focus_force()
             return
+
         window = tk.Toplevel(self.root)
         self._tutorial_window = window
         window.title(self._t("tutorial.title"))
-        window.geometry("680x390")
-        window.minsize(560, 330)
+        self._place_transient(window, 1080, 780)
+        window.minsize(900, 680)
         window.configure(bg=COLORS["bg"])
         window.transient(self.root)
         window.protocol("WM_DELETE_WINDOW", lambda: self._close_tutorial(False))
 
-        step_index = tk.IntVar(value=0)
-        title_value = tk.StringVar()
-        body_value = tk.StringVar()
-        steps = tuple(
-            (self._t(f"tutorial.step{index}.title"), self._t(f"tutorial.step{index}.body"))
-            for index in range(1, 5)
-        )
+        shell = tk.Frame(window, bg=COLORS["bg"])
+        shell.pack(fill="both", expand=True, padx=18, pady=18)
+        sidebar = tk.Frame(shell, bg=COLORS["black"], width=235, bd=2, relief="ridge")
+        sidebar.pack(side="left", fill="y", padx=(0, 14))
+        sidebar.pack_propagate(False)
         tk.Label(
-            window,
-            text=self._t("tutorial.title"),
-            bg=COLORS["bg"],
+            sidebar,
+            text=self._t("tutorial.all_panels"),
+            bg=COLORS["black"],
             fg=COLORS["cyan"],
-            font=("Cascadia Mono", 18, "bold"),
-        ).pack(anchor="w", padx=28, pady=(26, 14))
+            anchor="w",
+            justify="left",
+            wraplength=205,
+            font=("Cascadia Mono", 12, "bold"),
+        ).pack(fill="x", padx=12, pady=(14, 10))
+
+        content = tk.Frame(shell, bg=COLORS["bg"])
+        content.pack(side="left", fill="both", expand=True)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_rowconfigure(5, weight=1)
+        progress_value = tk.StringVar()
+        title_value = tk.StringVar()
+        purpose_value = tk.StringVar()
+        body_value = tk.StringVar()
         tk.Label(
-            window,
+            content,
+            textvariable=progress_value,
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            anchor="w",
+            font=("Cascadia Mono", 10, "bold"),
+        ).grid(row=0, column=0, sticky="ew")
+        tk.Label(
+            content,
             textvariable=title_value,
             bg=COLORS["bg"],
             fg=COLORS["amber"],
-            font=("Cascadia Mono", 13, "bold"),
             anchor="w",
-        ).pack(fill="x", padx=28, pady=(4, 12))
+            font=("Cascadia Mono", 15, "bold"),
+        ).grid(row=1, column=0, sticky="ew", pady=(2, 8))
+        purpose = tk.Frame(content, bg=COLORS["panel_2"], bd=1, relief="ridge")
+        purpose.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        purpose.grid_columnconfigure(1, weight=1)
         tk.Label(
-            window,
+            purpose,
+            text=self._t("tutorial.purpose_label"),
+            bg=COLORS["panel_2"],
+            fg=COLORS["cyan"],
+            anchor="w",
+            font=("Cascadia Mono", 10, "bold"),
+        ).grid(row=0, column=0, sticky="nw", padx=(10, 12), pady=8)
+        tk.Label(
+            purpose,
+            textvariable=purpose_value,
+            bg=COLORS["panel_2"],
+            fg=COLORS["text"],
+            anchor="w",
+            justify="left",
+            wraplength=570,
+            font=("Cascadia Mono", 10),
+        ).grid(row=0, column=1, sticky="ew", padx=(0, 10), pady=8)
+        diagram = tk.Canvas(
+            content,
+            height=260,
+            bg=COLORS["panel"],
+            highlightthickness=2,
+            highlightbackground=COLORS["line"],
+        )
+        diagram.grid(row=3, column=0, sticky="nsew")
+        tk.Label(
+            content,
+            text=self._t("tutorial.diagram_note"),
+            bg=COLORS["bg"],
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=760,
+            font=("Cascadia Mono", 10),
+        ).grid(row=4, column=0, sticky="ew", pady=(6, 8))
+        tk.Label(
+            content,
             textvariable=body_value,
             bg=COLORS["bg"],
             fg=COLORS["text"],
-            font=("Cascadia Mono", 10),
-            justify="left",
             anchor="nw",
-            wraplength=610,
-        ).pack(fill="both", expand=True, padx=28, pady=(0, 18))
-        controls = tk.Frame(window, bg=COLORS["bg"])
-        controls.pack(fill="x", padx=24, pady=(0, 24))
-        back_button = tk.Button(
-            controls,
-            text=self._t("tutorial.back"),
-            bg=COLORS["line"],
-            fg=COLORS["text"],
-            relief="raised",
-            bd=2,
-            font=("Cascadia Mono", 9, "bold"),
-        )
-        back_button.pack(side="left", padx=4)
+            justify="left",
+            wraplength=760,
+            font=("Cascadia Mono", TUTORIAL_BODY_TEXT_SIZE),
+        ).grid(row=5, column=0, sticky="nsew")
+
+        controls = tk.Frame(content, bg=COLORS["bg"])
+        controls.grid(row=6, column=0, sticky="ew", pady=(10, 0))
         skip_button = tk.Button(
             controls,
             text=self._t("tutorial.skip"),
@@ -3287,7 +6895,17 @@ class PixelMonitor:
             bd=2,
             font=("Cascadia Mono", 9, "bold"),
         )
-        skip_button.pack(side="left", padx=4)
+        skip_button.pack(side="left", padx=(0, 5))
+        open_button = tk.Button(
+            controls,
+            text=self._t("tutorial.open_panel"),
+            bg=COLORS["blue"],
+            fg=COLORS["black"],
+            relief="raised",
+            bd=2,
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        open_button.pack(side="left", padx=5)
         next_button = tk.Button(
             controls,
             bg=COLORS["green"],
@@ -3296,29 +6914,92 @@ class PixelMonitor:
             bd=2,
             font=("Cascadia Mono", 9, "bold"),
         )
-        next_button.pack(side="right", padx=4)
+        next_button.pack(side="right", padx=(5, 0))
+        previous_button = tk.Button(
+            controls,
+            text=self._t("tutorial.previous_panel"),
+            bg=COLORS["line"],
+            fg=COLORS["text"],
+            relief="raised",
+            bd=2,
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        previous_button.pack(side="right", padx=5)
 
-        def render_step() -> None:
-            current = max(0, min(step_index.get(), len(steps) - 1))
-            step_index.set(current)
-            title_value.set(steps[current][0])
-            body_value.set(steps[current][1])
-            back_button.configure(state="normal" if current else "disabled")
-            if current == len(steps) - 1:
+        nav_buttons: dict[str, tk.Button] = {}
+        current_page = {"key": selected_page}
+
+        def render_page(key: str) -> None:
+            if key not in TUTORIAL_PAGE_KEYS:
+                return
+            current_page["key"] = key
+            index = TUTORIAL_PAGE_KEYS.index(key)
+            title_value.set(self._t(f"page.{key}"))
+            progress_value.set(
+                self._t("tutorial.panel_progress").format(
+                    current=index + 1,
+                    total=len(TUTORIAL_PAGE_KEYS),
+                )
+            )
+            purpose_value.set(self._t(f"tutorial.panel.{key}.purpose"))
+            body_value.set(self._t(f"tutorial.panel.{key}.body"))
+            for nav_key, button in nav_buttons.items():
+                active = nav_key == key
+                button.configure(
+                    bg=COLORS["cyan"] if active else COLORS["panel"],
+                    fg=COLORS["black"] if active else COLORS["text"],
+                )
+            previous_button.configure(
+                state="normal" if index else "disabled",
+                command=lambda: render_page(TUTORIAL_PAGE_KEYS[index - 1]),
+            )
+            if index == len(TUTORIAL_PAGE_KEYS) - 1:
                 next_button.configure(
                     text=self._t("tutorial.done"),
                     command=lambda: self._close_tutorial(True),
                 )
             else:
                 next_button.configure(
-                    text=self._t("tutorial.next"),
-                    command=lambda: (step_index.set(current + 1), render_step()),
+                    text=self._t("tutorial.next_panel"),
+                    command=lambda: render_page(TUTORIAL_PAGE_KEYS[index + 1]),
                 )
+            open_button.configure(
+                command=lambda: (
+                    self.show_page(current_page["key"]),
+                    self._close_tutorial(True),
+                )
+            )
+            self._draw_tutorial_diagram(diagram, key)
 
-        back_button.configure(
-            command=lambda: (step_index.set(max(0, step_index.get() - 1)), render_step())
+        for key in TUTORIAL_PAGE_KEYS:
+            button = tk.Button(
+                sidebar,
+                text=self._t(f"nav.{key}"),
+                command=lambda value=key: render_page(value),
+                anchor="w",
+                justify="left",
+                wraplength=200,
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                activebackground=COLORS["cyan"],
+                activeforeground=COLORS["black"],
+                relief="raised",
+                bd=2,
+                padx=8,
+                pady=2,
+                font=("Cascadia Mono", 9, "bold"),
+            )
+            button.pack(fill="x", padx=8, pady=1)
+            nav_buttons[key] = button
+
+        self._tutorial_select_page = render_page
+        diagram.bind(
+            "<Configure>",
+            lambda _event: self._draw_tutorial_diagram(
+                diagram, current_page["key"]
+            ),
         )
-        render_step()
+        render_page(selected_page)
 
     def _close_tutorial(self, completed: bool) -> None:
         if completed:
@@ -3326,11 +7007,20 @@ class PixelMonitor:
             try:
                 self._save_ui_preferences()
             except (OSError, LocalizationError) as exc:
-                self.update_status.set(f"Preferences: {clip(exc, 100)}")
+                self.update_status.set(
+                    self._t("ui.preferences_error").format(error=clip(exc, 100))
+                )
         if self._tutorial_window is not None:
             with contextlib.suppress(tk.TclError):
                 self._tutorial_window.destroy()
         self._tutorial_window = None
+        self._tutorial_select_page = None
+        pending = self._pending_announcement_popup_rows
+        self._pending_announcement_popup_rows = ()
+        if pending and not self._closing:
+            self.root.after_idle(
+                lambda rows=pending: self._show_announcement_popup(list(rows))
+            )
 
     def check_updates(self) -> None:
         if self.update_in_progress:
@@ -3341,7 +7031,14 @@ class PixelMonitor:
 
         def worker() -> None:
             try:
-                result = check_for_updates(current_version=APP_VERSION)
+                result = check_for_updates(
+                    current_version=APP_VERSION,
+                    current_build_sha256=(
+                        APP_BUILD_SHA256
+                        if APP_BUILD_SHA256 != "unavailable"
+                        else None
+                    ),
+                )
                 self._post_to_ui(self._update_finished, result, None)
             except Exception as exc:
                 self._post_to_ui(self._update_finished, None, exc)
@@ -3362,21 +7059,35 @@ class PixelMonitor:
             return
         assert result is not None
         if result.update_available:
+            status_key = (
+                "updates.available_build"
+                if result.same_version_build_update
+                else "updates.available"
+            )
             self.update_status.set(
-                self._t("updates.available").format(version=result.latest_version)
+                self._t(status_key).format(version=result.latest_version)
             )
             if messagebox.askyesno(
                 self._t("toolbar.updates"),
-                self._t("updates.available").format(version=result.latest_version)
+                self._t(status_key).format(version=result.latest_version)
                 + "\n\n"
                 + result.release_url
-                + "\n\nOpen the verified GitHub release page?",
+                + "\n\n"
+                + self._t("updates.open_release"),
                 parent=self.root,
             ):
                 webbrowser.open(result.release_url, new=2)
         else:
+            status_key = (
+                "updates.current_release"
+                if result.current_release_published
+                else "updates.current_local_build"
+            )
             self.update_status.set(
-                self._t("updates.current").format(version=result.current_version)
+                self._t(status_key).format(
+                    version=result.current_version,
+                    build=APP_BUILD_ID,
+                )
             )
 
     @staticmethod
@@ -3612,15 +7323,17 @@ class PixelMonitor:
             self._schedule_announcement_check(config.poll_seconds * 1000)
 
     def _show_announcement_popup(self, rows: list[Announcement]) -> None:
-        if self._announcement_window is not None:
-            with contextlib.suppress(tk.TclError):
-                self._announcement_window.destroy()
+        if self._tutorial_is_open():
+            self._pending_announcement_popup_rows = tuple(rows)
+            return
+        self._pending_announcement_popup_rows = ()
+        self._close_announcement_popup()
         window = tk.Toplevel(self.root)
         self._announcement_window = window
         window.title(self._t("announcement.popup_title"))
         width = max(700, min(1000, int(self.root.winfo_width() * 0.78)))
         height = max(460, min(720, int(self.root.winfo_height() * 0.78)))
-        window.geometry(f"{width}x{height}")
+        self._place_transient(window, width, height)
         window.minsize(620, 420)
         window.configure(bg=COLORS["bg"])
         window.transient(self.root)
@@ -3646,7 +7359,7 @@ class PixelMonitor:
         tk.Button(
             window,
             text=self._t("announcement.open"),
-            command=lambda: (window.destroy(), self.open_announcements()),
+            command=lambda: (self._close_announcement_popup(), self.open_announcements()),
             bg=COLORS["cyan"],
             fg=COLORS["black"],
             activebackground=COLORS["green"],
@@ -3656,7 +7369,14 @@ class PixelMonitor:
             pady=7,
             font=("Cascadia Mono", 10, "bold"),
         ).pack(pady=(0, 16))
-        window.protocol("WM_DELETE_WINDOW", window.destroy)
+        window.protocol("WM_DELETE_WINDOW", self._close_announcement_popup)
+
+    def _close_announcement_popup(self) -> None:
+        window = self._announcement_window
+        self._announcement_window = None
+        if window is not None:
+            with contextlib.suppress(tk.TclError):
+                window.destroy()
 
     def open_announcements(self) -> None:
         self.show_page("announcement")
@@ -3717,12 +7437,51 @@ class PixelMonitor:
         page = tk.Frame(host, bg=COLORS["panel"], bd=2, relief="ridge")
         page.grid(row=0, column=0, sticky="nsew")
         page.grid_columnconfigure(0, weight=1)
-        page.grid_rowconfigure(2, weight=2)
-        page.grid_rowconfigure(3, weight=3)
+        page.grid_rowconfigure(3, weight=2)
+        page.grid_rowconfigure(4, weight=3)
         self.pages["usage"] = page
 
+        period_strip = tk.Frame(page, bg=COLORS["panel_2"], bd=1, relief="ridge")
+        period_strip.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        self.usage_period_label = tk.Label(
+            period_strip,
+            text=self._t("usage.period"),
+            bg=COLORS["panel_2"],
+            fg=COLORS["muted"],
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.usage_period_label.pack(side="left", padx=(10, 8), pady=7)
+        self.usage_period = tk.StringVar(value="30d")
+        self.usage_period_buttons: dict[str, tk.Button] = {}
+        for period in USAGE_PERIOD_KEYS:
+            button = tk.Button(
+                period_strip,
+                text=self._t(f"usage.period.{period}"),
+                command=lambda value=period: self._set_usage_period(value),
+                bg=COLORS["line"],
+                fg=COLORS["text"],
+                activebackground=COLORS["cyan"],
+                activeforeground=COLORS["black"],
+                relief="raised",
+                bd=2,
+                padx=10,
+                pady=3,
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            button.pack(side="left", padx=2, pady=5)
+            self.usage_period_buttons[period] = button
+        self.usage_timezone_label = tk.Label(
+            period_strip,
+            text=self._t("usage.timezone"),
+            bg=COLORS["panel_2"],
+            fg=COLORS["muted"],
+            font=("Cascadia Mono", 7),
+        )
+        self.usage_timezone_label.pack(side="right", padx=10, pady=7)
+        self._sync_usage_period_buttons()
+
         kpi_strip = tk.Frame(page, bg=COLORS["panel"])
-        kpi_strip.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 5))
+        kpi_strip.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
         self.usage_kpi_labels: dict[str, tk.Label] = {}
         self.usage_kpi_values: dict[str, tk.StringVar] = {}
         for column, key in enumerate(
@@ -3762,7 +7521,7 @@ class PixelMonitor:
             font=("Cascadia Mono", 9, "bold"),
         )
         self.usage_provider_frame.grid(
-            row=1, column=0, sticky="ew", padx=10, pady=5
+            row=2, column=0, sticky="ew", padx=10, pady=5
         )
         self.usage_provider_canvas = tk.Canvas(
             self.usage_provider_frame,
@@ -3777,7 +7536,7 @@ class PixelMonitor:
         )
 
         charts = tk.Frame(page, bg=COLORS["panel"])
-        charts.grid(row=2, column=0, sticky="nsew", padx=10, pady=5)
+        charts.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
         charts.grid_columnconfigure(0, weight=3, uniform="usage-chart")
         charts.grid_columnconfigure(1, weight=2, uniform="usage-chart")
         charts.grid_rowconfigure(0, weight=1)
@@ -3816,6 +7575,7 @@ class PixelMonitor:
         )
         self.usage_model_canvas.pack(fill="both", expand=True, padx=6, pady=6)
         self._usage_daily_rows: tuple[dict[str, Any], ...] = ()
+        self._usage_trend_limit = 30
         self._usage_model_rows: tuple[dict[str, Any], ...] = ()
         self.usage_daily_canvas.bind(
             "<Configure>", lambda _event: self._draw_usage_charts()
@@ -3825,7 +7585,7 @@ class PixelMonitor:
         )
 
         table_wrap = tk.Frame(page, bg=COLORS["panel"], bd=1, relief="ridge")
-        table_wrap.grid(row=3, column=0, sticky="nsew", padx=10, pady=5)
+        table_wrap.grid(row=4, column=0, sticky="nsew", padx=10, pady=5)
         table_wrap.grid_rowconfigure(0, weight=1)
         table_wrap.grid_columnconfigure(0, weight=1)
         self.usage_tree = ttk.Treeview(
@@ -3862,7 +7622,43 @@ class PixelMonitor:
             font=("Cascadia Mono", 8),
         )
         self.usage_note_label.grid(
-            row=4, column=0, sticky="ew", padx=14, pady=(1, 9)
+            row=5, column=0, sticky="ew", padx=14, pady=(1, 9)
+        )
+
+    def _set_usage_period(self, period: str) -> None:
+        if period not in USAGE_PERIOD_KEYS:
+            return
+        self.usage_period.set(period)
+        self._sync_usage_period_buttons()
+        if self.snapshot is not None:
+            self._render_usage(self.search.get().strip().lower())
+
+    def _sync_usage_period_buttons(self) -> None:
+        selected = self.usage_period.get()
+        for period, button in self.usage_period_buttons.items():
+            active = period == selected
+            button.configure(
+                bg=COLORS["cyan"] if active else COLORS["line"],
+                fg=COLORS["black"] if active else COLORS["text"],
+                relief="sunken" if active else "raised",
+            )
+
+    def _sync_usage_section_titles(self) -> None:
+        period = self._t(f"usage.period.{self.usage_period.get()}")
+        self.usage_provider_frame.configure(
+            text=self._t("usage.section_title").format(
+                section=self._t("usage.platforms"), period=period
+            )
+        )
+        self.usage_daily_frame.configure(
+            text=self._t("usage.section_title").format(
+                section=self._t("usage.trend"), period=period
+            )
+        )
+        self.usage_model_frame.configure(
+            text=self._t("usage.section_title").format(
+                section=self._t("usage.models"), period=period
+            )
         )
 
     def _usage_number(self, value: Any) -> str:
@@ -4129,11 +7925,16 @@ class PixelMonitor:
             if index % label_step and index != len(visible) - 1:
                 continue
             x = left + chart_width * (index / divisor)
+            period_label = str(
+                row.get("period_label") or row.get("utc_date") or "--"
+            )
+            if len(period_label) == 10 and period_label[4:5] == "-":
+                period_label = period_label[5:]
             canvas.create_text(
                 x,
                 bottom + 7,
                 anchor="n",
-                text=str(row.get("utc_date") or "--")[5:],
+                text=period_label,
                 fill=COLORS["muted"],
                 font=("Cascadia Mono", 6),
             )
@@ -4183,7 +7984,7 @@ class PixelMonitor:
         self._draw_usage_trend_chart(
             self.usage_daily_canvas,
             self._usage_daily_rows,
-            limit=30,
+            limit=self._usage_trend_limit,
         )
         self._draw_usage_bar_chart(
             self.usage_model_canvas,
@@ -4197,7 +7998,7 @@ class PixelMonitor:
         page = tk.Frame(host, bg=COLORS["panel"], bd=2, relief="ridge")
         page.grid(row=0, column=0, sticky="nsew")
         page.grid_columnconfigure(1, weight=1)
-        page.grid_rowconfigure(2, weight=1)
+        page.grid_rowconfigure(3, weight=1)
         self.pages["feedback"] = page
 
         self.feedback_prompt_label = tk.Label(
@@ -4596,13 +8397,18 @@ class PixelMonitor:
             )
 
     def _build_chat_page(self, host: tk.Frame) -> None:
-        outer_page = tk.Frame(host, bg=COLORS["panel"], bd=2, relief="ridge")
+        outer_page = tk.Frame(
+            host,
+            bg=MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["panel"],
+            bd=0 if ACTIVE_THEME == "modern" else 2,
+            relief="flat" if ACTIVE_THEME == "modern" else "ridge",
+        )
         outer_page.grid(row=0, column=0, sticky="nsew")
         outer_page.grid_rowconfigure(0, weight=1)
         outer_page.grid_columnconfigure(0, weight=1)
         self.chat_page_canvas = tk.Canvas(
             outer_page,
-            bg=COLORS["panel"],
+            bg=MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["panel"],
             highlightthickness=0,
             bd=0,
         )
@@ -4615,28 +8421,145 @@ class PixelMonitor:
             yscrollcommand=self.chat_page_scrollbar.set
         )
         self.chat_page_canvas.grid(row=0, column=0, sticky="nsew")
-        self.chat_page_scrollbar.grid(row=0, column=1, sticky="ns")
+        if ACTIVE_THEME != "modern":
+            self.chat_page_scrollbar.grid(row=0, column=1, sticky="ns")
 
-        page = tk.Frame(self.chat_page_canvas, bg=COLORS["panel"])
+        page = tk.Frame(
+            self.chat_page_canvas,
+            bg=MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["panel"],
+        )
         self.chat_page_content = page
         self.chat_page_window = self.chat_page_canvas.create_window(
             (0, 0), window=page, anchor="nw"
         )
         page.bind("<Configure>", self._sync_chat_page_scrollregion)
         self.chat_page_canvas.bind("<Configure>", self._resize_chat_page_viewport)
-        page.grid_rowconfigure(2, weight=1)
         page.grid_columnconfigure(0, weight=1)
+        self.modern_inspector_buttons: dict[str, tk.Button] = {}
+        self.modern_inspector_frames: dict[str, tk.Frame] = {}
+        self.modern_evidence_buttons: dict[str, tk.Button] = {}
+        self.modern_chat_workspace: tk.PanedWindow | None = None
+        self.modern_chat_inspector: tk.Frame | None = None
+        if ACTIVE_THEME == "modern":
+            page.grid_rowconfigure(0, weight=1)
+            workspace = tk.PanedWindow(
+                page,
+                orient="horizontal",
+                bg=COLORS["line"],
+                bd=0,
+                relief="flat",
+                sashrelief="flat",
+                sashwidth=7,
+                opaqueresize=True,
+            )
+            workspace.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
+            center = tk.Frame(workspace, bg=MODERN_WORKSPACE_BG)
+            center.grid_rowconfigure(1, weight=1)
+            center.grid_columnconfigure(0, weight=1)
+            inspector = tk.Frame(
+                workspace,
+                bg=COLORS["panel"],
+                width=MODERN_INSPECTOR_WIDTH,
+                highlightthickness=1,
+                highlightbackground=COLORS["line"],
+            )
+            inspector.grid_rowconfigure(1, weight=1)
+            inspector.grid_columnconfigure(0, weight=1)
+            workspace.add(center, minsize=520, stretch="always")
+            workspace.add(
+                inspector,
+                minsize=268,
+                width=MODERN_INSPECTOR_WIDTH,
+                stretch="never",
+            )
+            self.modern_chat_workspace = workspace
+            self.modern_chat_inspector = inspector
 
-        room_bar = tk.Frame(page, bg=COLORS["black"], bd=2, relief="ridge")
-        room_bar.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(8, 4))
+            inspector_tabs = tk.Frame(inspector, bg=COLORS["panel"])
+            inspector_tabs.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+            for column in range(len(MODERN_INSPECTOR_KEYS)):
+                inspector_tabs.grid_columnconfigure(column, weight=1)
+            for column, inspector_key in enumerate(MODERN_INSPECTOR_KEYS):
+                button = tk.Button(
+                    inspector_tabs,
+                    text=self._t(f"modern.inspector.{inspector_key}"),
+                    command=lambda value=inspector_key: self._show_modern_inspector(value),
+                    bg=COLORS["panel"],
+                    fg=COLORS["muted"],
+                    activebackground=COLORS["panel_2"],
+                    activeforeground=COLORS["blue"],
+                    relief="flat",
+                    bd=0,
+                    padx=6,
+                    pady=8,
+                    font=(MODERN_FONT_FAMILY, 9, "bold"),
+                )
+                button.grid(row=0, column=column, sticky="ew")
+                self.modern_inspector_buttons[inspector_key] = button
+            inspector_body = tk.Frame(inspector, bg=COLORS["panel"])
+            inspector_body.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 8))
+            inspector_body.grid_rowconfigure(0, weight=1)
+            inspector_body.grid_columnconfigure(0, weight=1)
+            room_parent = center
+            seats_parent = inspector_body
+            guided_parent = inspector_body
+            split_parent = center
+            room_row = 0
+            split_row = 1
+        else:
+            page.grid_rowconfigure(3, weight=1)
+            room_parent = page
+            seats_parent = page
+            guided_parent = page
+            split_parent = page
+            room_row = 0
+            split_row = 3
+
+        room_bar = tk.Frame(
+            room_parent,
+            bg=MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["black"],
+            bd=0 if ACTIVE_THEME == "modern" else 2,
+            relief="flat" if ACTIVE_THEME == "modern" else "ridge",
+        )
+        room_bar.grid(
+            row=room_row,
+            column=0,
+            columnspan=2,
+            sticky="ew",
+            padx=0 if ACTIVE_THEME == "modern" else 8,
+            pady=0 if ACTIVE_THEME == "modern" else (8, 4),
+        )
         room_bar.grid_columnconfigure(6, weight=1)
-        tk.Label(
+        if ACTIVE_THEME == "modern":
+            self.modern_room_identity_frame = tk.Frame(
+                room_bar, bg=MODERN_WORKSPACE_BG
+            )
+            self.modern_room_title_label = tk.Label(
+                self.modern_room_identity_frame,
+                text=self._t("modern.rooms.unnamed"),
+                bg=MODERN_WORKSPACE_BG,
+                fg=COLORS["text"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 13, "bold"),
+            )
+            self.modern_room_title_label.pack(side="left")
+            self.modern_room_context_label = tk.Label(
+                self.modern_room_identity_frame,
+                text="",
+                bg=MODERN_WORKSPACE_BG,
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8),
+            )
+            self.modern_room_context_label.pack(side="left", padx=(10, 0), pady=(3, 0))
+        self.room_bar_label = self._localized_label(
             room_bar,
-            text="ROOM",
+            "chat.room_label",
             bg=COLORS["black"],
             fg=COLORS["amber"],
             font=("Cascadia Mono", 8, "bold"),
-        ).grid(row=0, column=0, padx=(8, 4), pady=7)
+        )
+        self.room_bar_label.grid(row=0, column=0, padx=(8, 4), pady=7)
         self.room_combo = ttk.Combobox(
             room_bar,
             textvariable=self.room_choice,
@@ -4727,6 +8650,34 @@ class PixelMonitor:
             font=("Cascadia Mono", 8, "bold"),
         )
         self.chat_focus_button.grid(row=0, column=7, padx=(0, 8), pady=6)
+        self.modern_room_settings_button = tk.Button(
+            room_bar,
+            text=self._t("modern.room.settings"),
+            command=self._toggle_modern_room_settings,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            activebackground=COLORS["panel_2"],
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=5,
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        )
+        self.modern_inspector_toggle_button = tk.Button(
+            room_bar,
+            text=self._t("modern.room.hide_context"),
+            command=self._toggle_modern_inspector,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            activebackground=COLORS["panel_2"],
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=5,
+            font=(MODERN_FONT_FAMILY, 8),
+        )
 
         self.auto_label = tk.Label(
             room_bar,
@@ -4842,9 +8793,24 @@ class PixelMonitor:
         self.discussion_status_label.grid(
             row=1, column=6, sticky="ew", padx=(8, 10), pady=(1, 7)
         )
+        self.modern_room_bar = room_bar
+        self.modern_limit_frame = limit_frame
+        self.modern_discussion_controls = controls
 
-        seats = tk.Frame(page, bg=COLORS["panel_2"], bd=2, relief="ridge")
-        seats.grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=4)
+        seats = tk.Frame(
+            seats_parent,
+            bg=COLORS["panel"] if ACTIVE_THEME == "modern" else COLORS["panel_2"],
+            bd=2,
+            relief="ridge",
+        )
+        seats.grid(
+            row=0 if ACTIVE_THEME == "modern" else 1,
+            column=0,
+            columnspan=2,
+            sticky="nsew" if ACTIVE_THEME == "modern" else "ew",
+            padx=0 if ACTIVE_THEME == "modern" else 8,
+            pady=0 if ACTIVE_THEME == "modern" else 4,
+        )
         seats.grid_columnconfigure(4, weight=1)
         self.room_seats_frame = seats
         self.room_seats_label = tk.Label(
@@ -4855,6 +8821,24 @@ class PixelMonitor:
             font=("Cascadia Mono", 8, "bold"),
         )
         self.room_seats_label.grid(row=0, column=0, padx=(8, 4), pady=5)
+        if ACTIVE_THEME == "modern":
+            self.modern_agents_summary_frame = tk.Frame(
+                seats, bg=COLORS["panel"]
+            )
+            self.modern_manage_agents_button = tk.Button(
+                seats,
+                text=self._t("modern.agents.manage"),
+                command=self._toggle_modern_agent_editor,
+                bg=COLORS["panel"],
+                fg=COLORS["blue"],
+                activebackground=COLORS["line"],
+                activeforeground=COLORS["blue"],
+                relief="flat",
+                bd=0,
+                padx=4,
+                pady=4,
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
         self.seat_agent_combo = ttk.Combobox(
             seats,
             textvariable=self.seat_agent,
@@ -4921,6 +8905,89 @@ class PixelMonitor:
             font=("Cascadia Mono", 8, "bold"),
         )
         self.remove_seat_button.grid(row=0, column=6, padx=4, pady=5)
+
+        role_bar = tk.Frame(seats, bg=COLORS["black"], bd=1, relief="ridge")
+        role_bar.grid(
+            row=1,
+            column=0,
+            columnspan=7,
+            sticky="ew",
+            padx=8,
+            pady=(1, 4),
+        )
+        role_bar.grid_columnconfigure(3, weight=1)
+        self.seat_role_label = tk.Label(
+            role_bar,
+            text=self._t("chat.role"),
+            bg=COLORS["black"],
+            fg=COLORS["amber"],
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.seat_role_label.grid(row=0, column=0, padx=(8, 4), pady=6)
+        self.seat_role_combo = ttk.Combobox(
+            role_bar,
+            textvariable=self.seat_role_choice,
+            values=(),
+            state="readonly",
+            width=18,
+        )
+        self.seat_role_combo.grid(row=0, column=1, padx=4, pady=6)
+        self.seat_role_combo.bind(
+            "<<ComboboxSelected>>", self._on_seat_role_selected
+        )
+        self.seat_custom_role_entry = tk.Entry(
+            role_bar,
+            textvariable=self.seat_custom_role,
+            bg=COLORS["panel"],
+            fg=COLORS["text"],
+            insertbackground=COLORS["cyan"],
+            relief="sunken",
+            bd=2,
+            font=("Cascadia Mono", 9),
+            state="disabled",
+        )
+        self.seat_custom_role_entry.grid(
+            row=0, column=2, columnspan=2, sticky="ew", padx=4, pady=6, ipady=3
+        )
+        self.apply_role_button = tk.Button(
+            role_bar,
+            text=self._t("chat.apply_role"),
+            command=self.apply_room_member_role,
+            bg=COLORS["amber"],
+            fg=COLORS["black"],
+            activebackground=COLORS["cyan"],
+            relief="raised",
+            bd=2,
+            padx=8,
+            pady=3,
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.apply_role_button.grid(row=0, column=4, padx=4, pady=6)
+        self.view_live_work_button = tk.Button(
+            role_bar,
+            text=self._t("chat.view_live_work"),
+            command=self.view_selected_agent_work,
+            bg=COLORS["green"],
+            fg=COLORS["black"],
+            activebackground=COLORS["cyan"],
+            relief="raised",
+            bd=2,
+            padx=8,
+            pady=3,
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.view_live_work_button.grid(row=0, column=5, padx=4, pady=6)
+        self.seat_role_note = tk.Label(
+            role_bar,
+            text=self._t("chat.role_no_authority"),
+            bg=COLORS["black"],
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=220,
+            font=("Cascadia Mono", 7),
+        )
+        self.seat_role_note.grid(row=0, column=6, sticky="ew", padx=(4, 8), pady=6)
         self.seat_status_label = tk.Label(
             seats,
             textvariable=self.seat_status,
@@ -4930,35 +8997,113 @@ class PixelMonitor:
             font=("Cascadia Mono", 7),
         )
         self.seat_status_label.grid(
-            row=1, column=0, columnspan=7, sticky="ew", padx=10, pady=(0, 4)
+            row=2, column=0, columnspan=7, sticky="ew", padx=10, pady=(0, 4)
         )
 
         self.room_seat_tree = ttk.Treeview(
             seats,
-            columns=("agent", "session", "route", "state"),
+            columns=("agent", "role", "session", "route", "state"),
             show="headings",
             selectmode="browse",
             height=1,
         )
         for key, heading, width in (
             ("agent", "AGENT", 150),
-            ("session", "ROOM SESSION ID", 250),
-            ("route", "ROUTE", 330),
+            ("role", "ROLE", 150),
+            ("session", "ROOM SESSION ID", 220),
+            ("route", "ROUTE", 280),
             ("state", "STATE", 80),
         ):
             self.room_seat_tree.heading(key, text=heading)
             self.room_seat_tree.column(key, width=width, minwidth=70, stretch=True)
         seat_scroll = ttk.Scrollbar(seats, orient="vertical", command=self.room_seat_tree.yview)
         self.room_seat_tree.configure(yscrollcommand=seat_scroll.set)
-        self.room_agent_strip = tk.Frame(seats, bg=COLORS["black"], height=58)
-        self.room_agent_strip.grid(row=2, column=0, columnspan=7, sticky="ew", padx=8, pady=(1, 6))
+        self.room_agent_strip = tk.Frame(seats, bg=COLORS["black"], height=92)
+        self.room_agent_strip.grid(row=3, column=0, columnspan=7, sticky="ew", padx=8, pady=(1, 6))
         self.room_agent_strip.grid_propagate(False)
-        self.room_seat_tree.grid(row=3, column=0, columnspan=6, sticky="ew", padx=(8, 0), pady=(0, 7))
-        seat_scroll.grid(row=3, column=6, sticky="ns", padx=(0, 8), pady=(0, 7))
+        self.room_agent_strip.bind(
+            "<Configure>", self._room_agent_strip_resized, add="+"
+        )
+        self.room_seat_tree.grid(row=4, column=0, columnspan=6, sticky="ew", padx=(8, 0), pady=(0, 7))
+        seat_scroll.grid(row=4, column=6, sticky="ns", padx=(0, 8), pady=(0, 7))
         self.room_seat_tree.bind("<<TreeviewSelect>>", self._select_room_seat_for_edit)
+        self.modern_role_bar = role_bar
+        self.modern_seat_scroll = seat_scroll
+
+        guided = tk.Frame(guided_parent, bg=COLORS["black"], bd=2, relief="ridge")
+        guided.grid(
+            row=0 if ACTIVE_THEME == "modern" else 2,
+            column=0,
+            columnspan=2,
+            sticky="nsew" if ACTIVE_THEME == "modern" else "ew",
+            padx=0 if ACTIVE_THEME == "modern" else 8,
+            pady=0 if ACTIVE_THEME == "modern" else 4,
+        )
+        guided.grid_columnconfigure(1, weight=1)
+        self.guided_workflow_title = tk.Label(
+            guided,
+            text=self._t("chat.guided.title"),
+            bg=COLORS["black"],
+            fg=COLORS["cyan"],
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.guided_workflow_title.grid(row=0, column=0, padx=(9, 8), pady=6)
+        self.guided_workflow_detail = tk.Label(
+            guided,
+            text=self._t("chat.guided.detail"),
+            bg=COLORS["black"],
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=520,
+            font=("Cascadia Mono", 8),
+        )
+        self.guided_workflow_detail.grid(row=0, column=1, sticky="ew", pady=6)
+        self.guided_workflow_button = tk.Button(
+            guided,
+            text=self._t("chat.guided.start"),
+            command=self.start_guided_room_workflow,
+            bg=COLORS["green"],
+            fg=COLORS["black"],
+            activebackground=COLORS["cyan"],
+            relief="raised",
+            bd=2,
+            padx=9,
+            pady=4,
+            font=("Cascadia Mono", 8, "bold"),
+        )
+        self.guided_workflow_button.grid(row=0, column=2, padx=7, pady=5)
+        self.guided_workflow_status_label = tk.Label(
+            guided,
+            textvariable=self.guided_workflow_status,
+            bg=COLORS["black"],
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=1080,
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        self.guided_workflow_status_label.grid(
+            row=1, column=0, columnspan=4, sticky="ew", padx=9, pady=(0, 7)
+        )
+        self.modern_guided_panel = guided
+
+        if ACTIVE_THEME == "modern":
+            evidence = self._build_modern_evidence_panel(inspector_body)
+            evidence.grid(row=0, column=0, sticky="nsew")
+            self.modern_inspector_frames = {
+                "agents": seats,
+                "workflow": guided,
+                "evidence": evidence,
+            }
+            self._reflow_modern_room_bar(room_bar, limit_frame, controls)
+            self._reflow_modern_room_inspector(
+                seats, role_bar, seat_scroll, guided
+            )
+            self._show_modern_inspector("agents")
 
         self.chat_split = tk.PanedWindow(
-            page,
+            split_parent,
             orient="vertical",
             bg=COLORS["line"],
             bd=0,
@@ -4968,19 +9113,22 @@ class PixelMonitor:
             opaqueresize=True,
         )
         self.chat_split.grid(
-            row=2,
+            row=split_row,
             column=0,
             columnspan=2,
             sticky="nsew",
-            padx=8,
-            pady=(4, 8),
+            padx=0 if ACTIVE_THEME == "modern" else 8,
+            pady=0 if ACTIVE_THEME == "modern" else (4, 8),
         )
-        history_host = tk.Frame(self.chat_split, bg=COLORS["panel"])
+        history_bg = (
+            MODERN_WORKSPACE_BG if ACTIVE_THEME == "modern" else COLORS["panel"]
+        )
+        history_host = tk.Frame(self.chat_split, bg=history_bg)
         history_host.grid_rowconfigure(0, weight=1)
         history_host.grid_columnconfigure(0, weight=1)
         canvas = tk.Canvas(
             history_host,
-            bg=COLORS["panel"],
+            bg=history_bg,
             height=CHAT_HISTORY_MIN_HEIGHT,
             highlightthickness=0,
         )
@@ -4988,20 +9136,55 @@ class PixelMonitor:
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.grid(row=0, column=0, sticky="nsew")
         scrollbar.grid(row=0, column=1, sticky="ns")
-        inner = tk.Frame(canvas, bg=COLORS["panel"])
+        inner = tk.Frame(canvas, bg=history_bg)
         window = canvas.create_window((0, 0), window=inner, anchor="nw")
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfigure(window, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
         self.chat_canvas = canvas
         self.chat_inner = inner
+        self.chat_history_window = window
+        inner.bind("<Configure>", self._sync_chat_history_scrollregion)
+        canvas.bind("<Configure>", self._resize_chat_history_viewport)
+        canvas.bind_all(
+            "<MouseWheel>",
+            lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"),
+        )
         self.chat_split.add(
             history_host,
             minsize=CHAT_HISTORY_MIN_HEIGHT,
             stretch="always",
         )
 
-        composer = tk.Frame(self.chat_split, bg=COLORS["black"], bd=2, relief="ridge")
+        if ACTIVE_THEME == "modern":
+            composer_pane = tk.Frame(self.chat_split, bg=MODERN_WORKSPACE_BG)
+            composer_pane.grid_columnconfigure(0, weight=1)
+            composer = tk.Frame(
+                composer_pane,
+                bg=COLORS["panel"],
+                bd=0,
+                relief="flat",
+                highlightthickness=1,
+                highlightbackground=COLORS["line"],
+            )
+            composer.grid(
+                row=0,
+                column=0,
+                sticky="ew",
+                padx=(54, 54),
+                pady=(6, 8),
+            )
+            composer_pane.bind("<Configure>", self._reflow_modern_composer_shell)
+        else:
+            composer_pane = self.chat_split
+            composer = tk.Frame(
+                composer_pane,
+                bg=COLORS["black"],
+                bd=2,
+                relief="ridge",
+                highlightthickness=0,
+                highlightbackground=COLORS["line"],
+            )
+        self.chat_composer_pane = (
+            composer_pane if ACTIVE_THEME == "modern" else composer
+        )
         composer.grid_columnconfigure(7, weight=1, minsize=104)
         self.composer_labels: dict[str, tk.Label] = {}
         for key, row, column, padx, pady in (
@@ -5042,7 +9225,7 @@ class PixelMonitor:
         self.priority_combo.grid(row=0, column=3, padx=4, pady=6)
         self.priority_combo.bind("<<ComboboxSelected>>", self._on_priority_selected)
         self._sync_priority_choices()
-        tk.Entry(
+        self.message_task_entry = tk.Entry(
             composer,
             textvariable=self.message_task,
             bg=COLORS["panel"],
@@ -5051,7 +9234,10 @@ class PixelMonitor:
             relief="sunken",
             bd=2,
             font=("Cascadia Mono", 9),
-        ).grid(row=0, column=5, columnspan=3, sticky="ew", padx=4, pady=6)
+        )
+        self.message_task_entry.grid(
+            row=0, column=5, columnspan=3, sticky="ew", padx=4, pady=6
+        )
 
         self.profile_combo = ttk.Combobox(
             composer,
@@ -5101,8 +9287,30 @@ class PixelMonitor:
             font=("Cascadia Mono", 8, "bold"),
         )
         self.manage_sources_button.grid(row=1, column=7, sticky="ew", padx=(4, 8), pady=4)
+        self.modern_composer_advanced_button = tk.Button(
+            composer,
+            text=self._t("modern.composer.advanced"),
+            command=self._toggle_modern_composer_advanced,
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            activebackground=COLORS["panel_2"],
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            padx=8,
+            pady=4,
+            font=(MODERN_FONT_FAMILY, 8),
+        )
+        self.modern_composer_prompt_label = tk.Label(
+            composer,
+            text=self._t("modern.composer.prompt"),
+            bg=COLORS["panel"],
+            fg=COLORS["muted"],
+            anchor="w",
+            font=(MODERN_FONT_FAMILY, 9),
+        )
 
-        tk.Entry(
+        self.message_subject_entry = tk.Entry(
             composer,
             textvariable=self.message_subject,
             bg=COLORS["panel"],
@@ -5111,7 +9319,10 @@ class PixelMonitor:
             relief="sunken",
             bd=2,
             font=("Cascadia Mono", 9),
-        ).grid(row=2, column=1, columnspan=7, sticky="ew", padx=4, pady=4)
+        )
+        self.message_subject_entry.grid(
+            row=2, column=1, columnspan=7, sticky="ew", padx=4, pady=4
+        )
         self.message_body = tk.Text(
             composer,
             height=2,
@@ -5172,11 +9383,11 @@ class PixelMonitor:
             composer,
             text=self._t("chat.send"),
             command=self.send_human_message,
-            bg=COLORS["cyan"],
-            fg=COLORS["black"],
+            bg="#202124" if ACTIVE_THEME == "modern" else COLORS["cyan"],
+            fg="#ffffff" if ACTIVE_THEME == "modern" else COLORS["black"],
             activebackground=COLORS["green"],
-            relief="raised",
-            bd=2,
+            relief="flat" if ACTIVE_THEME == "modern" else "raised",
+            bd=0 if ACTIVE_THEME == "modern" else 2,
             padx=12,
             pady=5,
             font=("Cascadia Mono", 9, "bold"),
@@ -5200,7 +9411,15 @@ class PixelMonitor:
         )
         self.message_status_label.grid(row=5, column=0, columnspan=8, sticky="ew", padx=8, pady=(2, 5))
         self.chat_composer = composer
-        self.chat_split.add(composer, minsize=215, stretch="never")
+        composer.update_idletasks()
+        self._chat_composer_wide_required_width = max(1, composer.winfo_reqwidth())
+        self._chat_composer_compact = False
+        composer.bind("<Configure>", self._reflow_chat_composer)
+        self.chat_split.add(
+            self.chat_composer_pane,
+            minsize=106 if ACTIVE_THEME == "modern" else 215,
+            stretch="never",
+        )
         self.root.after_idle(self._layout_chat_after_resize)
         self.pages["chat"] = outer_page
 
@@ -5217,6 +9436,22 @@ class PixelMonitor:
         operator_active = self._room_has_operator()
         busy = self.room_action_in_progress
         library_available = bool(self._library_agents)
+        selected_agent = str(self._selected_room_seat_agent or "")
+        selected_member = next(
+            (
+                row
+                for row in self._room_members
+                if row.get("status") == "active"
+                and str(row.get("agent_id") or "") == selected_agent
+            ),
+            None,
+        )
+        role_target_available = bool(
+            selected_agent
+            and selected_agent != HUMAN_AGENT_ID
+            and (selected_member is not None or self.selected_room_id == DEFAULT_ROOM_ID)
+        )
+        role_controls = operator_active and role_target_available and not busy
         self.new_room_button.configure(state="disabled" if busy else "normal")
         self.operator_room_button.configure(
             state="normal" if custom_room and not operator_active and not busy else "disabled"
@@ -5292,6 +9527,36 @@ class PixelMonitor:
         self.apply_automation_button.configure(
             state="normal" if policy_controls else "disabled"
         )
+        guided_state = self._guided_workflow_state(operator_active=operator_active)
+        self.guided_workflow_button.configure(
+            state=(
+                "normal"
+                if not busy and bool(guided_state["ready"])
+                else "disabled"
+            )
+        )
+        self.seat_role_combo.configure(
+            state="readonly" if role_controls else "disabled"
+        )
+        self.apply_role_button.configure(
+            state="normal" if role_controls else "disabled"
+        )
+        self.seat_custom_role_entry.configure(
+            state=(
+                "normal"
+                if role_controls and self._selected_room_role()[0] == "custom"
+                else "disabled"
+            )
+        )
+        self.view_live_work_button.configure(
+            state=(
+                "normal"
+                if selected_member is not None
+                and bool(selected_member.get("room_session_id"))
+                and not busy
+                else "disabled"
+            )
+        )
         discussion = self._active_discussion or {}
         discussion_state = str(discussion.get("status") or "")
         self.pause_discussion_button.configure(
@@ -5324,10 +9589,52 @@ class PixelMonitor:
             )
         )
 
+    def _guided_workflow_state(
+        self, *, operator_active: bool | None = None
+    ) -> dict[str, Any]:
+        if operator_active is None:
+            operator_active = self._room_has_operator()
+        if getattr(self, "_room_view_unavailable", False):
+            return {"ready": False, "code": "room_unavailable"}
+        if not operator_active:
+            return {"ready": False, "code": "join_control"}
+        if self.room_refresh_in_progress:
+            return {"ready": False, "code": "loading"}
+        discussion_state = str((self._active_discussion or {}).get("status") or "")
+        if discussion_state in {"active", "paused", "waiting_human"}:
+            return {"ready": False, "code": "active_discussion"}
+        return guided_room_readiness(self._room_members)
+
+    def _refresh_guided_workflow_readiness(self) -> None:
+        if getattr(self, "room_action_in_progress", False) or not hasattr(
+            self, "guided_workflow_status"
+        ):
+            return
+        state = self._guided_workflow_state()
+        code = str(state["code"])
+        self.guided_workflow_status.set(
+            self._t(f"chat.guided.readiness.{code}").format(
+                count=int(state.get("participant_count") or 0),
+                missing=int(state.get("missing_route_count") or 0),
+                maximum=int(
+                    state.get("maximum_participants") or MAX_GUIDED_ROOM_AGENTS
+                ),
+            )
+        )
+        self.guided_workflow_status_label.configure(
+            fg=(
+                COLORS["green"]
+                if state["ready"]
+                else COLORS["amber"]
+                if code in {"loading", "active_discussion"}
+                else COLORS["red"]
+            )
+        )
+
     def apply_room_automation(self) -> None:
         mode = self._automation_mode_from_label(self.room_automation_choice.get())
         if mode is None:
-            self.discussion_status.set("AUTO // INVALID MODE")
+            self.discussion_status.set(self._t("chat.automation.invalid"))
             self.discussion_status_label.configure(fg=COLORS["red"])
             return
         try:
@@ -5355,6 +9662,123 @@ class PixelMonitor:
                 f"S{receipt['stagnation_rounds']}"
             ),
         )
+    def start_guided_room_workflow(self) -> None:
+        if self.room_action_in_progress:
+            return
+        current_discussion = self._active_discussion or {}
+        if str(current_discussion.get("status") or "") in {
+            "active",
+            "paused",
+            "waiting_human",
+        }:
+            self.guided_workflow_status.set(
+                self._t("chat.guided.active_discussion")
+            )
+            self.guided_workflow_status_label.configure(fg=COLORS["amber"])
+            return
+        task = self.message_body.get("1.0", "end-1c").strip()
+        if not task:
+            task = self._t("chat.guided.default_task")
+        task_id = f"guided-{datetime.now().strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        try:
+            plan = guided_room_workflow_plan(
+                room_id=self.selected_room_id,
+                task_id=task_id,
+                task_text=task,
+                members=self._room_members,
+            )
+        except GuidedRoomWorkflowError as exc:
+            self.guided_workflow_status.set(
+                self._t("chat.guided.unavailable").format(
+                    error=redact_secrets(str(exc))[:150]
+                )
+            )
+            self.guided_workflow_status_label.configure(fg=COLORS["red"])
+            return
+
+        def start() -> dict[str, Any]:
+            operation: dict[str, Any] | None = None
+            message: dict[str, Any] | None = None
+            try:
+                operation = self.human_client.enqueue_workflow(
+                    operation_id=str(plan["operation_id"]),
+                    workflow_id=str(plan["workflow_id"]),
+                    task_text=str(plan["operation_task_text"]),
+                    working_directory=str(plan["operation_working_directory"]),
+                    resource_key=str(plan["operation_resource_key"]),
+                    max_attempts=int(plan["operation_max_attempts"]),
+                    timeout_seconds=int(plan["operation_timeout_seconds"]),
+                )
+                policy = self.human_client.set_room_automation(
+                    room_id=str(plan["room_id"]),
+                    mode=str(plan["automation_mode"]),
+                    max_rounds=int(plan["max_rounds"]),
+                    max_messages=int(plan["max_messages"]),
+                    stagnation_rounds=int(plan["stagnation_rounds"]),
+                )
+                message = self.human_client.post_room_message(
+                    room_id=str(plan["room_id"]),
+                    task_id=str(plan["task_id"]),
+                    subject=str(plan["subject"]),
+                    body=str(plan["body"]),
+                    priority=str(plan["priority"]),
+                )
+                current_members = self.human_client.room_members(
+                    room_id=str(plan["room_id"])
+                )["members"]
+                binding = validate_guided_room_start(
+                    plan,
+                    message,
+                    members=current_members,
+                )
+                bound_operation = self.human_client.bind_guided_discussion(
+                    operation_id=str(plan["operation_id"]),
+                    discussion_id=str(binding["discussion_id"]),
+                )
+                return {
+                    "plan": plan,
+                    "operation": bound_operation,
+                    "policy": policy,
+                    "message": message,
+                    "binding": binding,
+                }
+            except Exception:
+                if message and message.get("discussion_id"):
+                    with contextlib.suppress(Exception):
+                        self.human_client.control_discussion(
+                            discussion_id=str(message["discussion_id"]),
+                            action="stop",
+                        )
+                if operation is not None:
+                    with contextlib.suppress(Exception):
+                        self.human_client.cancel_operation(
+                            operation_id=str(plan["operation_id"]),
+                            reason="Guided discussion failed source-bound startup.",
+                        )
+                raise
+
+        def after_success(receipt: dict[str, Any]) -> None:
+            completed_plan = receipt["plan"]
+            self.room_automation_choice.set(
+                self._t(AUTOMATION_MODE_TO_KEY[str(completed_plan["automation_mode"])])
+            )
+            self.room_round_limit.set(str(completed_plan["max_rounds"]))
+            self.room_message_limit.set(str(completed_plan["max_messages"]))
+            self.room_stagnation_limit.set(
+                str(completed_plan["stagnation_rounds"])
+            )
+
+        self._run_room_action(
+            start,
+            pending=self._t("chat.guided.starting"),
+            target=self.guided_workflow_status,
+            target_label=self.guided_workflow_status_label,
+            success=lambda receipt: self._t("chat.guided.started").format(
+                count=receipt["plan"]["participant_count"],
+                task=receipt["plan"]["task_id"],
+            ),
+            after_success=after_success,
+        )
 
     def control_active_discussion(self, action: str) -> None:
         discussion_id = str(
@@ -5362,17 +9786,35 @@ class PixelMonitor:
         )
         if not discussion_id:
             return
-        self._run_room_action(
-            lambda: self.human_client.control_discussion(
+        task_id = str((self._active_discussion or {}).get("task_id") or "")
+
+        def control() -> dict[str, Any]:
+            receipt = self.human_client.control_discussion(
                 discussion_id=discussion_id,
                 action=action,
+            )
+            if action == "stop" and task_id.startswith("guided-"):
+                with contextlib.suppress(Exception):
+                    self.human_client.cancel_operation(
+                        operation_id=guided_operation_id(
+                            self.selected_room_id, task_id
+                        ),
+                        reason="Guided discussion stopped by the operator.",
+                    )
+            return receipt
+
+        self._run_room_action(
+            control,
+            pending=self._t("chat.discussion.pending").format(
+                action=self._t(f"chat.{action}")
             ),
-            pending=f"DISCUSSION // {action.upper()}...",
             target=self.discussion_status,
             target_label=self.discussion_status_label,
-            success=lambda receipt: (
-                f"DISCUSSION // {str(receipt['status']).upper()} // "
-                f"ROUND {receipt['current_round']}/{receipt['max_rounds']}"
+            success=lambda receipt: self._t("chat.discussion.round").format(
+                status=self._discussion_status_text(receipt["status"]),
+                current=receipt["current_round"],
+                maximum=receipt["max_rounds"],
+                reason="",
             ),
         )
 
@@ -5397,6 +9839,8 @@ class PixelMonitor:
 
     def _request_room_refresh(self, *, force: bool = False) -> None:
         if self.room_refresh_in_progress:
+            if force:
+                self._room_refresh_pending = True
             return
         interval = max(2.0, self.REFRESH_MS / 1000.0)
         if not force and time.monotonic() - self._last_room_refresh < interval:
@@ -5466,11 +9910,29 @@ class PixelMonitor:
     ) -> None:
         self.room_refresh_in_progress = False
         self._last_room_refresh = time.monotonic()
+        pending_refresh = self._room_refresh_pending
+        self._room_refresh_pending = False
+        if pending_refresh and not self._closing:
+            self.root.after_idle(lambda: self._request_room_refresh(force=True))
         if rooms is None:
-            self.room_status.set(f"ROOM API ERROR // {clip(redact_sensitive(error), 120)}")
+            self._room_view_unavailable = True
+            self.room_status.set(
+                self._t("chat.room_api_error").format(
+                    error=clip(redact_sensitive(error), 120)
+                )
+            )
             self.room_status_label.configure(fg=COLORS["red"])
+            if ACTIVE_THEME == "modern":
+                connection = getattr(self, "modern_toolbar_connection_label", None)
+                if connection is not None:
+                    connection.configure(
+                        text=self._t("modern.toolbar.unavailable"),
+                        fg=COLORS["red"],
+                    )
+            self._refresh_guided_workflow_readiness()
             self._sync_room_control_states()
             return
+        self._room_view_unavailable = False
 
         room_view_signature = hashlib.sha256(
             json.dumps(
@@ -5491,6 +9953,9 @@ class PixelMonitor:
         ).hexdigest()
         if room_view_signature == self._last_room_view_signature:
             self._sync_room_control_states()
+            self._sync_modern_recent_rooms()
+            self._sync_modern_chat_context()
+            self._render_modern_agent_inspector()
             return
         self._last_room_view_signature = room_view_signature
 
@@ -5515,6 +9980,7 @@ class PixelMonitor:
             "",
         )
         self.room_choice.set(selected_label)
+        self.cockpit.set_room_context(self.selected_room_id)
         if room_id != self.selected_room_id:
             self._request_room_refresh(force=True)
             return
@@ -5533,18 +9999,29 @@ class PixelMonitor:
         self._active_discussion = automation.get("active_discussion")
         if self._active_discussion:
             discussion = self._active_discussion
-            status = str(discussion.get("status") or "UNKNOWN").upper()
+            status = str(discussion.get("status") or "unknown").lower()
             reason = str(discussion.get("stop_reason") or "")
             self.discussion_status.set(
-                f"DISCUSSION // {status} // ROUND "
-                f"{discussion.get('current_round')}/{discussion.get('max_rounds')}"
-                + (f" // {reason}" if reason else "")
+                self._t("chat.discussion.round").format(
+                    status=self._discussion_status_text(status),
+                    current=discussion.get("current_round"),
+                    maximum=discussion.get("max_rounds"),
+                    reason=f" // {reason}" if reason else "",
+                )
             )
             self.discussion_status_label.configure(
-                fg=COLORS["amber"] if status != "ACTIVE" else COLORS["green"]
+                fg=COLORS["amber"] if status != "active" else COLORS["green"]
             )
         else:
-            self.discussion_status.set(f"AUTO // {mode.upper()} // IDLE")
+            self.discussion_status.set(
+                self._t("chat.automation.idle").format(
+                    mode=self._t(
+                        AUTOMATION_MODE_TO_KEY.get(
+                            mode, AUTOMATION_MODE_TO_KEY["once"]
+                        )
+                    )
+                )
+            )
             self.discussion_status_label.configure(fg=COLORS["muted"])
         room = self._rooms.get(room_id, {})
         active_seats = sum(1 for row in members if row.get("status") == "active")
@@ -5552,16 +10029,32 @@ class PixelMonitor:
         oldest = page.get("oldest_sequence")
         newest = page.get("newest_sequence")
         page_text = (
-            f" // LOADED {len(messages)} // RANGE {oldest}-{newest}"
+            self._t("chat.room_status.loaded_range").format(
+                loaded=len(messages), oldest=oldest, newest=newest
+            )
             if oldest is not None and newest is not None
-            else f" // LOADED {len(messages)}"
+            else self._t("chat.room_status.loaded").format(loaded=len(messages))
         )
         self.room_status.set(
-            f"{room_id} // SEATS {active_seats} // HISTORY {history}{page_text}"
+            self._t("chat.room_status.base").format(
+                room=room_id, seats=active_seats, history=history
+            )
+            + page_text
             + (f" // {clip(redact_sensitive(error), 70)}" if error else "")
         )
         self.room_status_label.configure(fg=COLORS["red"] if error else COLORS["green"])
+        if ACTIVE_THEME == "modern":
+            connection = getattr(self, "modern_toolbar_connection_label", None)
+            if connection is not None:
+                connection.configure(
+                    text=self._t("modern.toolbar.connected"),
+                    fg=COLORS["green"],
+                )
         self._render_room_seats()
+        self._sync_modern_recent_rooms()
+        self._sync_modern_chat_context()
+        self._render_modern_agent_inspector()
+        self._refresh_guided_workflow_readiness()
         self._sync_room_control_states()
         if self.snapshot:
             self.render(force=True)
@@ -5571,6 +10064,7 @@ class PixelMonitor:
         if not room_id or room_id == self.selected_room_id:
             return
         self.selected_room_id = room_id
+        self.cockpit.set_room_context(room_id)
         self._room_members = ()
         self._room_messages = ()
         self._room_history_stack = [None]
@@ -5578,9 +10072,16 @@ class PixelMonitor:
         self._active_discussion = None
         self.message_recipient.set(self._t(BROADCAST_LABEL))
         self._reset_route_selection()
-        self.room_status.set(f"{room_id} // LOADING...")
+        self.room_status.set(
+            self._t("chat.room_status.loading").format(room=room_id)
+        )
         self.room_status_label.configure(fg=COLORS["amber"])
+        self.guided_workflow_status.set(self._t("chat.guided.readiness.loading"))
+        self.guided_workflow_status_label.configure(fg=COLORS["amber"])
         self._render_room_seats()
+        self._sync_modern_recent_rooms()
+        self._sync_modern_chat_context()
+        self._render_modern_agent_inspector()
         self._sync_room_control_states()
         if self.snapshot:
             self.render(force=True)
@@ -5590,7 +10091,7 @@ class PixelMonitor:
         if self.room_action_in_progress:
             return
         dialog = tk.Toplevel(self.root)
-        dialog.title("Create PeerBridge Room")
+        dialog.title(self._t("chat.room_dialog.title"))
         dialog.geometry("520x210")
         dialog.resizable(False, False)
         dialog.configure(bg=COLORS["black"])
@@ -5602,7 +10103,10 @@ class PixelMonitor:
         panel.pack(fill="both", expand=True, padx=12, pady=12)
         panel.grid_columnconfigure(1, weight=1)
         for row_index, (label, variable) in enumerate(
-            (("ROOM ID", room_id), ("ROOM NAME", room_name))
+            (
+                (self._t("chat.room_dialog.id"), room_id),
+                (self._t("chat.room_dialog.name"), room_name),
+            )
         ):
             tk.Label(
                 panel,
@@ -5625,7 +10129,7 @@ class PixelMonitor:
         buttons.grid(row=2, column=0, columnspan=2, sticky="e", padx=10, pady=8)
         tk.Button(
             buttons,
-            text="CANCEL",
+            text=self._t("chat.room_dialog.cancel"),
             command=dialog.destroy,
             bg=COLORS["line"],
             fg=COLORS["text"],
@@ -5634,7 +10138,7 @@ class PixelMonitor:
         ).pack(side="left", padx=4)
         tk.Button(
             buttons,
-            text=">> CREATE",
+            text=self._t("chat.room_dialog.create"),
             command=lambda: self._submit_new_room(dialog, room_id.get(), room_name.get()),
             bg=COLORS["green"],
             fg=COLORS["black"],
@@ -5727,7 +10231,9 @@ class PixelMonitor:
 
     def _submit_new_room(self, dialog: tk.Toplevel, room_id: str, name: str) -> None:
         try:
-            clean_id = self._safe_identifier(room_id, "ROOM ID")
+            clean_id = self._safe_identifier(
+                room_id, self._t("chat.room_dialog.id")
+            )
             clean_name = name.strip()
             if clean_id == DEFAULT_ROOM_ID:
                 raise ValueError(self._t("room.lobby_exists"))
@@ -5998,6 +10504,7 @@ class PixelMonitor:
             ),
             None,
         )
+        self._set_seat_role_from_member(active_member)
         current_route_id = str((active_member or {}).get("route_profile_id") or "")
         current_profile = next(
             (
@@ -6024,6 +10531,240 @@ class PixelMonitor:
             )
             self.seat_status_label.configure(fg=COLORS["amber"])
         self._sync_room_control_states()
+
+    def _set_seat_role_from_member(
+        self, member: Mapping[str, Any] | None
+    ) -> None:
+        role_id = str((member or {}).get("role_id") or DEFAULT_ROOM_ROLE)
+        if role_id not in ROOM_ROLE_IDS:
+            role_id = DEFAULT_ROOM_ROLE
+        label = next(
+            (
+                item
+                for item, candidate in self._seat_role_labels.items()
+                if candidate == role_id
+            ),
+            role_id,
+        )
+        self.seat_role_choice.set(label)
+        self.seat_custom_role.set(
+            str((member or {}).get("role_label") or "")
+            if role_id == "custom"
+            else ""
+        )
+        self._on_seat_role_selected()
+
+    def _selected_room_role(self) -> tuple[str, str | None]:
+        role_id = (
+            self._room_role_from_label(self.seat_role_choice.get())
+            or DEFAULT_ROOM_ROLE
+        )
+        role_label = self.seat_custom_role.get().strip() if role_id == "custom" else None
+        return role_id, role_label
+
+    def _on_seat_role_selected(self, _event: Any = None) -> None:
+        role_id, _role_label = self._selected_room_role()
+        operator_active = self._room_has_operator()
+        selected_agent = str(self._selected_room_seat_agent or "")
+        selected_member = any(
+            row.get("status") == "active"
+            and str(row.get("agent_id") or "") == selected_agent
+            for row in self._room_members
+        )
+        editable = bool(
+            operator_active
+            and selected_agent
+            and selected_agent != HUMAN_AGENT_ID
+            and (selected_member or self.selected_room_id == DEFAULT_ROOM_ID)
+            and not self.room_action_in_progress
+        )
+        self.seat_custom_role_entry.configure(
+            state="normal" if editable and role_id == "custom" else "disabled"
+        )
+
+    def apply_room_member_role(self) -> None:
+        agent_id = str(self._selected_room_seat_agent or "")
+        if not agent_id or agent_id == HUMAN_AGENT_ID:
+            self.seat_status.set(self._t("chat.role_select_agent"))
+            self.seat_status_label.configure(fg=COLORS["red"])
+            return
+        role_id, role_label = self._selected_room_role()
+        if role_id == "custom" and not role_label:
+            self.seat_status.set(self._t("chat.role_custom_required"))
+            self.seat_status_label.configure(fg=COLORS["red"])
+            return
+        room_id = self.selected_room_id
+        self._run_room_action(
+            lambda: self.human_client.set_room_member_role(
+                room_id=room_id,
+                agent_id=agent_id,
+                role_id=role_id,
+                role_label=role_label,
+            ),
+            pending=self._t("chat.role_applying").format(agent=agent_id),
+            target=self.seat_status,
+            target_label=self.seat_status_label,
+            success=lambda receipt: self._t("chat.role_applied").format(
+                agent=receipt["agent_id"],
+                role=self._room_role_label(receipt),
+            ),
+            after_success=lambda _receipt: setattr(
+                self, "_selected_room_seat_agent", agent_id
+            ),
+        )
+
+    def _cockpit_external_sessions(
+        self, after_sequences: Mapping[str, int]
+    ) -> tuple[dict[str, Any], ...]:
+        sessions: list[dict[str, Any]] = []
+        selected_room = self._rooms.get(self.selected_room_id, {})
+        selected_room_name = str(
+            selected_room.get("name") or self.selected_room_id
+        )
+        operator_active = self.selected_room_id == DEFAULT_ROOM_ID or any(
+            member.get("status") == "active"
+            and member.get("agent_id") == HUMAN_AGENT_ID
+            for member in self._room_members
+        )
+        snapshot = getattr(self, "snapshot", None)
+        dispatches = tuple(getattr(snapshot, "message_dispatches", ()))
+        for member in self._room_members:
+            if member.get("status") != "active" or not member.get("room_session_id"):
+                continue
+            sessions.append(
+                native_room_session_contract(
+                    scope=self.scope,
+                    room_id=self.selected_room_id,
+                    member=member,
+                    messages=self._room_messages,
+                    dispatches=dispatches,
+                    room_name=selected_room_name,
+                    operator_active=operator_active,
+                )
+            )
+        try:
+            external = self.authorized_sessions.list_for_control_room(
+                after_sequences=after_sequences
+            )
+            for snapshot in external:
+                enriched = dict(snapshot)
+                room_id = str(enriched.get("room_id") or "")
+                if room_id and room_id != self.selected_room_id:
+                    continue
+                room = self._rooms.get(room_id, {})
+                enriched["room_name"] = str(room.get("name") or room_id or "")
+                enriched["source_conversation_name"] = str(
+                    enriched.get("source_conversation_name")
+                    or enriched.get("display_name")
+                    or enriched.get("source_conversation_id")
+                    or ""
+                )
+                sessions.append(enriched)
+        except AuthorizedSessionError as exc:
+            if hasattr(self, "cockpit"):
+                self.cockpit.status.set(
+                    self._t("cockpit.status.adapter_failed").format(
+                        error=redact_secrets(str(exc))[:160]
+                    )
+                )
+                self.cockpit.status_label.configure(fg=COLORS["red"])
+        return tuple(sessions)
+
+    def _send_cockpit_room_message(
+        self,
+        snapshot: Mapping[str, Any],
+        body: str,
+        artifact_paths: Iterable[str] = (),
+    ) -> Mapping[str, Any]:
+        if str(snapshot.get("source_type") or "") != "peerbridge-room":
+            raise RuntimeError("Cockpit room input target is invalid")
+        room_id = str(snapshot.get("room_id") or "").strip()
+        agent_id = str(snapshot.get("agent_id") or "").strip()
+        room_session_id = str(snapshot.get("source_session_id") or "").strip()
+        route_profile_id = str(snapshot.get("requested_route") or "").strip()
+        if not all((room_id, agent_id, room_session_id, route_profile_id)):
+            raise RuntimeError("Cockpit room input target is incomplete")
+        current_members = self.human_client.room_members(
+            room_id=room_id, include_inactive=False
+        ).get("members", ())
+        operator_active = room_id == DEFAULT_ROOM_ID or any(
+            row.get("status") == "active" and row.get("agent_id") == HUMAN_AGENT_ID
+            for row in current_members
+        )
+        exact_targets = [
+            row
+            for row in current_members
+            if row.get("status") == "active"
+            and str(row.get("agent_id") or "") == agent_id
+            and str(row.get("room_session_id") or "") == room_session_id
+            and str(row.get("route_profile_id") or "") == route_profile_id
+        ]
+        if not operator_active or len(exact_targets) != 1:
+            raise RuntimeError(
+                "Selected room Agent changed or the human operator is not joined"
+            )
+        return self.human_client.send_message(
+            room_id=room_id,
+            recipient=agent_id,
+            task_id=f"cockpit-{uuid.uuid4().hex[:20]}",
+            subject="Cockpit conversation",
+            body=body,
+            priority="normal",
+            route_profile_id=route_profile_id,
+            artifact_paths=tuple(artifact_paths),
+        )
+
+    def _finish_cockpit_room_input(self, receipt: Mapping[str, Any]) -> None:
+        if str(receipt.get("room_id") or "") == self.selected_room_id:
+            self._request_room_refresh(force=True)
+        self.refresh(force=True)
+
+    def view_selected_agent_work(self) -> None:
+        agent_id = str(self._selected_room_seat_agent or "")
+        member = next(
+            (
+                row
+                for row in self._room_members
+                if row.get("status") == "active"
+                and str(row.get("agent_id") or "") == agent_id
+                and row.get("room_session_id")
+            ),
+            None,
+        )
+        if member is None:
+            self.seat_status.set(self._t("chat.live_work_unavailable"))
+            self.seat_status_label.configure(fg=COLORS["amber"])
+            return
+        external_sessions: tuple[dict[str, Any], ...] = ()
+        try:
+            external_sessions = self.authorized_sessions.list_for_control_room(
+                include_detected=False
+            )
+        except AuthorizedSessionError:
+            pass
+        linked_target = linked_room_session_target(
+            external_sessions,
+            agent_id=agent_id,
+            room_session_id=str(member["room_session_id"]),
+        )
+        source_type, source_session_id = linked_target or (
+            "peerbridge-room",
+            str(member["room_session_id"]),
+        )
+        self.show_page("cockpit")
+        focused = self.cockpit.focus_source(
+            source_type, source_session_id
+        )
+        self.seat_status.set(
+            self._t(
+                "chat.live_work_focused"
+                if focused
+                else "chat.live_work_unavailable"
+            ).format(agent=agent_id)
+        )
+        self.seat_status_label.configure(
+            fg=COLORS["green"] if focused else COLORS["amber"]
+        )
 
     def _reset_seat_route_selection(self) -> None:
         self.seat_provider_choice.set("")
@@ -6471,6 +11212,7 @@ class PixelMonitor:
     def add_room_seat(self) -> None:
         room_id = self.selected_room_id
         agent_id = self.seat_agent.get().strip()
+        role_id, role_label = self._selected_room_role()
         library_ids = {str(row["agent_id"]) for row in self._library_agents}
         if agent_id not in library_ids:
             self.seat_status.set(self._t("seat.select_agent"))
@@ -6496,6 +11238,8 @@ class PixelMonitor:
                 room_id=room_id,
                 agent_id=agent_id,
                 route_profile_id=route_id,
+                role_id=role_id,
+                role_label=role_label,
             ),
             pending=f"{'UPDATING' if updating else 'ADDING'} {agent_id} IN {room_id}...",
             target=self.seat_status,
@@ -6538,6 +11282,7 @@ class PixelMonitor:
             reasoning_mode=reasoning_mode,
         )
         room_id = self.selected_room_id
+        role_id, role_label = self._selected_room_role()
 
         def operation() -> dict[str, Any]:
             connections = self.human_client.call_tool(
@@ -6579,6 +11324,8 @@ class PixelMonitor:
                 room_id=room_id,
                 agent_id=agent_id,
                 route_profile_id=str(route["route_id"]),
+                role_id=role_id,
+                role_label=role_label,
             )
             return {
                 **joined,
@@ -6636,6 +11383,7 @@ class PixelMonitor:
             reasoning_mode=reasoning_mode,
         )
         room_id = self.selected_room_id
+        role_id, role_label = self._selected_room_role()
 
         def operation() -> dict[str, Any]:
             catalog = discover_codex_model_catalog()
@@ -6662,6 +11410,8 @@ class PixelMonitor:
                 room_id=room_id,
                 agent_id=agent_id,
                 route_profile_id=str(route["route_id"]),
+                role_id=role_id,
+                role_label=role_label,
             )
             return {
                 **joined,
@@ -6761,6 +11511,8 @@ class PixelMonitor:
                     "agent_id",
                     "status",
                     "room_session_id",
+                    "role_id",
+                    "role_label",
                     "route_profile_id",
                     "provider_id",
                     "model_id",
@@ -6780,6 +11532,7 @@ class PixelMonitor:
         seats_signature = ui_content_signature(
             {
                 "room_id": self.selected_room_id,
+                "locale": self.locale.get(),
                 "members": member_projection,
                 "library_agents": library_projection,
             }
@@ -6804,7 +11557,13 @@ class PixelMonitor:
                 "",
                 "end",
                 iid="lobby-implicit",
-                values=(HUMAN_AGENT_ID, "IMPLICIT", "DIRECT // GLOBAL", "ACTIVE"),
+                values=(
+                    HUMAN_AGENT_ID,
+                    self._t(f"chat.role.{DEFAULT_ROOM_ROLE}"),
+                    self._t("chat.session.implicit"),
+                    self._t("chat.route.direct_global"),
+                    self._t("chat.state.active"),
+                ),
             )
             for agent in self._library_agents:
                 agent_id = str(agent.get("agent_id") or "")
@@ -6815,22 +11574,28 @@ class PixelMonitor:
                 active_route = (
                     member if member.get("status") == "active" else {}
                 )
-                runtime = room_seat_route(active_route) if active_route else "UNROUTED"
+                runtime = (
+                    room_seat_route(active_route)
+                    if active_route
+                    else self._t("chat.route.none")
+                )
                 self.room_seat_tree.insert(
                     "",
                     "end",
                     iid=row_id,
                     values=(
                         agent_id,
-                        active_route.get("room_session_id") or "GLOBAL",
+                        self._room_role_label(active_route),
+                        active_route.get("room_session_id")
+                        or self._t("chat.session.global"),
                         runtime,
                         (
-                            "ONLINE"
+                            self._t("chat.state.online")
                             if active_route.get("route_profile_id") and agent.get("online")
                             else (
-                                "OFFLINE"
+                                self._t("chat.state.offline")
                                 if active_route.get("route_profile_id")
-                                else "UNROUTED"
+                                else self._t("chat.state.unrouted")
                             )
                         ),
                     ),
@@ -6850,14 +11615,19 @@ class PixelMonitor:
                 iid=row_id,
                 values=(
                     member.get("agent_id") or "--",
+                    self._room_role_label(member),
                     session_id or "--",
                     room_seat_route(member),
-                    "ONLINE" if member.get("online") else "OFFLINE",
+                    self._t(
+                        "chat.state.online"
+                        if member.get("online")
+                        else "chat.state.offline"
+                    ),
                 ),
             )
             self._seat_records[row_id] = member
         if not self._room_members:
-            self.seat_status.set("NO ACTIVE SEATS // JOIN CTRL OR ADD FROM GLOBAL LIBRARY")
+            self.seat_status.set(self._t("chat.no_active_seats"))
             self.seat_status_label.configure(fg=COLORS["muted"])
 
     def _render_room_agent_cards(self) -> None:
@@ -6866,6 +11636,10 @@ class PixelMonitor:
             self._room_members,
             self._library_agents,
         )
+        visible_limit = room_agent_visible_limit(
+            self.room_agent_strip.winfo_width(), len(cards)
+        )
+        self._room_agent_card_capacity = visible_limit
         card_projection = tuple(
             {
                 key: card.get(key)
@@ -6875,6 +11649,8 @@ class PixelMonitor:
                     "model_id",
                     "reasoning_mode",
                     "route_profile_id",
+                    "role_id",
+                    "role_label",
                     "online",
                     "state",
                     "mcp_access_mode",
@@ -6886,17 +11662,20 @@ class PixelMonitor:
             {
                 "room_id": self.selected_room_id,
                 "selected_agent": self._selected_room_seat_agent,
+                "locale": self.locale.get(),
+                "visible_limit": visible_limit,
                 "cards": card_projection,
             }
         )
         if cards_signature == self._last_room_agent_cards_signature:
+            self._render_modern_agent_inspector()
             return
         self._last_room_agent_cards_signature = cards_signature
         for child in self.room_agent_strip.winfo_children():
             child.destroy()
         tk.Label(
             self.room_agent_strip,
-            text=f"ROOM AGENTS {len(cards)}",
+            text=self._t("chat.room_agents").format(count=len(cards)),
             bg=COLORS["black"],
             fg=COLORS["amber"],
             font=("Cascadia Mono", 8, "bold"),
@@ -6904,13 +11683,16 @@ class PixelMonitor:
         if not cards:
             tk.Label(
                 self.room_agent_strip,
-                text="NO AGENT IN THIS ROOM",
+                text=self._t("chat.no_agents"),
                 bg=COLORS["black"],
                 fg=COLORS["red"],
                 font=("Cascadia Mono", 9, "bold"),
             ).pack(side="left", padx=8)
+            self._render_modern_agent_inspector()
             return
-        visible, overflow = room_agent_card_groups(cards)
+        visible, overflow = room_agent_card_groups(
+            cards, visible_limit=visible_limit
+        )
         for card in visible:
             agent_id = str(card.get("agent_id") or "unknown")
             state = str(card.get("state") or "OFFLINE")
@@ -6923,11 +11705,11 @@ class PixelMonitor:
                 relief="ridge",
                 highlightthickness=2 if selected else 0,
                 highlightbackground=COLORS["amber"],
-                width=166,
-                height=66,
+                width=ROOM_AGENT_CARD_WIDTH,
+                height=80,
                 cursor="hand2" if agent_id != HUMAN_AGENT_ID else "arrow",
             )
-            frame.pack(side="left", padx=4, pady=6)
+            frame.pack(side="left", padx=ROOM_AGENT_CARD_PAD_X, pady=6)
             frame.pack_propagate(False)
             title = tk.Label(
                 frame,
@@ -6946,18 +11728,23 @@ class PixelMonitor:
                 str(value)
                 for value in (card.get("provider_id"), card.get("model_id"))
                 if value
-            ) or "NO ROUTE"
+            ) or self._t("chat.route.none")
             access = mcp_access_label(
                 str(card.get("mcp_access_mode") or MCP_UNVERIFIED)
             )
+            role = self._room_role_label(card)
             detail = tk.Label(
                 frame,
-                text=f"{clip(runtime, 20)}\n{access}  {state}",
+                text=(
+                    f"{clip(runtime, 19)}\n"
+                    f"{clip(role, 19)}\n"
+                    f"{access}  {self._room_state_text(state)}"
+                ),
                 bg=COLORS["panel_2"],
                 fg=COLORS["green"] if online else COLORS["red"],
                 anchor="w",
                 justify="left",
-                font=("Cascadia Mono", 6),
+                font=("Cascadia Mono", ROOM_AGENT_DETAIL_TEXT_SIZE),
             )
             detail.pack(fill="x", padx=6, pady=(1, 4))
             if agent_id != HUMAN_AGENT_ID:
@@ -7013,11 +11800,31 @@ class PixelMonitor:
                 agent_id = str(card.get("agent_id") or "unknown")
                 state = str(card.get("state") or "OFFLINE")
                 overflow_menu.add_command(
-                    label=f"{clip(agent_id, 28)} // {state}",
+                    label=(
+                        f"{clip(agent_id, 28)} // "
+                        f"{self._room_state_text(state)}"
+                    ),
                     command=lambda value=agent_id: self._select_room_agent_card(value),
                 )
             overflow_button.configure(menu=overflow_menu)
             overflow_button.pack(side="left", padx=5)
+        self._render_modern_agent_inspector()
+
+    def _room_agent_strip_resized(self, event: Any) -> None:
+        cards = room_agent_cards(
+            self.selected_room_id,
+            self._room_members,
+            self._library_agents,
+        )
+        capacity = room_agent_visible_limit(
+            int(getattr(event, "width", 0) or 0), len(cards)
+        )
+        if capacity == self._room_agent_card_capacity:
+            return
+        self._room_agent_card_capacity = capacity
+        self._last_room_agent_cards_signature = ""
+        if not self._closing:
+            self.root.after_idle(self._render_room_agent_cards)
 
     def _select_room_agent_card(self, agent_id: str) -> None:
         self._selected_room_seat_agent = agent_id
@@ -7052,8 +11859,8 @@ class PixelMonitor:
     def _select_seat_recipient(self, _event: Any = None) -> None:
         self._select_room_seat_for_edit(_event)
 
-    @staticmethod
     def _field(
+        self,
         parent: tk.Misc,
         label: str,
         variable: tk.StringVar,
@@ -7062,15 +11869,30 @@ class PixelMonitor:
         *,
         secret: bool = False,
         width: int = 24,
+        localization_key: str | None = None,
     ) -> tk.Entry:
-        tk.Label(
-            parent,
-            text=label,
-            bg=COLORS["panel"],
-            fg=COLORS["amber"],
-            anchor="w",
-            font=("Cascadia Mono", 8, "bold"),
-        ).grid(row=row, column=column, sticky="w", padx=8, pady=(7, 2))
+        label_widget = (
+            self._localized_label(
+                parent,
+                localization_key,
+                bg=COLORS["panel"],
+                fg=COLORS["amber"],
+                anchor="w",
+                font=("Cascadia Mono", 8, "bold"),
+            )
+            if localization_key
+            else tk.Label(
+                parent,
+                text=label,
+                bg=COLORS["panel"],
+                fg=COLORS["amber"],
+                anchor="w",
+                font=("Cascadia Mono", 8, "bold"),
+            )
+        )
+        label_widget.grid(
+            row=row, column=column, sticky="w", padx=8, pady=(7, 2)
+        )
         entry = tk.Entry(
             parent,
             textvariable=variable,
@@ -7182,7 +12004,7 @@ class PixelMonitor:
                     "agent_install.install"
                     if spec.automatic_install_supported
                     else "agent_install.open_guide"
-                ),
+                ).format(name=spec.display_name),
                 command=lambda agent_id=spec.agent_id: self.install_official_agent(
                     agent_id
                 ),
@@ -7198,7 +12020,7 @@ class PixelMonitor:
             self._agent_install_buttons[spec.agent_id] = action
             docs = tk.Button(
                 self.agent_install_frame,
-                text=self._t("agent_install.docs"),
+                text=self._t("agent_install.docs").format(name=spec.display_name),
                 command=lambda url=spec.docs_url: webbrowser.open(url),
                 bg=COLORS["blue"],
                 fg=COLORS["black"],
@@ -7236,15 +12058,32 @@ class PixelMonitor:
         native.pack(fill="x", padx=10, pady=6)
         for column in range(4):
             native.grid_columnconfigure(column, weight=1)
-        self._field(native, "CONNECTION ID", self.connection_id, 0, 0)
-        self._field(native, "DISPLAY NAME", self.connection_name, 0, 1)
-        tk.Label(native, text="CLASS", bg=COLORS["panel"], fg=COLORS["amber"], anchor="w", font=("Cascadia Mono", 8, "bold")).grid(row=0, column=2, sticky="w", padx=8, pady=(7, 2))
-        ttk.Combobox(native, textvariable=self.connection_class, values=("official", "relay", "local"), state="readonly").grid(row=1, column=2, sticky="ew", padx=8, pady=(0, 5), ipady=4)
-        self._field(native, "AGENT ID", self.connection_agent, 0, 3)
-        self._field(native, "HTTPS ENDPOINT", self.connection_endpoint, 2, 0)
-        tk.Label(
+        self._field(
+            native, "", self.connection_id, 0, 0,
+            localization_key="connect.field.connection_id",
+        )
+        self._field(
+            native, "", self.connection_name, 0, 1,
+            localization_key="connect.field.display_name",
+        )
+        self._localized_label(
             native,
-            text="API KEY",
+            "connect.field.class",
+            bg=COLORS["panel"], fg=COLORS["amber"], anchor="w",
+            font=("Cascadia Mono", 8, "bold"),
+        ).grid(row=0, column=2, sticky="w", padx=8, pady=(7, 2))
+        ttk.Combobox(native, textvariable=self.connection_class, values=("official", "relay", "local"), state="readonly").grid(row=1, column=2, sticky="ew", padx=8, pady=(0, 5), ipady=4)
+        self._field(
+            native, "", self.connection_agent, 0, 3,
+            localization_key="connect.field.agent_id",
+        )
+        self._field(
+            native, "", self.connection_endpoint, 2, 0,
+            localization_key="connect.field.endpoint",
+        )
+        self._localized_label(
+            native,
+            "connect.field.api_key",
             bg=COLORS["panel"],
             fg=COLORS["amber"],
             anchor="w",
@@ -7280,13 +12119,38 @@ class PixelMonitor:
             takefocus=True,
         )
         self.connection_key_visibility_button.pack(side="right", padx=(5, 0))
-        self._field(native, "CLIENT NAME", self.connection_client, 2, 2)
-        self._field(native, "ROUTE ID", self.connection_route_id, 2, 3)
-        tk.Label(native, text="MODEL", bg=COLORS["panel"], fg=COLORS["amber"], anchor="w", font=("Cascadia Mono", 8, "bold")).grid(row=4, column=0, sticky="w", padx=8, pady=(7, 2))
+        self._field(
+            native, "", self.connection_client, 2, 2,
+            localization_key="connect.field.client_name",
+        )
+        self._field(
+            native, "", self.connection_route_id, 2, 3,
+            localization_key="connect.field.route_id",
+        )
+        self._localized_label(
+            native,
+            "connect.field.model",
+            bg=COLORS["panel"], fg=COLORS["amber"], anchor="w",
+            font=("Cascadia Mono", 8, "bold"),
+        ).grid(row=4, column=0, sticky="w", padx=8, pady=(7, 2))
         self.connection_model_combo = ttk.Combobox(native, textvariable=self.connection_model, values=(), state="normal")
         self.connection_model_combo.grid(row=5, column=0, sticky="ew", padx=8, pady=(0, 5), ipady=4)
-        self._field(native, "EXPECTED RESPONSE MODEL", self.connection_response_model, 4, 1)
-        self._field(native, "MODEL-SPECIFIC REASONING", self.connection_reasoning, 4, 2)
+        self._field(
+            native, "", self.connection_response_model, 4, 1,
+            localization_key="connect.field.response_model",
+        )
+        self._field(
+            native, "", self.connection_reasoning, 4, 2,
+            localization_key="connect.field.reasoning",
+        )
+        self._field(
+            native,
+            "",
+            self.connection_timeout_seconds,
+            4,
+            3,
+            localization_key="connect.timeout_label",
+        )
         native_buttons = tk.Frame(native, bg=COLORS["panel"])
         native_buttons.grid(row=7, column=0, columnspan=4, sticky="e", padx=8, pady=8)
         self.native_connection_buttons: dict[str, tk.Button] = {}
@@ -7319,7 +12183,12 @@ class PixelMonitor:
         cc.pack(fill="x", padx=10, pady=6)
         for column in range(6):
             cc.grid_columnconfigure(column, weight=1)
-        tk.Label(cc, text="APP", bg=COLORS["panel"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=0, column=0, sticky="w", padx=8, pady=(7, 2))
+        self._localized_label(
+            cc,
+            "connect.field.app",
+            bg=COLORS["panel"], fg=COLORS["amber"],
+            font=("Cascadia Mono", 8, "bold"),
+        ).grid(row=0, column=0, sticky="w", padx=8, pady=(7, 2))
         app_combo = ttk.Combobox(
             cc,
             textvariable=self.ccswitch_app,
@@ -7328,15 +12197,31 @@ class PixelMonitor:
         )
         app_combo.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 6), ipady=4)
         app_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_ccswitch())
-        tk.Label(cc, text="PROVIDER", bg=COLORS["panel"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=0, column=1, sticky="w", padx=8, pady=(7, 2))
+        self._localized_label(
+            cc,
+            "connect.field.provider",
+            bg=COLORS["panel"], fg=COLORS["amber"],
+            font=("Cascadia Mono", 8, "bold"),
+        ).grid(row=0, column=1, sticky="w", padx=8, pady=(7, 2))
         self.ccswitch_provider_combo = ttk.Combobox(cc, textvariable=self.ccswitch_provider, values=(), state="readonly")
         self.ccswitch_provider_combo.grid(row=1, column=1, columnspan=2, sticky="ew", padx=8, pady=(0, 6), ipady=4)
         self.ccswitch_provider_combo.bind("<<ComboboxSelected>>", lambda _e: self.fetch_ccswitch_models())
-        tk.Label(cc, text="MODEL", bg=COLORS["panel"], fg=COLORS["amber"], font=("Cascadia Mono", 8, "bold")).grid(row=0, column=3, sticky="w", padx=8, pady=(7, 2))
+        self._localized_label(
+            cc,
+            "connect.field.model",
+            bg=COLORS["panel"], fg=COLORS["amber"],
+            font=("Cascadia Mono", 8, "bold"),
+        ).grid(row=0, column=3, sticky="w", padx=8, pady=(7, 2))
         self.ccswitch_model_combo = ttk.Combobox(cc, textvariable=self.ccswitch_model, values=(), state="readonly")
         self.ccswitch_model_combo.grid(row=1, column=3, sticky="ew", padx=8, pady=(0, 6), ipady=4)
-        self._field(cc, "AGENT ID", self.ccswitch_agent, 0, 4)
-        self._field(cc, "REASONING", self.ccswitch_reasoning, 0, 5)
+        self._field(
+            cc, "", self.ccswitch_agent, 0, 4,
+            localization_key="connect.field.agent_id",
+        )
+        self._field(
+            cc, "", self.ccswitch_reasoning, 0, 5,
+            localization_key="connect.field.reasoning",
+        )
         buttons = tk.Frame(cc, bg=COLORS["panel"])
         buttons.grid(row=2, column=0, columnspan=6, sticky="ew", padx=8, pady=6)
         self.ccswitch_connection_buttons: dict[str, tk.Button] = {}
@@ -7429,7 +12314,8 @@ class PixelMonitor:
                 )
             )
             self._agent_install_buttons[spec.agent_id].configure(
-                text=self._t(action_key), state="normal"
+                text=self._t(action_key).format(name=spec.display_name),
+                state="normal",
             )
 
     def install_official_agent(self, agent_id: str) -> None:
@@ -7514,7 +12400,9 @@ class PixelMonitor:
         if self.connection_in_progress:
             return
         try:
-            connection_id = self._safe_identifier(self.connection_id.get(), "CONNECTION ID")
+            connection_id = self._safe_identifier(
+                self.connection_id.get(), self._t("connect.field.connection_id")
+            )
             display_name = self.connection_name.get().strip()
             route_class = self.connection_class.get().strip()
             endpoint = self.connection_endpoint.get().strip()
@@ -7634,7 +12522,9 @@ class PixelMonitor:
         if self.connection_in_progress:
             return
         try:
-            connection_id = self._safe_identifier(self.connection_id.get(), "CONNECTION ID")
+            connection_id = self._safe_identifier(
+                self.connection_id.get(), self._t("connect.field.connection_id")
+            )
             route_class = self.connection_class.get().strip()
             if route_class not in {"official", "relay", "local"}:
                 raise ValueError(self._t("provider.class_invalid"))
@@ -7691,22 +12581,38 @@ class PixelMonitor:
         if self.connection_in_progress:
             return
         try:
-            connection_id = self._safe_identifier(self.connection_id.get(), "CONNECTION ID")
+            connection_id = self._safe_identifier(
+                self.connection_id.get(), self._t("connect.field.connection_id")
+            )
             route_class = self.connection_class.get().strip()
-            agent_id = self._safe_identifier(self.connection_agent.get(), "AGENT ID")
-            route_id = self._safe_identifier(self.connection_route_id.get(), "ROUTE ID")
-            model_id = self._safe_identifier(self.connection_model.get(), "MODEL")
+            agent_id = self._safe_identifier(
+                self.connection_agent.get(), self._t("connect.field.agent_id")
+            )
+            route_id = self._safe_identifier(
+                self.connection_route_id.get(), self._t("connect.field.route_id")
+            )
+            model_id = self._safe_identifier(
+                self.connection_model.get(), self._t("connect.field.model")
+            )
             response_model_id = self.connection_response_model.get().strip()
+            timeout_text = self.connection_timeout_seconds.get().strip()
             client_name = self.connection_client.get().strip()
             reasoning = self.connection_reasoning.get().strip()
             if client_name:
-                client_name = self._safe_identifier(client_name, "CLIENT NAME")
+                client_name = self._safe_identifier(
+                    client_name, self._t("connect.field.client_name")
+                )
             if response_model_id:
                 response_model_id = self._safe_identifier(
-                    response_model_id, "EXPECTED RESPONSE MODEL"
+                    response_model_id, self._t("connect.field.response_model")
                 )
             if reasoning:
-                reasoning = self._safe_identifier(reasoning, "REASONING")
+                reasoning = self._safe_identifier(
+                    reasoning, self._t("connect.field.reasoning")
+                )
+            if not timeout_text.isdigit() or not 1 <= int(timeout_text) <= 300:
+                raise ValueError(self._t("connect.timeout_invalid"))
+            inference_timeout_seconds = int(timeout_text)
             advertised = tuple(self.connection_model_combo.cget("values"))
             if advertised and model_id not in advertised:
                 raise ValueError(self._t("connect.model_unverified"))
@@ -7728,6 +12634,7 @@ class PixelMonitor:
                 "agent_id": agent_id,
                 "provider_id": connection_id,
                 "model_id": model_id,
+                "inference_timeout_seconds": inference_timeout_seconds,
                 "route_class": route_class,
                 "enabled": True,
             }
@@ -7759,8 +12666,12 @@ class PixelMonitor:
     def test_native_route(self) -> None:
         """Queue one auditable, explicitly paid route probe through normal dispatch."""
         try:
-            agent_id = self._safe_identifier(self.connection_agent.get(), "AGENT ID")
-            route_id = self._safe_identifier(self.connection_route_id.get(), "ROUTE ID")
+            agent_id = self._safe_identifier(
+                self.connection_agent.get(), self._t("connect.field.agent_id")
+            )
+            route_id = self._safe_identifier(
+                self.connection_route_id.get(), self._t("connect.field.route_id")
+            )
             profiles = self.human_client.call_tool(
                 "list_route_profiles",
                 {"agent_id": agent_id, "enabled_only": True},
@@ -7908,11 +12819,17 @@ class PixelMonitor:
     def register_ccswitch_route(self) -> None:
         try:
             provider = self._selected_ccswitch_provider()
-            agent_id = self._safe_identifier(self.ccswitch_agent.get(), "AGENT ID")
-            model = self._safe_identifier(self.ccswitch_model.get(), "MODEL")
+            agent_id = self._safe_identifier(
+                self.ccswitch_agent.get(), self._t("connect.field.agent_id")
+            )
+            model = self._safe_identifier(
+                self.ccswitch_model.get(), self._t("connect.field.model")
+            )
             reasoning = self.ccswitch_reasoning.get().strip()
             if reasoning:
-                reasoning = self._safe_identifier(reasoning, "REASONING")
+                reasoning = self._safe_identifier(
+                    reasoning, self._t("connect.field.reasoning")
+                )
         except Exception as exc:
             self.ccswitch_status.set(self._safe_error(exc))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
@@ -7944,10 +12861,14 @@ class PixelMonitor:
         """Register all models from one saved source without switching providers."""
         try:
             provider = self._selected_ccswitch_provider()
-            agent_id = self._safe_identifier(self.ccswitch_agent.get(), "AGENT ID")
+            agent_id = self._safe_identifier(
+                self.ccswitch_agent.get(), self._t("connect.field.agent_id")
+            )
             reasoning = self.ccswitch_reasoning.get().strip()
             if reasoning:
-                reasoning = self._safe_identifier(reasoning, "REASONING")
+                reasoning = self._safe_identifier(
+                    reasoning, self._t("connect.field.reasoning")
+                )
         except Exception as exc:
             self.ccswitch_status.set(self._safe_error(exc))
             self.ccswitch_status_label.configure(fg=COLORS["red"])
@@ -8208,11 +13129,17 @@ class PixelMonitor:
                 count=len(self._chat_attachment_paths)
             )
         )
+        if ACTIVE_THEME == "modern":
+            self._configure_chat_composer_layout(self._chat_composer_compact)
+            self.root.after_idle(self._layout_chat_after_resize)
         self._sync_room_control_states()
 
     def _clear_chat_attachments(self) -> None:
         self._chat_attachment_paths = ()
         self.chat_attachment_status.set(self._t("chat.no_attachments"))
+        if ACTIVE_THEME == "modern":
+            self._configure_chat_composer_layout(self._chat_composer_compact)
+            self.root.after_idle(self._layout_chat_after_resize)
         self._sync_room_control_states()
 
     def send_human_message(self) -> None:
@@ -8295,7 +13222,9 @@ class PixelMonitor:
         send_token = self._send_token_sequence
         self._active_send_token = send_token
         self.send_in_progress = True
-        self.send_button.configure(state="disabled", text="SENDING...")
+        self.send_button.configure(
+            state="disabled", text=self._t("chat.sending_button")
+        )
         self.chat_attach_button.configure(state="disabled")
         self.chat_clear_attachments_button.configure(state="disabled")
         self.message_status.set(
@@ -8399,16 +13328,89 @@ class PixelMonitor:
         self.pages[key] = page
         return page
 
+    def _execute_trust_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        callback: Callable[[dict[str, Any] | None, str | None], None],
+    ) -> None:
+        if self._trust_action_in_progress:
+            callback(None, self._t("trustui.status.busy"))
+            return
+        self._trust_action_in_progress = True
+
+        def worker() -> None:
+            try:
+                if name == "request_release_gate":
+                    result = self.release_gate_service.request()
+                    self.verification_engine.request_scan()
+                elif name == "decide_release_gate":
+                    result = self.release_gate_service.decide(
+                        str(arguments.get("fingerprint") or ""),
+                        decision=str(arguments.get("decision") or ""),
+                        reason=str(arguments.get("reason") or ""),
+                    )
+                else:
+                    result = self.human_client.call_tool(name, arguments, timeout=60)
+                error = None
+            except Exception as exc:
+                result = None
+                error = clip(redact_sensitive(exc), 300)
+            self._post_to_ui(self._finish_trust_tool, callback, result, error)
+
+        threading.Thread(
+            target=worker,
+            name=f"peerbridge-trust-{name}",
+            daemon=True,
+        ).start()
+
+    def _finish_trust_tool(
+        self,
+        callback: Callable[[dict[str, Any] | None, str | None], None],
+        result: dict[str, Any] | None,
+        error: str | None,
+    ) -> None:
+        self._trust_action_in_progress = False
+        callback(result, error)
+        if error is None:
+            self.refresh(force=True)
+
     def show_page(self, key: str) -> None:
+        previous_page = getattr(self, "active_page", "")
+        if key == "chat" and previous_page != "chat":
+            self._chat_follow_latest_on_open = True
         self.active_page = key
         for page_key, page in self.pages.items():
             if page_key == key:
                 page.tkraise()
         titles = {page_key: self._t(f"page.{page_key}") for page_key in self.pages}
         self.page_title.configure(text=titles[key])
+        if ACTIVE_THEME == "modern":
+            scope_label = getattr(self, "modern_toolbar_scope_label", None)
+            if scope_label is not None:
+                scope_text = self.scope
+                if key == "chat" and self.selected_room_id:
+                    room = self._rooms.get(self.selected_room_id, {})
+                    room_name = str(room.get("name") or self.selected_room_id)
+                    scope_text = f"{clip(room_name, 28)}  ·  {self.scope}"
+                scope_label.configure(text=scope_text)
+            self._sync_modern_recent_rooms()
+            self._sync_modern_chat_context()
         for button_key, button in self.nav_buttons.items():
             active = button_key == key
-            button.configure(bg=COLORS["cyan"] if active else COLORS["panel"], fg=COLORS["black"] if active else COLORS["text"])
+            if ACTIVE_THEME == "modern":
+                button.configure(
+                    bg=MODERN_NAV_ACTIVE_BG if active else MODERN_SIDEBAR_BG,
+                    fg=COLORS["text"],
+                    highlightbackground=(
+                        COLORS["line"] if active else MODERN_SIDEBAR_BG
+                    ),
+                )
+            else:
+                button.configure(
+                    bg=COLORS["cyan"] if active else COLORS["panel"],
+                    fg=COLORS["black"] if active else COLORS["text"],
+                )
         if key == "announcement":
             self._render_announcements(self.search.get().strip().lower())
             self._mark_current_announcements_read()
@@ -8431,6 +13433,7 @@ class PixelMonitor:
                 pass
             self._refresh_after_id = None
         if self.paused.get() and not force:
+            self.trust_workflows.refresh_verification_status()
             self._refresh_after_id = self.root.after(self.REFRESH_MS, self.refresh)
             return
         if force:
@@ -8462,6 +13465,7 @@ class PixelMonitor:
                     )
                 )
             self.root.title(WINDOW_TITLE_LIVE)
+            self.trust_workflows.refresh_verification_status()
         except Exception as exc:  # UI must remain alive on transient WAL/lock errors.
             self.root.title(f"{WINDOW_TITLE} // ERROR")
             self.refresh_status.set(self._t("toolbar.refresh_failed"))
@@ -8480,6 +13484,7 @@ class PixelMonitor:
 
     def _render_active_page(self, query: str) -> None:
         renderers: dict[str, Callable[[str], None]] = {
+            "cockpit": lambda _query: self.cockpit.render(),
             "chat": self._render_chat,
             "work": self._render_work,
             "review": self._render_reviews,
@@ -8487,6 +13492,7 @@ class PixelMonitor:
             "audit": self._render_audit,
             "connect": self._render_connections,
             "memory": self._render_memories,
+            "trust": lambda value: self.trust_workflows.render(self.snapshot, value),
             "feedback": lambda _query: None,
             "usage": self._render_usage,
             "announcement": self._render_announcements,
@@ -8619,6 +13625,13 @@ class PixelMonitor:
             latest,
             key=lambda name: (-float(latest[name].get("last_seen_epoch", 0)), name),
         )
+        scrollbar = getattr(self, "agent_scrollbar", None)
+        if scrollbar is not None:
+            if len(names) > AGENT_LIBRARY_VISIBLE_CAPACITY:
+                if not scrollbar.winfo_manager():
+                    scrollbar.pack(side="right", fill="y", padx=(2, 0))
+            elif scrollbar.winfo_manager():
+                scrollbar.pack_forget()
         display_rows = []
         for name in names:
             row = latest[name]
@@ -8641,10 +13654,17 @@ class PixelMonitor:
         canvas.delete("all")
         self._library_hitboxes = []
         if not latest:
-            canvas.configure(scrollregion=(0, 0, 184, 178))
+            canvas.configure(
+                scrollregion=(
+                    0,
+                    0,
+                    AGENT_LIBRARY_CANVAS_WIDTH,
+                    AGENT_LIBRARY_CANVAS_HEIGHT,
+                )
+            )
             canvas.create_text(
-                92,
-                82,
+                AGENT_LIBRARY_CANVAS_WIDTH // 2,
+                AGENT_LIBRARY_CANVAS_HEIGHT // 2,
                 text=self._t("sidebar.library_empty"),
                 fill=COLORS["muted"],
                 font=("Cascadia Mono", 9, "bold"),
@@ -8652,10 +13672,10 @@ class PixelMonitor:
             return
         palette = (COLORS["cyan"], COLORS["amber"], COLORS["green"], COLORS["purple"], COLORS["blue"])
         for index, name in enumerate(names):
-            column = index % 2
-            row_index = index // 2
-            x = 5 + column * 88
-            y = 7 + row_index * 44
+            column = index % AGENT_LIBRARY_COLUMNS
+            row_index = index // AGENT_LIBRARY_COLUMNS
+            x = 5 + column * AGENT_LIBRARY_COLUMN_STRIDE
+            y = AGENT_LIBRARY_TOP_MARGIN + row_index * AGENT_LIBRARY_CARD_STRIDE
             color = palette[int(hashlib.sha256(name.encode("utf-8")).hexdigest()[:2], 16) % len(palette)]
             row = latest.get(name)
             online = bool(
@@ -8670,23 +13690,37 @@ class PixelMonitor:
             canvas.create_rectangle(
                 x,
                 y,
-                x + 82,
-                y + 38,
+                x + AGENT_LIBRARY_CARD_WIDTH,
+                y + AGENT_LIBRARY_CARD_HEIGHT,
                 fill=COLORS["panel_2"],
                 outline=COLORS["amber"] if selected else COLORS["line"],
                 width=3 if selected else 1,
             )
-            self._library_hitboxes.append((x, y, x + 82, y + 38, name))
+            self._library_hitboxes.append(
+                (
+                    x,
+                    y,
+                    x + AGENT_LIBRARY_CARD_WIDTH,
+                    y + AGENT_LIBRARY_CARD_HEIGHT,
+                    name,
+                )
+            )
             for px, py in ((0, 4), (4, 0), (8, 0), (12, 4), (0, 8), (4, 8), (8, 8), (12, 8), (4, 12), (8, 12)):
                 canvas.create_rectangle(x + 7 + px, y + 7 + py, x + 11 + px, y + 11 + py, fill=shade, outline=shade)
             canvas.create_rectangle(x + 11, y + 15, x + 13, y + 17, fill=COLORS["black"], outline="")
             canvas.create_rectangle(x + 17, y + 15, x + 19, y + 17, fill=COLORS["black"], outline="")
-            canvas.create_oval(x + 70, y + 5, x + 78, y + 13, fill=COLORS["green"] if online else COLORS["red"], outline=COLORS["black"])
-            canvas.create_text(x + 31, y + 12, text=clip(name.upper(), 8), anchor="w", fill=shade, font=("Cascadia Mono", 7, "bold"))
+            canvas.create_oval(x + 91, y + 7, x + 99, y + 15, fill=COLORS["green"] if online else COLORS["red"], outline=COLORS["black"])
+            canvas.create_text(x + 31, y + 16, text=clip(name.upper(), 10), anchor="w", fill=shade, font=("Cascadia Mono", 8, "bold"))
             route = row.get("model_id") or row.get("provider_id") or ("ONLINE" if online else "OFFLINE")
-            canvas.create_text(x + 31, y + 27, text=clip(str(route).upper(), 8), anchor="w", fill=COLORS["green"] if online else COLORS["red"], font=("Cascadia Mono", 6))
-        content_height = max(178, 7 + ((len(names) + 1) // 2) * 44)
-        canvas.configure(scrollregion=(0, 0, 184, content_height))
+            canvas.create_text(x + 31, y + 35, text=clip(str(route).upper(), 10), anchor="w", fill=COLORS["green"] if online else COLORS["red"], font=("Cascadia Mono", 8))
+        row_count = (len(names) + AGENT_LIBRARY_COLUMNS - 1) // AGENT_LIBRARY_COLUMNS
+        content_height = max(
+            AGENT_LIBRARY_CANVAS_HEIGHT,
+            AGENT_LIBRARY_TOP_MARGIN + row_count * AGENT_LIBRARY_CARD_STRIDE,
+        )
+        canvas.configure(
+            scrollregion=(0, 0, AGENT_LIBRARY_CANVAS_WIDTH, content_height)
+        )
 
     def _chat_records(self) -> list[dict[str, Any]]:
         assert self.snapshot is not None
@@ -8738,47 +13772,457 @@ class PixelMonitor:
         timeline.sort(key=lambda row: row.get("time") or "")
         return timeline
 
+    def _move_chat_view_if_current(self, room_id: str, position: float) -> None:
+        if (
+            getattr(self, "selected_room_id", "") != room_id
+            or getattr(self, "_chat_render_room_id", "") != room_id
+        ):
+            return
+        with contextlib.suppress(AttributeError, tk.TclError):
+            self.root.update_idletasks()
+        with contextlib.suppress(AttributeError, tk.TclError):
+            self.chat_canvas.configure(scrollregion=self.chat_canvas.bbox("all"))
+        self.chat_canvas.yview_moveto(position)
+
+    def _modern_chat_blocks(
+        self, rows: Sequence[dict[str, Any]]
+    ) -> tuple[tuple[str, Any], ...]:
+        subjects_by_task = {
+            str(row.get("task") or ""): str(row.get("subject") or "")
+            for row in rows
+            if str(row.get("sender") or "") == HUMAN_AGENT_ID
+            and row.get("task")
+        }
+        blocks: list[tuple[str, Any]] = []
+        index = 0
+        while index < len(rows):
+            row = rows[index]
+            sender = str(row.get("sender") or "")
+            task_id = str(row.get("task") or "")
+            if sender == HUMAN_AGENT_ID or not task_id:
+                blocks.append(("message", row))
+                index += 1
+                continue
+            group = [row]
+            cursor = index + 1
+            while cursor < len(rows):
+                candidate = rows[cursor]
+                candidate_sender = str(candidate.get("sender") or "")
+                if (
+                    candidate_sender == HUMAN_AGENT_ID
+                    or str(candidate.get("task") or "") != task_id
+                ):
+                    break
+                group.append(candidate)
+                cursor += 1
+            if len(group) < 2:
+                blocks.append(("message", row))
+                index += 1
+                continue
+            subject = subjects_by_task.get(task_id) or str(
+                group[0].get("subject") or task_id
+            )
+            blocks.append(
+                (
+                    "round",
+                    {
+                        "task": task_id,
+                        "subject": subject,
+                        "rows": tuple(group),
+                    },
+                )
+            )
+            index = cursor
+        return tuple(blocks)
+
+    def _add_modern_round_group(self, payload: Mapping[str, Any]) -> None:
+        rows = tuple(payload.get("rows") or ())
+        if not rows:
+            return
+        line = tk.Frame(self.chat_inner, bg=MODERN_WORKSPACE_BG)
+        line.pack(fill="x", padx=28, pady=(9, 7))
+        round_card = tk.Frame(
+            line,
+            bg=MODERN_WORKSPACE_BG,
+        )
+        round_card.pack(fill="x")
+
+        header = tk.Frame(round_card, bg=MODERN_WORKSPACE_BG)
+        header.pack(fill="x", pady=(9, 4))
+        title_group = tk.Frame(header, bg=MODERN_WORKSPACE_BG)
+        title_group.pack(side="left", fill="x", expand=True)
+        tk.Frame(title_group, bg=COLORS["blue"], width=3, height=20).pack(
+            side="left", padx=(0, 9)
+        )
+        tk.Label(
+            title_group,
+            text=self._t("modern.round.title"),
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["text"],
+            anchor="w",
+            font=(MODERN_FONT_FAMILY, 11, "bold"),
+        ).pack(side="left")
+        tk.Label(
+            title_group,
+            text=self._t("modern.round.response_count").format(count=len(rows)),
+            bg=MODERN_NAV_ACTIVE_BG,
+            fg=COLORS["blue"],
+            padx=7,
+            pady=2,
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(
+            header,
+            text=utc_text(rows[-1].get("time")).rsplit(" ", 1)[-1][:5],
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["muted"],
+            font=(MODERN_FONT_FAMILY, 8),
+        ).pack(side="right")
+
+        subject = clip(str(payload.get("subject") or payload.get("task") or ""), 120)
+        tk.Label(
+            round_card,
+            text=self._t("modern.round.summary").format(
+                count=len(rows),
+                subject=subject,
+            ),
+            bg=MODERN_WORKSPACE_BG,
+            fg=COLORS["muted"],
+            anchor="w",
+            justify="left",
+            wraplength=760,
+            font=(MODERN_FONT_FAMILY, 9),
+        ).pack(fill="x", padx=(12, 0), pady=(0, 10))
+
+        responses = tk.Frame(round_card, bg=MODERN_WORKSPACE_BG)
+        responses.pack(fill="x", pady=(0, 5))
+        response_width = max(420, int(self.chat_canvas.winfo_width()) - 150)
+        for index, row in enumerate(rows):
+            sender = str(row.get("sender") or "unknown")
+            sender_name, initials, agent_tint, avatar_color = (
+                self._modern_agent_presentation(sender)
+            )
+            response_row = tk.Frame(responses, bg=MODERN_WORKSPACE_BG)
+            response_row.pack(fill="x", pady=(0, 7))
+            avatar = tk.Label(
+                response_row,
+                text=initials[:2],
+                bg=avatar_color,
+                fg="#ffffff",
+                width=3,
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            )
+            avatar.pack(side="left", anchor="n", padx=(0, 9), pady=(3, 0), ipady=5)
+            response = tk.Frame(
+                response_row,
+                bg=COLORS["panel"],
+                highlightthickness=1,
+                highlightbackground=COLORS["line"],
+            )
+            response.pack(side="left", fill="x", expand=True)
+            response_header = tk.Frame(response, bg=COLORS["panel"])
+            response_header.pack(fill="x", padx=13, pady=(9, 4))
+            tk.Label(
+                response_header,
+                text=sender_name,
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                font=(MODERN_FONT_FAMILY, 9, "bold"),
+            ).pack(side="left")
+            route_values = (
+                row.get("observed_provider") or row.get("requested_provider"),
+                row.get("observed_model") or row.get("requested_model"),
+            )
+            route_text = " / ".join(
+                str(value) for value in route_values if value
+            )
+            if route_text:
+                tk.Label(
+                    response_header,
+                    text=clip(route_text, 42),
+                    bg=COLORS["panel"],
+                    fg=COLORS["muted"],
+                    font=(MODERN_FONT_FAMILY, 8),
+                ).pack(side="left", padx=(8, 0))
+            state_text = (
+                self._t("modern.agent.failed")
+                if str(row.get("dispatch_status") or "").lower() == "failed"
+                else self._t("modern.agent.replied")
+            )
+            state_color = (
+                COLORS["red"]
+                if str(row.get("dispatch_status") or "").lower() == "failed"
+                else COLORS["green"]
+            )
+            tk.Label(
+                response_header,
+                text=state_text,
+                bg=COLORS["panel"],
+                fg=state_color,
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            ).pack(side="right")
+            response_body = tk.Frame(response, bg=COLORS["panel"])
+            response_body.pack(fill="both", expand=True, padx=13, pady=(0, 9))
+            tk.Label(
+                response_body,
+                text=clip(str(row.get("body") or ""), 520),
+                bg=COLORS["panel"],
+                fg=COLORS["text"],
+                anchor="nw",
+                justify="left",
+                wraplength=max(330, response_width - 96),
+                font=(MODERN_FONT_FAMILY, 10),
+            ).pack(fill="x")
+            receipt_text = str(row.get("sha") or "")[:10] or "--"
+            tk.Label(
+                response_body,
+                text=self._t("modern.round.receipt").format(sha=receipt_text),
+                bg=COLORS["panel"],
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8),
+            ).pack(fill="x", pady=(7, 0))
+
+        activity = tk.Frame(
+            round_card,
+            bg=COLORS["panel_2"],
+            highlightthickness=0,
+        )
+        details = tk.Frame(round_card, bg=MODERN_WORKSPACE_BG)
+        details_visible = tk.BooleanVar(value=False)
+
+        def toggle_activity() -> None:
+            details_visible.set(not details_visible.get())
+            if details_visible.get():
+                details.pack(fill="x", padx=(40, 0), pady=(0, 7), before=activity)
+            else:
+                details.pack_forget()
+            activity_button.configure(
+                text=("▴  " if details_visible.get() else "▾  ")
+                + self._t(
+                    "modern.round.hide_activity"
+                    if details_visible.get()
+                    else "modern.round.activity"
+                ).format(count=len(rows))
+            )
+
+        for row in rows:
+            sender = str(row.get("sender") or "unknown")
+            sender_name, _initials, _agent_tint, _avatar_color = (
+                self._modern_agent_presentation(sender)
+            )
+            detail_row = tk.Frame(details, bg=MODERN_WORKSPACE_BG)
+            detail_row.pack(fill="x", pady=3)
+            tk.Label(
+                detail_row,
+                text=sender_name,
+                width=13,
+                bg=MODERN_WORKSPACE_BG,
+                fg=COLORS["text"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            ).pack(side="left")
+            tk.Label(
+                detail_row,
+                text=clip(self._bubble_metadata(row).replace("\n", "  ·  "), 150),
+                bg=MODERN_WORKSPACE_BG,
+                fg=COLORS["muted"],
+                anchor="w",
+                font=(MODERN_FONT_FAMILY, 8),
+            ).pack(side="left", fill="x", expand=True)
+            sha = str(row.get("sha") or "")
+            tk.Button(
+                detail_row,
+                text=self._t("chat.copy_sha"),
+                command=lambda value=sha: self.copy_text(value),
+                bg=MODERN_WORKSPACE_BG,
+                fg=COLORS["muted"],
+                activebackground=COLORS["panel_2"],
+                activeforeground=COLORS["text"],
+                relief="flat",
+                bd=0,
+                font=(MODERN_FONT_FAMILY, 7),
+            ).pack(side="right")
+
+        if details_visible.get():
+            details.pack(fill="x", padx=(40, 0), pady=(0, 7))
+        activity.pack(fill="x", padx=(40, 0), pady=(1, 10))
+        activity_button = tk.Button(
+            activity,
+            text=("▴  " if details_visible.get() else "▾  ")
+            + self._t(
+                "modern.round.hide_activity"
+                if details_visible.get()
+                else "modern.round.activity"
+            ).format(count=len(rows)),
+            command=toggle_activity,
+            bg=COLORS["panel_2"],
+            fg=COLORS["text"],
+            activebackground=MODERN_NAV_ACTIVE_BG,
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            anchor="w",
+            padx=10,
+            pady=7,
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        )
+        activity_button.pack(side="left", fill="x", expand=True)
+        linked_receipts = sum(1 for row in rows if str(row.get("sha") or ""))
+        tk.Label(
+            activity,
+            text=self._t("modern.round.linked").format(
+                linked=linked_receipts,
+                total=len(rows),
+            ),
+            bg=COLORS["panel_2"],
+            fg=COLORS["green"] if linked_receipts == len(rows) else COLORS["amber"],
+            font=(MODERN_FONT_FAMILY, 8, "bold"),
+        ).pack(side="right", padx=(8, 10))
+
     def _render_chat(self, query: str) -> None:
         rows = [row for row in self._chat_records() if self._match(row, query)]
         row_signatures = tuple(ui_content_signature(row) for row in rows)
         previous_signatures = self._chat_render_row_signatures
+        render_room_id = getattr(self, "selected_room_id", "")
+        same_context = (
+            query == self._chat_render_query
+            and render_room_id == getattr(self, "_chat_render_room_id", "")
+        )
         mode = incremental_render_mode(
             previous_signatures,
             row_signatures,
-            same_context=query == self._chat_render_query,
+            same_context=same_context,
         )
+        follow_latest = bool(getattr(self, "_chat_follow_latest_on_open", False))
         if mode == "unchanged":
+            if follow_latest:
+                self._chat_follow_latest_on_open = False
+                self.root.after_idle(
+                    lambda room_id=render_room_id: self._move_chat_view_if_current(
+                        room_id, 1.0
+                    )
+                )
             return
 
         viewport = self.chat_canvas.yview()
         was_at_bottom = not viewport or viewport[-1] >= 0.985
-        if mode == "append":
+        if mode == "append" and ACTIVE_THEME != "modern":
             previous_count = len(previous_signatures or ())
             for row in rows[previous_count:]:
                 self._add_bubble(row)
             self._chat_render_row_signatures = row_signatures
             self._chat_render_query = query
-            if was_at_bottom:
-                self.root.after_idle(lambda: self.chat_canvas.yview_moveto(1.0))
+            self._chat_render_room_id = render_room_id
+            if was_at_bottom or follow_latest:
+                self._chat_follow_latest_on_open = False
+                self.root.after_idle(
+                    lambda room_id=render_room_id: self._move_chat_view_if_current(
+                        room_id, 1.0
+                    )
+                )
             return
 
         for child in self.chat_inner.winfo_children():
             child.destroy()
         if not rows:
-            tk.Label(self.chat_inner, text="NO MESSAGES", bg=COLORS["panel"], fg=COLORS["muted"], font=("Cascadia Mono", 12, "bold")).pack(pady=50)
+            tk.Label(
+                self.chat_inner,
+                text=self._t("chat.no_messages"),
+                bg=(
+                    MODERN_WORKSPACE_BG
+                    if ACTIVE_THEME == "modern"
+                    else COLORS["panel"]
+                ),
+                fg=COLORS["muted"],
+                font=(UI_FONT_FAMILY, 12, "bold"),
+            ).pack(pady=50)
             self._chat_render_row_signatures = row_signatures
             self._chat_render_query = query
+            self._chat_render_room_id = render_room_id
+            self._chat_follow_latest_on_open = False
+            self.root.after_idle(
+                lambda room_id=render_room_id: self._move_chat_view_if_current(
+                    room_id, 0.0
+                )
+            )
             return
-        for row in rows:
-            self._add_bubble(row)
+        if ACTIVE_THEME == "modern":
+            for kind, payload in self._modern_chat_blocks(rows):
+                if kind == "round":
+                    self._add_modern_round_group(payload)
+                else:
+                    self._add_bubble(payload)
+        else:
+            for row in rows:
+                self._add_bubble(row)
         self._chat_render_row_signatures = row_signatures
         self._chat_render_query = query
-        target = 1.0 if previous_signatures is None or was_at_bottom else viewport[0]
+        self._chat_render_room_id = render_room_id
+        filled_empty_context = (
+            same_context and previous_signatures == () and bool(row_signatures)
+        )
+        target = (
+            1.0
+            if (
+                previous_signatures is None
+                or was_at_bottom
+                or not same_context
+                or filled_empty_context
+                or follow_latest
+            )
+            else viewport[0]
+        )
+        self._chat_follow_latest_on_open = False
         self.root.after_idle(
-            lambda position=target: self.chat_canvas.yview_moveto(position)
+            lambda room_id=render_room_id, position=target: (
+                self._move_chat_view_if_current(room_id, position)
+            )
         )
 
+    def _dispatch_status_text(self, row: Mapping[str, Any]) -> str:
+        status = str(row.get("dispatch_status") or "").strip().lower()
+        if not status:
+            return ""
+        agent = str(row.get("recipient") or self._t("cockpit.unavailable"))
+        attempts = int(row.get("dispatch_attempts") or 0)
+        error = str(row.get("dispatch_error") or "").strip().lower()
+        error_key = {
+            "credential_unavailable": "chat.delivery.credential_unavailable",
+            "provider_authentication_required": "chat.delivery.credential_unavailable",
+            "provider_http_retryable": "chat.delivery.provider_unavailable",
+            "provider_rate_limited": "chat.delivery.rate_limited",
+            "runner_hard_deadline_exceeded": "chat.delivery.runner_hard_deadline_exceeded",
+            "discussion_timed_out": "chat.delivery.discussion_timed_out",
+            "route_mismatch": "chat.delivery.route_mismatch",
+            "route_handoff_mismatch": "chat.delivery.route_mismatch",
+            "mcp_transport_failed": "chat.delivery.transport_failed",
+            "tool_policy_failed": "chat.delivery.tool_failed",
+        }.get(error)
+        if error_key and status in {"retryable", "failed"}:
+            return self._t(error_key).format(agent=agent, attempts=attempts)
+        status_key = {
+            "claimed": "chat.delivery.running",
+            "retryable": "chat.delivery.retrying",
+            "completed": "chat.delivery.completed",
+            "failed": "chat.delivery.failed",
+        }.get(status, "chat.delivery.unknown")
+        return self._t(status_key).format(agent=agent, attempts=attempts)
+
+    @staticmethod
+    def _dispatch_status_color(row: Mapping[str, Any]) -> str:
+        status = str(row.get("dispatch_status") or "").strip().lower()
+        return {
+            "completed": COLORS["green"],
+            "failed": COLORS["red"],
+            "retryable": COLORS["amber"],
+            "claimed": COLORS["cyan"],
+        }.get(status, COLORS["muted"])
+
     def _add_bubble(self, row: dict[str, Any]) -> None:
+        if ACTIVE_THEME == "modern":
+            self._add_modern_bubble(row)
+            return
         sender = row.get("sender") or "unknown"
         own = sender == "human-operator"
         bubble_color = COLORS["panel_2"] if own else "#2b261a"
@@ -8815,6 +14259,18 @@ class PixelMonitor:
             fg=COLORS["purple"],
             font=("Cascadia Mono", 8, "bold"),
         ).pack(fill="x", padx=10, pady=(8, 4))
+        delivery_text = self._dispatch_status_text(row)
+        if delivery_text:
+            tk.Label(
+                bubble,
+                text=delivery_text,
+                justify="left",
+                anchor="w",
+                wraplength=wraplength,
+                bg=bubble_color,
+                fg=self._dispatch_status_color(row),
+                font=("Cascadia Mono", 9, "bold"),
+            ).pack(fill="x", padx=10, pady=(2, 4))
         tk.Label(
             bubble,
             text=row.get("body") or "",
@@ -8831,7 +14287,7 @@ class PixelMonitor:
         tk.Label(footer, text=f"SHA {sha[:16] or '--'}", bg=bubble_color, fg=COLORS["muted"], font=("Cascadia Mono", 8)).pack(side="left")
         tk.Button(
             footer,
-            text="COPY SHA",
+            text=self._t("chat.copy_sha"),
             command=lambda value=sha: self.copy_text(value),
             bg=COLORS["line"],
             fg=COLORS["text"],
@@ -8842,11 +14298,161 @@ class PixelMonitor:
             font=("Cascadia Mono", 7, "bold"),
         ).pack(side="right")
 
-    @staticmethod
-    def _bubble_metadata(row: dict[str, Any]) -> str:
+    def _add_modern_bubble(self, row: dict[str, Any]) -> None:
+        sender = str(row.get("sender") or "unknown")
+        own = sender == "human-operator"
+        sender_name, initials, agent_tint, avatar_color = (
+            self._modern_agent_presentation(sender)
+        )
+        bubble_color = MODERN_USER_BUBBLE_BG if own else MODERN_CARD_BG
+        line = tk.Frame(self.chat_inner, bg=MODERN_WORKSPACE_BG)
+        line.pack(fill="x", padx=48, pady=4)
+        wraplength, opposite_padding = chat_bubble_metrics(
+            self.chat_canvas.winfo_width()
+        )
+        content = tk.Frame(line, bg=MODERN_WORKSPACE_BG)
+        content.pack(
+            side="right" if own else "left",
+            fill="x",
+            expand=True,
+            padx=(opposite_padding, 0) if own else (0, opposite_padding),
+        )
+        if not own:
+            tk.Label(
+                content,
+                text=initials[:2],
+                bg=avatar_color,
+                fg="#ffffff",
+                width=3,
+                height=1,
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            ).pack(side="left", anchor="n", padx=(0, 9), pady=(2, 0), ipady=4)
+        bubble = tk.Frame(
+            content,
+            bg=bubble_color,
+            bd=0,
+            highlightthickness=1 if own else 0,
+            highlightbackground=COLORS["line"],
+        )
+        bubble.pack(
+            side="right" if own else "left",
+            fill="x",
+            expand=True,
+        )
+        header = tk.Frame(bubble, bg=bubble_color)
+        header.pack(fill="x", padx=13, pady=(7, 1))
+        tk.Label(
+            header,
+            text=self._t("modern.message.you") if own else sender_name,
+            bg=bubble_color,
+            fg=COLORS["text"],
+            font=(MODERN_FONT_FAMILY, 10, "bold"),
+        ).pack(side="left")
+        timestamp = utc_text(row.get("time"))
+        if " " in timestamp:
+            timestamp = timestamp.rsplit(" ", 1)[-1][:5]
+        tk.Label(
+            header,
+            text=timestamp,
+            bg=bubble_color,
+            fg=COLORS["muted"],
+            font=(MODERN_FONT_FAMILY, 8),
+        ).pack(side="left", padx=(8, 0))
+        tk.Label(
+            bubble,
+            text=row.get("body") or "",
+            justify="left",
+            anchor="w",
+            wraplength=wraplength,
+            bg=bubble_color,
+            fg=COLORS["text"],
+            font=(MODERN_FONT_FAMILY, 10),
+        ).pack(fill="x", padx=13, pady=(3, 6))
+
+        details = tk.Frame(bubble, bg=bubble_color)
+        tk.Label(
+            details,
+            text=self._bubble_metadata(row),
+            justify="left",
+            anchor="w",
+            wraplength=wraplength,
+            bg=bubble_color,
+            fg=COLORS["muted"],
+            font=(MODERN_FONT_FAMILY, 8),
+        ).pack(fill="x")
+        delivery_text = self._dispatch_status_text(row)
+        if delivery_text:
+            tk.Label(
+                details,
+                text=delivery_text,
+                justify="left",
+                anchor="w",
+                wraplength=wraplength,
+                bg=bubble_color,
+                fg=self._dispatch_status_color(row),
+                font=(MODERN_FONT_FAMILY, 8, "bold"),
+            ).pack(fill="x", pady=(3, 0))
+        sha = str(row.get("sha") or "")
+        tk.Label(
+            details,
+            text=f"SHA {sha[:16] or '--'}",
+            bg=bubble_color,
+            fg=COLORS["muted"],
+            anchor="w",
+            font=(MODERN_FONT_FAMILY, 8),
+        ).pack(fill="x", pady=(3, 0))
+
+        actions = tk.Frame(bubble, bg=bubble_color)
+        actions.pack(fill="x", padx=11, pady=(0, 6))
+        details_visible = tk.BooleanVar(value=False)
+
+        def toggle_details() -> None:
+            details_visible.set(not details_visible.get())
+            if details_visible.get():
+                details.pack(fill="x", padx=14, pady=(0, 8), before=actions)
+            else:
+                details.pack_forget()
+            details_button.configure(
+                text=self._t(
+                    "modern.message.hide_details"
+                    if details_visible.get()
+                    else "modern.message.details"
+                )
+            )
+
+        details_button = tk.Button(
+            actions,
+            text=self._t("modern.message.details"),
+            command=toggle_details,
+            bg=bubble_color,
+            fg=COLORS["muted"],
+            activebackground=bubble_color,
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            padx=2,
+            font=(MODERN_FONT_FAMILY, 8),
+        )
+        details_button.pack(side="left")
+        tk.Button(
+            actions,
+            text=self._t("chat.copy_sha"),
+            command=lambda value=sha: self.copy_text(value),
+            bg=bubble_color,
+            fg=COLORS["muted"],
+            activebackground=bubble_color,
+            activeforeground=COLORS["text"],
+            relief="flat",
+            bd=0,
+            padx=2,
+            font=(MODERN_FONT_FAMILY, 8),
+        ).pack(side="right")
+
+    def _bubble_metadata(self, row: dict[str, Any]) -> str:
         text = (
             f"[{row.get('status')}]  {row.get('subject') or row.get('kind')}\n"
-            f"SCOPE: {row.get('scope') or '--'}  // TASK: {row.get('task') or '--'}"
+            f"{self._t('chat.metadata.scope')}: {row.get('scope') or '--'}"
+            f"  // {self._t('chat.metadata.task')}: {row.get('task') or '--'}"
         )
         if row.get("route_status") and row.get("route_status") != "not_requested":
             requested = "/".join(
@@ -9013,6 +14619,11 @@ class PixelMonitor:
     def _render_memories(self, query: str) -> None:
         assert self.snapshot is not None
         rows = []
+        superseded_by = {
+            str(item.get("supersedes_memory_id")): str(item.get("memory_id"))
+            for item in self.snapshot.memories
+            if item.get("supersedes_memory_id")
+        }
         for row in self.snapshot.memories:
             if row.get("scope") != self.scope or not self._match(row, query):
                 continue
@@ -9020,21 +14631,30 @@ class PixelMonitor:
             record["artifact_bindings"] = safe_json(
                 record.pop("artifact_bindings_json", "[]"), []
             )
+            applicability = safe_json(record.pop("applicability_json", "[]"), [])
+            if not isinstance(applicability, list):
+                applicability = []
+            record["applicability"] = applicability
+            record["superseded_by_memory_id"] = superseded_by.get(
+                str(row.get("memory_id"))
+            )
+            supersession = row.get("supersedes_memory_id") or record.get(
+                "superseded_by_memory_id"
+            )
             rows.append(
                 (
                     row["memory_id"],
                     (
+                        str(row.get("record_type") or "FACT").upper(),
                         str(row.get("visibility") or "--").upper(),
-                        row.get("room_id") or "PROJECT",
-                        row.get("owner_agent_id") or "--",
+                        row.get("authority_id")
+                        or row.get("owner_agent_id")
+                        or "--",
+                        ", ".join(str(value) for value in applicability) or "--",
                         str(row.get("status") or "--").upper(),
                         clip(row.get("title"), 90),
+                        clip(supersession, 80) if supersession else "--",
                         utc_text(row.get("created_utc")),
-                        (
-                            row.get("revocation_sha256")
-                            or row.get("memory_sha256")
-                            or ""
-                        )[:12],
                     ),
                     record,
                 )
@@ -9043,7 +14663,20 @@ class PixelMonitor:
 
     def _render_usage(self, query: str) -> None:
         assert self.snapshot is not None
-        totals = self.snapshot.usage_totals
+        period_key = self.usage_period.get()
+        period = self.snapshot.usage_periods.get(period_key)
+        if not isinstance(period, Mapping):
+            period_key = "all"
+            period = {
+                "totals": self.snapshot.usage_totals,
+                "by_provider": self.snapshot.usage_by_provider,
+                "by_model": self.snapshot.usage_by_model,
+                "model_totals": self.snapshot.usage_model_totals,
+                "trend": self.snapshot.usage_daily,
+                "granularity": "day",
+                "trend_truncated": False,
+            }
+        totals = period.get("totals") or {}
         statuses = totals.get("dispatch_statuses") or {}
         provider_calls = int(totals.get("provider_calls") or 0)
         reported_calls = int(totals.get("total_tokens_reported_calls") or 0)
@@ -9069,12 +14702,12 @@ class PixelMonitor:
 
         model_rows = tuple(
             row
-            for row in self.snapshot.usage_by_model
+            for row in period.get("by_model") or ()
             if self._match(row, query)
         )
         provider_rows = tuple(
             row
-            for row in self.snapshot.usage_by_provider
+            for row in period.get("by_provider") or ()
             if self._match(row, query)
         )
         self._render_usage_provider_chart(provider_rows)
@@ -9096,10 +14729,15 @@ class PixelMonitor:
                     self._usage_number_with_coverage(row, "total_tokens"),
                 ),
             )
-        self._usage_daily_rows = self.snapshot.usage_daily
+        self._usage_daily_rows = tuple(period.get("trend") or ())
+        self._usage_trend_limit = {
+            "hour": 24,
+            "day": 30,
+            "month": 240,
+        }.get(str(period.get("granularity") or "day"), 30)
         self._usage_model_rows = tuple(
             row
-            for row in self.snapshot.usage_model_totals
+            for row in period.get("model_totals") or ()
             if self._match(row, query)
         )
         unavailable = int(totals.get("unavailable_dispatches") or 0)
@@ -9107,12 +14745,18 @@ class PixelMonitor:
         derived = int(totals.get("derived_total_dispatches") or 0)
         self.usage_note_label.configure(
             text=(
-                f"{self._t('usage.note')}  // "
+                f"{self._t('usage.note_period').format(period=self._t(f'usage.period.{period_key}'))}  // "
                 f"{self._t('usage.unavailable')} {unavailable:,}  // "
                 f"{self._t('usage.partial')} {partial:,}  // "
                 f"{self._t('usage.derived_total')} {derived:,}"
+                + (
+                    f"  // {self._t('usage.trend_truncated')}"
+                    if period.get("trend_truncated")
+                    else ""
+                )
             )
         )
+        self._sync_usage_section_titles()
         self._draw_usage_charts()
 
     def copy_text(self, value: str) -> None:
@@ -9127,6 +14771,10 @@ class PixelMonitor:
         finally:
             self._closing = True
             self._ui_generation += 1
+            self.verification_engine.close()
+            self.room_discussion_tracker.close()
+            self.workflow_runner.close()
+            self.cockpit.close()
             self.reader.close()
 
     def close(self) -> None:
@@ -9158,6 +14806,18 @@ class PixelMonitor:
             with contextlib.suppress(tk.TclError):
                 self._announcement_window.destroy()
             self._announcement_window = None
+        cockpit = getattr(self, "cockpit", None)
+        workflow_runner = getattr(self, "workflow_runner", None)
+        room_discussion_tracker = getattr(self, "room_discussion_tracker", None)
+        verification_engine = getattr(self, "verification_engine", None)
+        if verification_engine is not None:
+            verification_engine.close()
+        if workflow_runner is not None:
+            workflow_runner.close()
+        if room_discussion_tracker is not None:
+            room_discussion_tracker.close()
+        if cockpit is not None:
+            cockpit.close()
         self.reader.close()
         with contextlib.suppress(tk.TclError):
             self.root.destroy()
@@ -9165,19 +14825,121 @@ class PixelMonitor:
         self._windows_icon_handles = ()
 
     def ui_self_test(self) -> dict[str, Any]:
-        # A withdrawn Tk window reports synthetic 1px geometry, so perform the
-        # physical layout gate transparently at the supported minimum size.
+        # Exercise real mapped geometry without presenting or activating a
+        # desktop window. The constructor withdrew the root before any layout
+        # update; an alpha-zero off-screen override window keeps map-dependent
+        # checks meaningful without taskbar or foreground flashes.
+        self.root.withdraw()
         with contextlib.suppress(tk.TclError):
             self.root.attributes("-alpha", 0.0)
-        self.root.geometry("980x650")
+            self.root.attributes("-topmost", False)
+            self.root.overrideredirect(True)
+            if sys.platform == "win32":
+                self.root.attributes("-toolwindow", True)
+        self.root.geometry("980x650-32000-32000")
         self.root.deiconify()
         self.root.update()
         checks: dict[str, bool] = {}
+        actual_tk_scaling = float(self.root.tk.call("tk", "scaling"))
+        configured_scale = self.ui_scale_factor
+        expected_tk_scaling = (
+            tk_scaling_for_windows_factor(configured_scale)
+            if configured_scale is not None
+            else None
+        )
+        checks["minimum_window_geometry"] = (
+            self.root.winfo_width() == 980 and self.root.winfo_height() == 650
+        )
+        checks["configured_ui_scale"] = (
+            expected_tk_scaling is None
+            or abs(actual_tk_scaling - expected_tk_scaling) <= 0.02
+        )
         titles = {page_key: self._t(f"page.{page_key}") for page_key in self.pages}
+        modern_more_was_visible = self.modern_more_nav_visible
+        if self.theme.get() == "modern" and not modern_more_was_visible:
+            self._toggle_modern_more_nav()
+            self.root.update_idletasks()
+        sidebar_visibility: list[bool] = []
         for key, button in self.nav_buttons.items():
+            sidebar_visibility.append(self._reveal_sidebar_widget(button))
             button.invoke()
             self.root.update_idletasks()
-            checks[key] = self.active_page == key and self.page_title.cget("text") == titles[key]
+            expected_title = titles[key]
+            if self.theme.get() == "modern" and key == "chat":
+                room_id = str(getattr(self, "selected_room_id", "") or "")
+                room = getattr(self, "_rooms", {}).get(room_id, {})
+                expected_title = clip(
+                    str(
+                        room.get("name")
+                        or room_id
+                        or self._t("modern.rooms.unnamed")
+                    ),
+                    52,
+                )
+            checks[key] = (
+                self.active_page == key
+                and self.page_title.cget("text") == expected_title
+            )
+        sidebar_view = self.sidebar_canvas.yview()
+        sidebar_overflows = (
+            self.sidebar_content.winfo_reqheight() > self.sidebar_canvas.winfo_height()
+        )
+        checks["sidebar_navigation_visible"] = (
+            all(sidebar_visibility)
+            and self.sidebar_scrollbar.winfo_ismapped()
+            and bool(self.sidebar_scrollbar.cget("command"))
+            and (
+                self.theme.get() == "modern"
+                or (
+                    self.sidebar_scroll_hint.winfo_ismapped()
+                    and bool(self.sidebar_scroll_hint.cget("text"))
+                )
+            )
+            and (not sidebar_overflows or sidebar_view[1] - sidebar_view[0] < 1.0)
+        )
+        if self.theme.get() == "modern" and not modern_more_was_visible:
+            self._toggle_modern_more_nav()
+            self.root.update_idletasks()
+        checks["sidebar_readability"] = (
+            SIDEBAR_WIDTH >= 300
+            and self.sidebar_scrollbar.winfo_class() == "TScrollbar"
+            and self.agent_scrollbar.winfo_class() == "TScrollbar"
+            and self.sidebar_scrollbar.cget("style") == SIDEBAR_SCROLLBAR_STYLE
+            and not self.agent_scrollbar.cget("style")
+            and ttk.Style(self.root).lookup(
+                SIDEBAR_SCROLLBAR_STYLE, "background", ("active",)
+            )
+            == COLORS["line"]
+            and ttk.Style(self.root).lookup(
+                SIDEBAR_SCROLLBAR_STYLE, "troughcolor"
+            )
+            == COLORS["panel"]
+            and SIDEBAR_TEXT_SIZE >= 9
+            and TUTORIAL_BODY_TEXT_SIZE >= 11
+        )
+        checks["text_editing_shortcuts"] = all(
+            bool(self.root.bind_class(widget_class, sequence))
+            for widget_class in ("Entry", "TEntry", "Text", "TCombobox")
+            for sequence in (
+                "<Control-a>",
+                "<Control-c>",
+                "<Control-v>",
+                "<Control-x>",
+                "<Button-3>",
+            )
+        ) and all(
+            self._t(key)
+            for key in ("edit.cut", "edit.copy", "edit.paste", "edit.select_all")
+        )
+        self.sidebar_canvas.yview_moveto(0.0)
+        cockpit_checks = self.cockpit.self_test()
+        checks["cockpit_controls"] = all(cockpit_checks.values())
+        checks["cockpit_launch_horizontal_bounds"] = bool(
+            cockpit_checks.get("launch_horizontal_bounds")
+        )
+        checks["trust_workflows"] = all(
+            self.trust_workflows.self_test().values()
+        )
         recipient = self.message_recipient.get()
         recipient_values = tuple(self.recipient_combo.cget("values"))
         provider_values = tuple(self.profile_combo.cget("values"))
@@ -9241,22 +15003,46 @@ class PixelMonitor:
             tuple(self.locale_combo.cget("values")) == tuple(LOCALE_LABELS.values())
             and self.locale_label.get() in LOCALE_LABELS.values()
             and self.language_label.cget("text") == self._t("toolbar.language")
+            and tuple(self.theme_combo.cget("values"))
+            == tuple(
+                THEME_LABELS[self.locale.get()][key] for key in SUPPORTED_THEMES
+            )
+            and self.theme_choice.get()
+            == THEME_LABELS[self.locale.get()][self.theme.get()]
+            and self.theme_title_label.cget("text") == self._t("toolbar.theme")
             and bool(self.refresh_status.get())
             and self.help_button.cget("state") == "normal"
+            and bool(self.library_route_notice.cget("text"))
+            and all(
+                self._t(f"tutorial.panel.{page_key}.purpose")
+                and self._t(f"tutorial.panel.{page_key}.body")
+                for page_key in TUTORIAL_PAGE_KEYS
+            )
         )
         checks["update_check"] = (
             self.update_button.cget("state") == "normal"
             and bool(self.update_button.cget("command"))
         )
         self._update_feedback_wraplengths()
+        modern_options_were_visible = self.modern_toolbar_options_visible
+        if self.theme.get() == "modern" and not modern_options_were_visible:
+            self._toggle_modern_toolbar_options()
+            self.root.update_idletasks()
         checks["announcements"] = (
             "announcement" in self.pages
-            and "announcement" not in self.nav_buttons
+            and "announcement" in self.nav_buttons
             and bool(self.announcement_button.cget("command"))
             and bool(self.announcement_sync_button.cget("command"))
-            and self.announcement_button.grid_info().get("column") == 3
-            and self.update_button.grid_info().get("column") == 4
+            and self.announcement_button.winfo_ismapped()
+            and self.update_button.winfo_ismapped()
+            and (
+                self.theme.get() != "modern"
+                or self.modern_toolbar_options_button.winfo_ismapped()
+            )
         )
+        if self.theme.get() == "modern" and not modern_options_were_visible:
+            self._toggle_modern_toolbar_options()
+            self.root.update_idletasks()
         checks["feedback_layout"] = all(
             int(widget.cget("wraplength")) >= minimum
             for widget, minimum in (
@@ -9274,33 +15060,136 @@ class PixelMonitor:
         self.root.update_idletasks()
         self.chat_page_canvas.yview_moveto(1.0)
         self.root.update_idletasks()
+        root_right = self.root.winfo_rootx() + self.root.winfo_width()
         checks["composer_visible"] = (
             self.send_button.winfo_y() + self.send_button.winfo_height()
             <= self.chat_composer.winfo_height()
-            and self.send_button.winfo_width() >= 80
+            and self.send_button.winfo_x() + self.send_button.winfo_width()
+            <= self.chat_composer.winfo_width()
+            and self.send_button.winfo_width()
+            >= (40 if self.theme.get() == "modern" else 80)
             and self.message_status_label.winfo_y()
             + self.message_status_label.winfo_height()
             <= self.chat_composer.winfo_height()
-            and self.chat_page_scrollbar.winfo_ismapped()
-            and self.chat_page_content.winfo_height()
-            > self.chat_page_canvas.winfo_height()
+            and self.message_status_label.winfo_x()
+            + self.message_status_label.winfo_width()
+            <= self.chat_composer.winfo_width()
+            and self.chat_composer.winfo_reqheight()
+            <= self.chat_composer.winfo_height()
+            and (
+                (
+                    self.theme.get() == "modern"
+                    and not self.chat_page_scrollbar.winfo_ismapped()
+                    and abs(
+                        self.chat_page_content.winfo_height()
+                        - self.chat_page_canvas.winfo_height()
+                    )
+                    <= 2
+                )
+                or (
+                    self.theme.get() != "modern"
+                    and self.chat_page_scrollbar.winfo_ismapped()
+                    and self.chat_page_content.winfo_height()
+                    > self.chat_page_canvas.winfo_height()
+                )
+            )
             and self.send_button.winfo_rooty() + self.send_button.winfo_height()
             <= self.root.winfo_rooty() + self.root.winfo_height()
+            and self.send_button.winfo_rootx() + self.send_button.winfo_width()
+            <= root_right
         )
         checks["chat_history_height"] = (
             self.chat_canvas.winfo_height() >= CHAT_HISTORY_MIN_HEIGHT
-            and self.chat_page_content.winfo_height() >= CHAT_PAGE_MIN_CONTENT_HEIGHT
+            and (
+                self.theme.get() == "modern"
+                or self.chat_page_content.winfo_height()
+                >= CHAT_PAGE_MIN_CONTENT_HEIGHT
+            )
         )
+        if self.theme.get() == "modern":
+            workspace = self.modern_chat_workspace
+            inspector = self.modern_chat_inspector
+            inspector_present = self._modern_inspector_present()
+            inspector_switches: list[bool] = []
+            for inspector_key in MODERN_INSPECTOR_KEYS:
+                self._show_modern_inspector(inspector_key)
+                self.root.update_idletasks()
+                inspector_switches.append(
+                    self.modern_inspector_active == inspector_key
+                    and (
+                        self.modern_inspector_frames[inspector_key].winfo_ismapped()
+                        if inspector_present
+                        else self.modern_inspector_frames[inspector_key].winfo_exists()
+                    )
+                )
+            self._show_modern_inspector("agents")
+            checks["modern_workspace_contract"] = (
+                modern_navigation_is_complete()
+                and tuple(self.modern_nav_group_labels) == tuple(
+                    group_key for group_key, _page_keys in MODERN_NAV_GROUPS
+                )
+                and set(self.nav_buttons) == set(modern_navigation_pages())
+                and workspace is not None
+                and inspector is not None
+                and len(workspace.panes()) == (2 if inspector_present else 1)
+                and tuple(self.modern_inspector_buttons) == MODERN_INSPECTOR_KEYS
+                and tuple(self.modern_inspector_frames) == MODERN_INSPECTOR_KEYS
+                and all(inspector_switches)
+                and set(self.modern_evidence_buttons)
+                == {"work", "review", "audit", "trust", "memory", "usage"}
+            )
+        else:
+            checks["modern_workspace_contract"] = (
+                self.modern_chat_workspace is None
+                and self.modern_chat_inspector is None
+                and not self.modern_inspector_buttons
+                and not self.modern_inspector_frames
+                and not self.modern_evidence_buttons
+            )
+        result = {
+            "status": "PASS" if all(checks.values()) else "FAIL",
+            "ui_identity": {
+                "locale": self.locale.get(),
+                "theme": self.theme.get(),
+            },
+            "ui_geometry": {
+                "client_width": self.root.winfo_width(),
+                "client_height": self.root.winfo_height(),
+                "configured_scale_factor": configured_scale,
+                "tk_scaling": actual_tk_scaling,
+                "expected_tk_scaling": expected_tk_scaling,
+            },
+            "cockpit": cockpit_checks,
+            "navigation": checks,
+        }
         self.close()
-        return {"status": "PASS" if all(checks.values()) else "FAIL", "navigation": checks}
+        return result
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pixel monitor and explicit human MCP message console.")
+    parser = argparse.ArgumentParser(
+        description="PeerBridge Control Room and explicit human MCP message console."
+    )
     parser.add_argument("--project-root", type=Path, default=Path.cwd())
     parser.add_argument("--db", type=Path)
     parser.add_argument("--scope", default="default")
     parser.add_argument("--refresh-ms", type=int, default=1500)
+    parser.add_argument(
+        "--ui-scale-factor",
+        type=float,
+        choices=WINDOWS_UI_SCALE_FACTORS,
+        help="Set the Windows display scale used by the UI self-test.",
+    )
+    parser.add_argument(
+        "--theme",
+        choices=SUPPORTED_THEMES,
+        help="Override the saved appearance for this launch.",
+    )
+    parser.add_argument(
+        "--locale",
+        choices=SUPPORTED_LOCALES,
+        help="Override the saved language for this launch.",
+    )
     parser.add_argument("--snapshot", action="store_true", help="Print a small read-only JSON snapshot and exit.")
     parser.add_argument("--self-test", action="store_true", help="Verify schema and read-only enforcement, then exit.")
     parser.add_argument("--ui-self-test", action="store_true", help="Exercise every navigation button and exit.")
@@ -9308,12 +15197,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def resolved_runtime_theme(project_root: Path, requested_theme: str | None) -> str:
+    """Resolve the normal-launch UI without changing the self-test contract."""
+    if requested_theme in SUPPORTED_THEMES:
+        return requested_theme
+    try:
+        saved = str(load_preferences(project_root)["theme"])
+    except LocalizationError:
+        saved = str(default_preferences()["theme"])
+    return saved if saved in SUPPORTED_THEMES else "pixel"
+
+
 def main(argv: list[str] | None = None) -> int:
     configure_windows_app_identity()
     args = parse_args(argv)
     project_root = args.project_root.resolve()
     db = args.db.resolve() if args.db else project_root / ".peerbridge" / "peerbridge.sqlite3"
-    reader = BridgeReader(db)
+    reader = BridgeReader(db, project_root)
     if args.self_test:
         result = reader.self_test(scope=args.scope)
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -9331,7 +15231,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.ui_self_test:
-        monitor = PixelMonitor(project_root, db, args.scope, args.refresh_ms)
+        monitor = PixelMonitor(
+            project_root,
+            db,
+            args.scope,
+            args.refresh_ms,
+            ui_scale_factor=args.ui_scale_factor,
+            theme=args.theme,
+            locale=args.locale,
+            hidden_self_test=True,
+        )
         result = monitor.ui_self_test()
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0 if result["status"] == "PASS" else 1
@@ -9342,7 +15251,28 @@ def main(argv: list[str] | None = None) -> int:
     if not acquire_single_instance():
         return 0
     try:
-        PixelMonitor(project_root, db, args.scope, args.refresh_ms).run()
+        runtime_theme = resolved_runtime_theme(project_root, args.theme)
+        if runtime_theme == "modern":
+            from .local_workbench import main as run_local_workbench
+
+            return run_local_workbench(
+                [
+                    "--project-root",
+                    str(project_root),
+                    "--db",
+                    str(db),
+                    "--scope",
+                    args.scope,
+                ]
+            )
+        PixelMonitor(
+            project_root,
+            db,
+            args.scope,
+            args.refresh_ms,
+            theme=runtime_theme,
+            locale=args.locale,
+        ).run()
         return 0
     except Exception as exc:
         try:

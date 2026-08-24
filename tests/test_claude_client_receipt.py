@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from peerbridge_mcp.agent_identity import ensure_agent_identity_capability
 from peerbridge_mcp.bridge import Bridge
 from peerbridge_mcp.claude_client_receipt import (
     RECEIPT_SCHEMA,
@@ -43,7 +44,7 @@ def _state(paths: list[Path]) -> dict[Path, tuple[int, int, str]]:
     }
 
 
-def _server(root: Path, db: Path) -> dict:
+def _server(root: Path, db: Path, capability_path: Path) -> dict:
     return {
         "type": "stdio",
         "command": sys.executable,
@@ -59,6 +60,8 @@ def _server(root: Path, db: Path) -> dict:
             AGENT,
             "--scope",
             SCOPE,
+            "--identity-capability",
+            str(capability_path),
             "--client-name",
             "claude-code-native",
             "--provider-id",
@@ -116,8 +119,24 @@ def _evidence(root: Path) -> tuple[Path, Path, Path, Path, Path]:
     )
     tool_result = response["result"]["structuredContent"]
 
+    capability = ensure_agent_identity_capability(
+        root,
+        db,
+        SCOPE,
+        AGENT,
+        route_binding={
+            "client_name": "claude-code-native",
+            "provider_id": "anthropic-official:claude-code",
+            "model_id": "sonnet",
+            "reasoning_mode": "default",
+            "route_class": "official",
+        },
+    )
     config = root / "claude-native-mcp.json"
-    config.write_text(json.dumps({"mcpServers": {SERVER: _server(root, db)}}), encoding="utf-8")
+    config.write_text(
+        json.dumps({"mcpServers": {SERVER: _server(root, db, capability.path)}}),
+        encoding="utf-8",
+    )
     observed_model = "claude-sonnet-5"
     tool_id = "toolu_test_native_claude"
     rows = [

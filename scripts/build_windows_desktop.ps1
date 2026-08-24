@@ -75,6 +75,31 @@ $versionText = $versionText.Replace('@PRODUCT_VERSION@', $packageVersion)
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText($versionFile, $versionText, $utf8NoBom)
 
+$packageData = [ordered]@{
+    'src\peerbridge_mcp\acpx_runtime_bridge.mjs' = 'peerbridge_mcp'
+    'src\peerbridge_mcp\release_support\announcements.json' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\release_support\peerbridge-icon.ico' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\release_support\peerbridge-icon.png' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\release_support\peerbridge-logo-source-owner-20260816.png' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\release_support\peerbridge-support-public.pub' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\release_support\support.json' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\release_support\verify_proof_bundle.py' = 'peerbridge_mcp/release_support'
+    'src\peerbridge_mcp\workbench\app.css' = 'peerbridge_mcp/workbench'
+    'src\peerbridge_mcp\workbench\app.js' = 'peerbridge_mcp/workbench'
+    'src\peerbridge_mcp\workbench\index.html' = 'peerbridge_mcp/workbench'
+}
+$dataArguments = @()
+foreach ($relative in $packageData.Keys) {
+    $source = Join-Path $projectRoot $relative
+    $item = Get-Item -LiteralPath $source -Force
+    if (-not $item.PSIsContainer -and -not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        $dataArguments += '--add-data'
+        $dataArguments += ($item.FullName + ';' + $packageData[$relative])
+        continue
+    }
+    throw "Windows package data must be a regular non-reparse file: $source"
+}
+
 & $PythonPath $pyInstallerRunner `
     --noconfirm `
     --windowed `
@@ -83,12 +108,14 @@ $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     --version-file $versionFile `
     --paths (Join-Path $projectRoot 'src') `
     --additional-hooks-dir $hookRoot `
-    --collect-data peerbridge_mcp `
+    @dataArguments `
+    --hidden-import webview `
     --hidden-import cryptography.hazmat.primitives.hashes `
     --hidden-import cryptography.hazmat.primitives.serialization `
     --hidden-import cryptography.hazmat.primitives.asymmetric.padding `
     --hidden-import cryptography.hazmat.primitives.asymmetric.rsa `
     --hidden-import cryptography.hazmat.primitives.ciphers.aead `
+    --exclude-module cffi._shimmed_dist_utils `
     --distpath $ArtifactRoot `
     --workpath $WorkRoot `
     --specpath $SpecRoot `

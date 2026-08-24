@@ -3,6 +3,21 @@
 Install PeerBridge into a dedicated virtual environment first. Use its absolute Python
 path in client configuration so GUI applications do not depend on shell activation.
 
+After `peerbridge init`, open **Workbench > Connect**, authorize the stable Agent ID and
+profile once, then copy the ten-minute decision ID into the issuance command:
+
+```powershell
+$decision = "<permission-decision-id>"
+peerbridge identity --project-root C:\work\my-project --scope my-project issue `
+  --agent-id codex-main --profile collaborator --permission-decision-id $decision
+```
+
+Copy only the returned `identity_capability` path into that Agent's MCP configuration.
+The command never prints the capability's secret contents. Each decision is single-use.
+Repeat the Control Room authorization with a different `--agent-id` for Claude, Kimi,
+Grok, or another client. Reserved operator identities and revocation remain available
+only to the authenticated local Control Room.
+
 ## Codex
 
 Codex supports local stdio MCP servers in the desktop app, CLI, and IDE extension. These
@@ -17,6 +32,7 @@ codex mcp add peerbridge -- C:\tools\peerbridge-mcp\.venv\Scripts\python.exe `
   -m peerbridge_mcp serve `
   --project-root C:\work\my-project `
   --agent-id codex-main `
+  --identity-capability C:\work\my-project\.peerbridge\identity-capabilities\<issued-file>.json `
   --scope my-project
 codex mcp list
 ```
@@ -28,6 +44,7 @@ codex mcp add peerbridge -- /opt/peerbridge-mcp/.venv/bin/python \
   -m peerbridge_mcp serve \
   --project-root /work/my-project \
   --agent-id codex-main \
+  --identity-capability /work/my-project/.peerbridge/identity-capabilities/<issued-file>.json \
   --scope my-project
 codex mcp list
 ```
@@ -41,6 +58,7 @@ args = [
   "-m", "peerbridge_mcp", "serve",
   "--project-root", "C:\\work\\my-project",
   "--agent-id", "codex-main",
+  "--identity-capability", "C:\\work\\my-project\\.peerbridge\\identity-capabilities\\<issued-file>.json",
   "--scope", "my-project",
 ]
 enabled = true
@@ -63,6 +81,7 @@ claude mcp add --scope project --transport stdio peerbridge -- `
   -m peerbridge_mcp serve `
   --project-root C:\work\my-project `
   --agent-id claude-code `
+  --identity-capability C:\work\my-project\.peerbridge\identity-capabilities\<issued-file>.json `
   --scope my-project
 claude mcp list
 claude mcp get peerbridge
@@ -82,6 +101,7 @@ Project-scoped servers require workspace trust and explicit approval in Claude C
         "-m", "peerbridge_mcp", "serve",
         "--project-root", "${CLAUDE_PROJECT_DIR:-.}",
         "--agent-id", "claude-code",
+        "--identity-capability", "${CLAUDE_PROJECT_DIR:-.}\\.peerbridge\\identity-capabilities\\<issued-file>.json",
         "--scope", "my-project"
       ]
     }
@@ -99,6 +119,7 @@ kimi mcp add --transport stdio peerbridge -- `
   -m peerbridge_mcp serve `
   --project-root C:\work\my-project `
   --agent-id kimi-code `
+  --identity-capability C:\work\my-project\.peerbridge\identity-capabilities\<issued-file>.json `
   --scope my-project
 kimi mcp list
 ```
@@ -116,6 +137,7 @@ stdio MCP server can use the same command shape:
 C:\tools\peerbridge-mcp\.venv\Scripts\python.exe -m peerbridge_mcp serve \
   --project-root C:\work\my-project \
   --agent-id <one-stable-unique-agent-id> \
+  --identity-capability <absolute-issued-capability-path> \
   --scope <one-shared-project-scope> \
   --client-name <actual-client-name> \
   --provider-id <non-secret-provider-identity> \
@@ -136,6 +158,7 @@ An official web tab alone is not an MCP client. See
 
 - All entries must use the same `--project-root`, database, and `--scope`.
 - Each client must use a different stable `--agent-id`.
+- Each client must use the capability issued for that exact project, scope, and Agent ID.
 - Record non-secret `--client-name`, `--provider-id`, and `--model-id` labels whenever a
   client can switch provider/model routes.
 - Do not point unrelated projects at the same database.

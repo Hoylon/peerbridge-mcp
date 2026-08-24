@@ -10,6 +10,11 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from .agent_identity import (
+    AgentIdentityError,
+    verify_agent_identity_launch_args,
+    verify_redacted_agent_identity_launch_args,
+)
 from .bridge import stable_sha256, utc_now
 from .secret_scan import contains_secret
 from .provider_receipt import (
@@ -20,6 +25,7 @@ from .provider_receipt import (
     _hashable_file_path,
     _provider_version,
     _readonly_connection,
+    _route_from_args,
     _safe_command_args,
     _verify_chain_prefix,
     _verify_argument_file_evidence,
@@ -249,7 +255,15 @@ def _transcript_evidence(
     }
 
 
-def _sanitized_mcp_config(value: Any, *, server_name: str) -> dict[str, Any]:
+def _sanitized_mcp_config(
+    value: Any,
+    *,
+    server_name: str,
+    db_path: Path,
+    scope: str,
+    agent_id: str,
+    runtime_identity: dict[str, Any],
+) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("name") != server_name:
         raise ReceiptError("MCP config does not identify the expected server")
     transport = value.get("transport") or {}
@@ -257,6 +271,22 @@ def _sanitized_mcp_config(value: Any, *, server_name: str) -> dict[str, Any]:
         raise ReceiptError("client receipt currently requires a stdio MCP transport")
     if transport.get("env") or transport.get("env_vars"):
         raise ReceiptError("MCP config contains environment data and cannot be receipted")
+    args = transport.get("args") or []
+    if not isinstance(args, list) or not all(isinstance(item, str) for item in args):
+        raise ReceiptError("MCP config stdio arguments are invalid")
+    try:
+        sanitized_args, identity_capability = verify_agent_identity_launch_args(
+            args,
+            db_path=db_path,
+            scope=scope,
+            claimed_agent_id=agent_id,
+        )
+    except AgentIdentityError as exc:
+        raise ReceiptError("MCP config Agent identity binding is invalid") from exc
+    route = _route_from_args(args)
+    expected_route = {"agent_id": agent_id, "scope": scope, **runtime_identity}
+    if route != expected_route:
+        raise ReceiptError("MCP config route differs from the expected runtime identity")
     snapshot = {
         "name": value.get("name"),
         "enabled": value.get("enabled"),
@@ -264,9 +294,11 @@ def _sanitized_mcp_config(value: Any, *, server_name: str) -> dict[str, Any]:
         "transport": {
             "type": transport.get("type"),
             "command": transport.get("command"),
-            "args": transport.get("args") or [],
+            "args": sanitized_args,
             "cwd": transport.get("cwd"),
         },
+        "route": route,
+        "identity_capability": identity_capability,
         "enabled_tools": value.get("enabled_tools"),
         "disabled_tools": value.get("disabled_tools"),
         "startup_timeout_sec": value.get("startup_timeout_sec"),
@@ -279,7 +311,14 @@ def _sanitized_mcp_config(value: Any, *, server_name: str) -> dict[str, Any]:
 
 
 def _live_mcp_config(
-    client_binary: Path, config_args: tuple[str, ...], *, server_name: str
+    client_binary: Path,
+    config_args: tuple[str, ...],
+    *,
+    server_name: str,
+    db_path: Path,
+    scope: str,
+    agent_id: str,
+    runtime_identity: dict[str, Any],
 ) -> dict[str, Any]:
     completed = subprocess.run(
         [str(client_binary), *config_args],
@@ -294,7 +333,14 @@ def _live_mcp_config(
         value = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise ReceiptError("MCP config command did not return JSON") from exc
-    return _sanitized_mcp_config(value, server_name=server_name)
+    return _sanitized_mcp_config(
+        value,
+        server_name=server_name,
+        db_path=db_path,
+        scope=scope,
+        agent_id=agent_id,
+        runtime_identity=runtime_identity,
+    )
 
 
 def _matching_pair(
@@ -389,7 +435,15 @@ def capture_receipt(
             result_sha256=transcript["tool_result_sha256"],
         )
         chain_rows = _verify_chain_prefix(connection, scope, int(returned["sequence"]))
-    config = _live_mcp_config(client_binary, config_args, server_name=server_name)
+    config = _live_mcp_config(
+        client_binary,
+        config_args,
+        server_name=server_name,
+        db_path=db_path,
+        scope=scope,
+        agent_id=agent_id,
+        runtime_identity=runtime_identity,
+    )
     lifecycle = (
         _lifecycle_snapshot(lifecycle_path, transcript_path=transcript_path)
         if lifecycle_path is not None
@@ -491,6 +545,30 @@ def verify_receipt(receipt_path: Path) -> dict[str, Any]:
                 errors.append("sanitized_mcp_config")
             elif transport.get("type") != "stdio":
                 errors.append("sanitized_mcp_config")
+            else:
+                transport_args = transport.get("args")
+                if not isinstance(transport_args, list) or not all(
+                    isinstance(value, str) for value in transport_args
+                ):
+                    errors.append("sanitized_mcp_config")
+                else:
+                    try:
+                        verify_redacted_agent_identity_launch_args(
+                            transport_args,
+                            config.get("identity_capability"),
+                            db_path=Path(bridge["database_path"]),
+                            scope=bridge["scope"],
+                            claimed_agent_id=bridge["agent_id"],
+                        )
+                    except (KeyError, AgentIdentityError) as exc:
+                        errors.append(f"agent_identity:{exc}")
+                expected_route = {
+                    "agent_id": bridge.get("agent_id"),
+                    "scope": bridge.get("scope"),
+                    **(bridge.get("runtime_identity") or {}),
+                }
+                if config.get("route") != expected_route:
+                    errors.append("sanitized_mcp_config_route")
         if isinstance(config, dict) and stable_sha256(config) != client.get(
             "sanitized_mcp_config_sha256"
         ):

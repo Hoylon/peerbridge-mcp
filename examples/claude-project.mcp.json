@@ -11,6 +11,8 @@
         "${CLAUDE_PROJECT_DIR:-.}",
         "--agent-id",
         "claude-code",
+        "--identity-capability",
+        "${CLAUDE_PROJECT_DIR:-.}\\.peerbridge\\identity-capabilities\\<issued-file>.json",
         "--scope",
         "my-project"
       ]

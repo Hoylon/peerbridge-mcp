@@ -6,7 +6,15 @@ import re
 import sys
 from pathlib import Path
 
-from peerbridge_mcp.openai_compatible_runner import RunnerConfig, run_chat_completion
+from peerbridge_mcp.agent_identity import ensure_agent_identity_capability
+from peerbridge_mcp.bridge import Bridge
+from peerbridge_mcp.openai_compatible_runner import (
+    CLIENT_NAME,
+    RunnerConfig,
+    _runtime_model_id,
+    run_chat_completion,
+)
+from peerbridge_mcp.secret_scan import redact_secrets
 
 
 SAFE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,199}")
@@ -46,10 +54,29 @@ def main(argv: list[str] | None = None) -> int:
         root = Path(args.project_root).resolve()
         run_id = _safe(args.run_id, "run ID")
         receipt_name = _safe(args.receipt_name, "receipt name")
+        scope = _safe(args.scope, "scope")
+        agent_id = _safe(args.agent_id, "agent ID")
+        db_path = (root / args.db).resolve()
+        Bridge(root, db_path, agent_id, scope, session_id=run_id)
+        identity_capability = ensure_agent_identity_capability(
+            root,
+            db_path,
+            scope,
+            agent_id,
+            allowed_tools=("bridge_status",),
+            route_binding={
+                "client_name": CLIENT_NAME,
+                "provider_id": _safe(args.provider_id, "provider ID"),
+                "model_id": _runtime_model_id(args.model),
+                "reasoning_mode": args.reasoning_mode,
+                "route_class": args.route_class,
+            },
+            bound_room_id=_safe(args.room_id, "room ID"),
+        )
         config = RunnerConfig(
             project_root=root,
-            db_path=(root / args.db).resolve(),
-            scope=_safe(args.scope, "scope"),
+            db_path=db_path,
+            scope=scope,
             connection_id=_safe(args.connection_id, "connection ID"),
             route_class=args.route_class,
             provider_id=_safe(args.provider_id, "provider ID"),
@@ -58,7 +85,8 @@ def main(argv: list[str] | None = None) -> int:
             reasoning_mode=args.reasoning_mode,
             room_id=_safe(args.room_id, "room ID"),
             session_id=run_id,
-            agent_id=_safe(args.agent_id, "agent ID"),
+            agent_id=agent_id,
+            identity_capability_path=identity_capability.path,
             timeout_seconds=args.timeout_seconds,
             max_http_attempts=3,
             retry_backoff_seconds=0.5,
@@ -110,9 +138,16 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(summary, ensure_ascii=True, sort_keys=True))
         return 0
     except Exception as exc:
+        safe_error = redact_secrets(str(exc)).strip()
+        if len(safe_error) > 300:
+            safe_error = safe_error[:297] + "..."
         print(
             json.dumps(
-                {"status": "FAIL", "error_type": type(exc).__name__},
+                {
+                    "status": "FAIL",
+                    "error_type": type(exc).__name__,
+                    "error": safe_error,
+                },
                 ensure_ascii=True,
                 sort_keys=True,
             ),

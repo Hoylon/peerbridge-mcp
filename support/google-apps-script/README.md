@@ -14,7 +14,9 @@ the matching validated ZIP for the configured expiry period.
   and one canonical base64 ZIP. It re-decodes the ZIP, enforces the 8 MiB application limit,
   checks the ZIP signature, and recomputes SHA-256 before sending.
 - Duplicate case IDs are idempotent; the same ID with different bytes is rejected.
-- At most 20 new cases are accepted per UTC day, subject to the Google account's mail quota.
+- At most 20 new cases are accepted per UTC day. Anonymous feedback stops before the final
+  20 recipients of remaining Google mail quota, reserving that capacity for protected
+  operational notifications.
 - Mail handoff is fail-closed. A `sendEmail` exception or interrupted post-send receipt write
   leaves an operator-visible uncertain record and never causes an automatic resend. At most
   20 unresolved deliveries can exist, and each case is limited to three delivery attempts.
@@ -82,7 +84,7 @@ uncertain or failed, the case remains blocked against duplicate delivery. After 
 that no delivery occurred, submit a new case rather than deleting or editing Script
 Properties. The daily counter is charged once for the original case, not again for its
 operator-authorized retries, while Google's remaining mail quota is checked before every
-attempt.
+attempt. Retries do not consume the protected quota reserve either.
 
 Apps Script is appropriate for low-volume Alpha mail delivery and avoids buying a sending
 domain. Cloudflare remains the public validation, rate-limit, private R2 retention,

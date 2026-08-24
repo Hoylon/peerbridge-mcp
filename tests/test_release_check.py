@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import csv
 import importlib.util
 import hashlib
 import io
@@ -35,6 +37,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sample-pkg"
 version = "1.2.3"
+requires-python = ">=3.11"
+dependencies = []
 
 [project.scripts]
 sample = "sample_pkg.cli:main"
@@ -322,14 +326,17 @@ def write_artifacts(
     distribution = release_check._normalized_distribution(info.name)
     wheel = output / f"{distribution}-{version}-py3-none-any.whl"
     dist_info = f"{distribution}-{version}.dist-info"
+    wheel_payloads: dict[str, bytes] = {}
 
     def write_wheel_member(
         archive: zipfile.ZipFile, name: str, payload: bytes | str
     ) -> None:
+        encoded = payload.encode("utf-8") if isinstance(payload, str) else payload
         member = zipfile.ZipInfo(name, date_time=(1980, 1, 1, 0, 0, 0))
         member.compress_type = zipfile.ZIP_STORED
         member.external_attr = 0o100644 << 16
-        archive.writestr(member, payload)
+        archive.writestr(member, encoded)
+        wheel_payloads[name] = encoded
 
     with zipfile.ZipFile(wheel, "w") as archive:
         for module in wheel_module_names:
@@ -346,7 +353,10 @@ def write_artifacts(
         write_wheel_member(
             archive,
             f"{dist_info}/METADATA",
-            f"Metadata-Version: 2.4\nName: {info.name}\nVersion: {version}\n",
+            (
+                f"Metadata-Version: 2.4\nName: {info.name}\nVersion: {version}\n"
+                f"Requires-Python: {info.requires_python}\n"
+            ),
         )
         write_wheel_member(
             archive, f"{dist_info}/entry_points.txt", entry_points(scripts)
@@ -367,6 +377,26 @@ def write_artifacts(
                 f"{dist_info}/licenses/{legal_name}",
                 (root / legal_name).read_bytes(),
             )
+        write_wheel_member(
+            archive,
+            f"{dist_info}/WHEEL",
+            "Wheel-Version: 1.0\nGenerator: test\nRoot-Is-Purelib: true\nTag: py3-none-any\n",
+        )
+        write_wheel_member(
+            archive,
+            f"{dist_info}/top_level.txt",
+            f"{release_check._normalized_distribution(info.name)}\n",
+        )
+        record_name = f"{dist_info}/RECORD"
+        record_stream = io.StringIO()
+        writer = csv.writer(record_stream, lineterminator="\n")
+        for name, payload in sorted(wheel_payloads.items()):
+            digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(
+                b"="
+            ).decode("ascii")
+            writer.writerow((name, f"sha256={digest}", str(len(payload))))
+        writer.writerow((record_name, "", ""))
+        write_wheel_member(archive, record_name, record_stream.getvalue())
 
     sdist = output / f"{distribution}-{version}.tar.gz"
     archive_root = f"{distribution}-{version}"
@@ -374,7 +404,10 @@ def write_artifacts(
     with tarfile.open(sdist, "w:gz") as archive:
         for name in root_names:
             if name == "PKG-INFO":
-                text = f"Metadata-Version: 2.4\nName: {info.name}\nVersion: {version}\n"
+                text = (
+                    f"Metadata-Version: 2.4\nName: {info.name}\nVersion: {version}\n"
+                    f"Requires-Python: {info.requires_python}\n"
+                )
             elif name == "pyproject.toml":
                 if version == info.version:
                     add_tar_bytes(archive, f"{archive_root}/{name}", (root / name).read_bytes())
@@ -491,6 +524,23 @@ def test_dev_check_reports_secret_location_without_echoing_secret(tmp_path: Path
     assert all(secret not in error for error in result.errors)
 
 
+def test_dev_check_allows_only_fixed_public_sandbox_home(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    source = root / "sandbox.txt"
+    home_prefix = "/" + "home" + "/"
+    source.write_text(home_prefix + "peerbridge/.local/bin/acpx\n", encoding="utf-8")
+
+    allowed = release_check.run_dev_checks(root)
+
+    assert not any("private path" in error for error in allowed.errors)
+    source.write_text(home_prefix + "operator/private\n", encoding="utf-8")
+    private = release_check.run_dev_checks(root)
+    assert "private path or project marker in sandbox.txt" in private.errors
+    source.write_text(home_prefix + "peerbridge-private/data\n", encoding="utf-8")
+    lookalike = release_check.run_dev_checks(root)
+    assert "private path or project marker in sandbox.txt" in lookalike.errors
+
+
 def test_javascript_scan_distinguishes_bindings_fixtures_and_literal_secrets(
     tmp_path: Path,
 ) -> None:
@@ -549,6 +599,44 @@ def test_matching_wheel_and_sdist_pass_strict_artifact_validation(tmp_path: Path
     artifacts = write_artifacts(root, tmp_path / "artifacts")
 
     assert release_check.validate_artifacts(root, info, artifacts) == ()
+
+
+def test_metadata_gate_rejects_python_extra_and_dependency_drift(tmp_path: Path) -> None:
+    root = make_project(tmp_path)
+    info = release_check.load_project_info(root)
+    metadata = (
+        "Metadata-Version: 2.4\n"
+        "Name: sample-pkg\n"
+        "Version: 1.2.3\n"
+        "Requires-Python: >=3.12\n"
+        "Provides-Extra: injected\n"
+        'Requires-Dist: attacker-package; extra == "injected"\n'
+    )
+
+    errors = release_check._metadata_errors(metadata, info, "wheel metadata")
+
+    assert "wheel metadata Requires-Python differs from pyproject.toml" in errors
+    assert "wheel metadata optional extras differ from pyproject.toml" in errors
+    assert "wheel metadata dependencies differ from pyproject.toml" in errors
+
+
+def test_wheel_record_gate_rejects_member_hash_drift() -> None:
+    dist_info = "sample_pkg-1.2.3.dist-info"
+    wheel = b"Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+    record_name = f"{dist_info}/RECORD"
+    payloads = {
+        "sample_pkg/__init__.py": b"VALUE = 1\n",
+        f"{dist_info}/WHEEL": wheel,
+        record_name: (
+            "sample_pkg/__init__.py,sha256=invalid,10\n"
+            f"{dist_info}/WHEEL,sha256=invalid,{len(wheel)}\n"
+            f"{record_name},,\n"
+        ).encode("utf-8"),
+    }
+
+    errors = release_check._wheel_control_errors(payloads, dist_info)
+
+    assert any("RECORD binding differs" in error for error in errors)
 
 
 def test_declared_package_data_is_required_and_allowed_in_artifacts(

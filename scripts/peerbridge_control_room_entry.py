@@ -3,26 +3,19 @@ from __future__ import annotations
 import argparse
 import ctypes
 import hashlib
+import http.client
 import json
 import os
 import secrets
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from peerbridge_mcp import __version__
-from peerbridge_mcp.announcements import AnnouncementConfig, fetch_announcements
-from peerbridge_mcp.cli import main as cli_main
-from peerbridge_mcp.feedback import run_feedback_encryption_self_test
-from peerbridge_mcp.mailbox_supervisor import MailboxSupervisor
-from peerbridge_mcp.monitor import (
-    INSTANCE_MUTEX,
-    WINDOW_TITLE,
-    WINDOW_TITLE_LIVE,
-    main as monitor_main,
-)
 
 
 STARTUP_TIMEOUT_SECONDS = 15.0
@@ -132,6 +125,8 @@ def _safe_exception_chain(exc: BaseException) -> list[dict[str, str]]:
 
 
 def _run_feedback_encryption_self_test() -> int:
+    from peerbridge_mcp.feedback import run_feedback_encryption_self_test
+
     receipt_value = os.environ.get("PEERBRIDGE_SELF_TEST_RECEIPT_PATH", "").strip()
     receipt_path = Path(receipt_value).resolve() if receipt_value else None
     receipt: dict[str, Any] = {
@@ -157,6 +152,8 @@ def _run_feedback_encryption_self_test() -> int:
 
 
 def _run_announcement_self_test() -> int:
+    from peerbridge_mcp.announcements import AnnouncementConfig, fetch_announcements
+
     receipt_value = os.environ.get("PEERBRIDGE_SELF_TEST_RECEIPT_PATH", "").strip()
     receipt_path = Path(receipt_value).resolve() if receipt_value else None
     receipt: dict[str, Any] = {
@@ -203,6 +200,105 @@ def _run_announcement_self_test() -> int:
     return 0
 
 
+def _run_modern_workbench_self_test() -> int:
+    """Verify packaged WebView2 and loopback assets without opening a window."""
+
+    from peerbridge_mcp.bridge import Bridge
+    from peerbridge_mcp.local_workbench import (
+        _configure_native_webview,
+        _load_native_webview,
+        make_server,
+    )
+
+    receipt_value = os.environ.get("PEERBRIDGE_SELF_TEST_RECEIPT_PATH", "").strip()
+    receipt_path = Path(receipt_value).resolve() if receipt_value else None
+    receipt: dict[str, Any] = {
+        "schema": SELF_TEST_RECEIPT_SCHEMA,
+        "test": "modern-workbench",
+        "runtime_kind": _runtime_kind(),
+        "runtime_sha256": _runtime_sha256(),
+        "version": __version__,
+    }
+    server = None
+    thread = None
+    try:
+        webview = _load_native_webview()
+        if webview is None:
+            raise RuntimeError("packaged pywebview runtime is missing")
+        webview_runtime = _configure_native_webview(webview)
+        if webview_runtime is None:
+            raise RuntimeError("packaged WebView2 runtime could not be resolved")
+        webview_executable = webview_runtime / "msedgewebview2.exe"
+        with tempfile.TemporaryDirectory(prefix="peerbridge-workbench-self-test-") as temp:
+            root = Path(temp).resolve()
+            db_path = root / ".peerbridge" / "peerbridge.sqlite3"
+            Bridge(root, db_path, "human-operator", "self-test")
+            server = make_server(
+                root,
+                db_path,
+                "self-test",
+                token=secrets.token_urlsafe(32),
+                instance_id="packaged-self-test",
+            )
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", int(server.server_address[1]), timeout=10
+            )
+            try:
+                connection.request("GET", "/")
+                response = connection.getresponse()
+                body = response.read()
+            finally:
+                connection.close()
+            if response.status != 200 or b"PeerBridge Workbench" not in body:
+                raise RuntimeError("packaged workbench asset response is invalid")
+            for marker in (
+                b'data-view="cockpit"',
+                b'data-view="chat"',
+                b'data-view="work"',
+                b'data-view="review"',
+                b'data-view="change"',
+                b'data-view="audit"',
+                b'data-view="trust"',
+                b'data-view="connect"',
+                b'data-view="memory"',
+                b'data-view="feedback"',
+                b'data-view="usage"',
+                b'data-view="announcement"',
+            ):
+                if marker not in body:
+                    raise RuntimeError("packaged workbench navigation is incomplete")
+            receipt.update(
+                {
+                    "status": "PASS",
+                    "result": {
+                        "webview_module": "pywebview",
+                        "webview2_runtime_sha256": _runtime_sha256(webview_executable),
+                        "index_bytes": len(body),
+                        "index_sha256": hashlib.sha256(body).hexdigest(),
+                        "navigation_panel_count": 12,
+                        "loopback_only": True,
+                        "window_opened": False,
+                    },
+                }
+            )
+    except Exception as exc:
+        receipt.update({"status": "FAIL", "error_chain": _safe_exception_chain(exc)})
+        if receipt_path is not None:
+            _write_json_create_only(receipt_path, receipt)
+        return 1
+    finally:
+        if server is not None:
+            server.shutdown()
+            server.server_close()
+        if thread is not None:
+            thread.join(timeout=5)
+    if receipt_path is not None:
+        _write_json_create_only(receipt_path, receipt)
+    return 0
+
+
 def _process_alive(pid: int) -> bool:
     if pid <= 0:
         return False
@@ -235,10 +331,74 @@ def _process_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
-def _activate_existing_control_room(wait_seconds: float = 1.5) -> bool:
-    """Bring the existing Windows control room forward before taking its lock."""
+def _window_process_identity(hwnd: int) -> dict[str, Any]:
+    """Resolve the process image that actually owns one Control Room window."""
+
     if sys.platform != "win32":
-        return False
+        raise OSError("window process identity is only available on Windows")
+    from ctypes import wintypes
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetWindowThreadProcessId.argtypes = (
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    process_id = wintypes.DWORD()
+    if not user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id)):
+        raise OSError(ctypes.get_last_error(), "unable to resolve Control Room PID")
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.QueryFullProcessImageNameW.argtypes = (
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    handle = kernel32.OpenProcess(0x1000, False, process_id.value)
+    if not handle:
+        raise OSError(ctypes.get_last_error(), "unable to inspect Control Room process")
+    try:
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = wintypes.DWORD(len(buffer))
+        if not kernel32.QueryFullProcessImageNameW(
+            handle,
+            0,
+            buffer,
+            ctypes.byref(length),
+        ):
+            raise OSError(
+                ctypes.get_last_error(),
+                "unable to resolve Control Room process image",
+            )
+    finally:
+        kernel32.CloseHandle(handle)
+    runtime_path = Path(buffer.value[: length.value]).resolve()
+    return {
+        "existing_pid": int(process_id.value),
+        "runtime_kind": (
+            "frozen"
+            if runtime_path.name.casefold() == "peerbridgecontrolroom.exe"
+            else "source"
+        ),
+        "runtime_path": str(runtime_path),
+        "runtime_sha256": _runtime_sha256(runtime_path),
+    }
+
+
+def _activate_existing_control_room(
+    wait_seconds: float = 1.5,
+) -> dict[str, Any] | None:
+    """Bring the existing Windows control room forward and attest its process."""
+    if sys.platform != "win32":
+        return None
+
+    from peerbridge_mcp.monitor import INSTANCE_MUTEX, WINDOW_TITLE, WINDOW_TITLE_LIVE
 
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenMutexW.argtypes = (ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p)
@@ -247,7 +407,7 @@ def _activate_existing_control_room(wait_seconds: float = 1.5) -> bool:
     kernel32.CloseHandle.restype = ctypes.c_bool
     mutex = kernel32.OpenMutexW(SYNCHRONIZE, False, INSTANCE_MUTEX)
     if not mutex:
-        return False
+        return None
     kernel32.CloseHandle(mutex)
 
     user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -263,11 +423,15 @@ def _activate_existing_control_room(wait_seconds: float = 1.5) -> bool:
         for title in titles:
             hwnd = user32.FindWindowW(None, title)
             if hwnd:
+                identity = _window_process_identity(int(hwnd))
                 user32.ShowWindow(hwnd, 9)  # SW_RESTORE
                 user32.SetForegroundWindow(hwnd)
-                return True
+                return identity
         if time.monotonic() >= deadline:
-            return False
+            raise RuntimeError(
+                "an existing Control Room holds the singleton lock, but its window "
+                "and running build identity could not be verified"
+            )
         time.sleep(0.05)
 
 
@@ -383,6 +547,8 @@ def _start_managed_supervisor(
 
 
 def _managed_supervisor(args: list[str]) -> int:
+    from peerbridge_mcp.mailbox_supervisor import MailboxSupervisor
+
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--db", type=Path, required=True)
@@ -463,17 +629,27 @@ def _launcher_payload(supervisor_payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _existing_instance_payload() -> dict[str, Any]:
+def _existing_instance_payload(identity: dict[str, Any]) -> dict[str, Any]:
+    requested_path = _runtime_path()
+    requested_sha256 = _runtime_sha256(requested_path)
+    running_sha256 = str(identity["runtime_sha256"])
+    same_runtime = running_sha256 == requested_sha256
     return {
         "schema": "peerbridge-launch-health-v1",
         "status": "existing-instance",
         "health": "existing-control-room-activated",
         "launcher_pid": os.getpid(),
         "supervisor_pid": 0,
-        "runtime_kind": _runtime_kind(),
-        "runtime_path": str(_runtime_path()),
-        "runtime_sha256": _runtime_sha256(),
-        "version": __version__,
+        "existing_pid": int(identity["existing_pid"]),
+        "runtime_kind": str(identity["runtime_kind"]),
+        "runtime_path": str(identity["runtime_path"]),
+        "runtime_sha256": running_sha256,
+        "version": __version__ if same_runtime else None,
+        "requested_runtime_kind": _runtime_kind(),
+        "requested_runtime_path": str(requested_path),
+        "requested_runtime_sha256": requested_sha256,
+        "requested_version": __version__,
+        "same_runtime": same_runtime,
     }
 
 
@@ -484,13 +660,36 @@ def _run_managed_launcher(
     *,
     launcher_ready_path: Path | None = None,
     contract_path: Path | None = None,
+    legacy_pixel: bool = False,
 ) -> int:
+    from peerbridge_mcp.cli import main as cli_main
+    from peerbridge_mcp.local_workbench import make_server, run_native_workbench
+    from peerbridge_mcp.monitor import acquire_single_instance, main as monitor_main
+
     project_root = project_root.resolve()
     db_path = db_path.resolve()
-    if _activate_existing_control_room():
-        payload = _existing_instance_payload()
+    existing_identity = _activate_existing_control_room()
+    if existing_identity is not None:
+        payload = _existing_instance_payload(existing_identity)
         if launcher_ready_path is not None:
             _write_json_create_only(launcher_ready_path.resolve(), payload)
+        if not payload["same_runtime"]:
+            raise RuntimeError(
+                "a different PeerBridge build is still running; close that Control Room "
+                "before starting this build"
+            )
+        return 0
+    if contract_path is None and not legacy_pixel and not acquire_single_instance():
+        raced_identity = _activate_existing_control_room()
+        if raced_identity is None:
+            raise RuntimeError("another Control Room acquired the singleton during startup")
+        payload = _existing_instance_payload(raced_identity)
+        if launcher_ready_path is not None:
+            _write_json_create_only(launcher_ready_path.resolve(), payload)
+        if not payload["same_runtime"]:
+            raise RuntimeError(
+                "a different PeerBridge build acquired the Control Room during startup"
+            )
         return 0
     project_root.mkdir(parents=True, exist_ok=True)
     init_result = cli_main(["init", "--project-root", str(project_root), "--scope", scope])
@@ -509,18 +708,26 @@ def _run_managed_launcher(
             _write_json_create_only(contract_path / "launcher-ready.json", payload)
             _wait_for_contract_shutdown(contract_path)
             return 0
-        return monitor_main(
-            [
-                "--project-root",
-                str(project_root),
-                "--db",
-                str(db_path),
-                "--scope",
-                scope,
-                "--refresh-ms",
-                "1500",
-            ]
+        if legacy_pixel:
+            return monitor_main(
+                [
+                    "--project-root",
+                    str(project_root),
+                    "--db",
+                    str(db_path),
+                    "--scope",
+                    scope,
+                    "--refresh-ms",
+                    "1500",
+                ]
+            )
+        workbench = make_server(
+            project_root,
+            db_path,
+            scope,
+            initial_room_id="lobby",
         )
+        return run_native_workbench(workbench)
     finally:
         _terminate_owned_process(supervisor)
 
@@ -531,12 +738,14 @@ def _source_launch(args: list[str]) -> int:
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--scope", required=True)
     parser.add_argument("--launcher-ready-path", type=Path, required=True)
+    parser.add_argument("--legacy-pixel", action="store_true")
     parsed = parser.parse_args(args)
     return _run_managed_launcher(
         parsed.project_root,
         parsed.db,
         parsed.scope,
         launcher_ready_path=parsed.launcher_ready_path,
+        legacy_pixel=parsed.legacy_pixel,
     )
 
 
@@ -546,8 +755,14 @@ def _workspace_launch(args: list[str]) -> int:
     parser.add_argument("--project-root", type=Path, required=True)
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--scope", required=True)
+    parser.add_argument("--legacy-pixel", action="store_true")
     parsed = parser.parse_args(args)
-    return _run_managed_launcher(parsed.project_root, parsed.db, parsed.scope)
+    return _run_managed_launcher(
+        parsed.project_root,
+        parsed.db,
+        parsed.scope,
+        legacy_pixel=parsed.legacy_pixel,
+    )
 
 
 def _show_startup_error(message: str) -> None:
@@ -562,6 +777,8 @@ def dispatch(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
     if args[:2] == ["-m", "peerbridge_mcp"]:
+        from peerbridge_mcp.cli import main as cli_main
+
         return cli_main(args[2:])
 
     if args == ["--feedback-encryption-self-test"]:
@@ -569,6 +786,9 @@ def dispatch(argv: list[str] | None = None) -> int:
 
     if args == ["--announcement-self-test"]:
         return _run_announcement_self_test()
+
+    if args == ["--modern-workbench-self-test"]:
+        return _run_modern_workbench_self_test()
 
     if args[:1] == ["--managed-supervisor"]:
         try:
@@ -591,6 +811,11 @@ def dispatch(argv: list[str] | None = None) -> int:
             _show_startup_error(str(exc))
             return 1
 
+    if args[:1] == ["--legacy-pixel"]:
+        from peerbridge_mcp.monitor import main as monitor_main
+
+        return monitor_main(args[1:])
+
     if not args and getattr(sys, "frozen", False):
         project_root = _portable_workspace()
         contract_value = os.environ.get("PEERBRIDGE_STARTUP_CONTRACT_PATH")
@@ -605,6 +830,8 @@ def dispatch(argv: list[str] | None = None) -> int:
         except Exception as exc:
             _show_startup_error(str(exc))
             return 1
+
+    from peerbridge_mcp.monitor import main as monitor_main
 
     return monitor_main(args)
 

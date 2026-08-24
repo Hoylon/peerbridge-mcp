@@ -3,14 +3,40 @@
 from __future__ import annotations
 
 import json
+import math
 import re
+import secrets
 import sqlite3
 import sys
 import threading
+import time
+from collections import deque
+from pathlib import Path
 from typing import AbstractSet, Any, Callable
 
 from . import __version__
+from . import authorized_sessions as authorized_sessions_module
+from .agent_identity import (
+    AgentIdentityCapability,
+    AgentIdentityError,
+    verify_agent_identity_capability,
+    verify_agent_identity_route_binding,
+)
+from .authorized_sessions import AuthorizedSessionError, AuthorizedSessionRegistry
 from .bridge import Bridge, BridgeError, stable_sha256
+from .execution_governance import (
+    ExecutionGovernance,
+    GovernanceError,
+)
+from .operation_queue import DurableOperationQueue, OperationQueueError
+from .proof_bundle import (
+    PROOF_OUTPUT_ROOT,
+    ProofBundleError,
+    create_proof_bundle,
+    verify_proof_bundle,
+)
+from .release_gate import ReleaseGateError, ReleaseGateService
+from .secret_scan import contains_secret
 from .protocol import (
     LEGACY_PROTOCOLS,
     PROTOCOL_VERSION,
@@ -19,9 +45,22 @@ from .protocol import (
     direct_response,
     error_response,
 )
+from .trust_timeline import TrustTimeline, TrustTimelineError
 
 
 SERVER_NAME = "peerbridge-mcp"
+MAX_STDIO_REQUEST_BYTES = 1024 * 1024
+MAX_STDIO_RESPONSE_BYTES = 4 * 1024 * 1024
+MAX_STDIO_CALLS_PER_MINUTE = 600
+MAX_STDIO_CALLS_PER_SESSION = 10_000
+GENERIC_TRUST_STAGES = (
+    "claim",
+    "execution",
+    "test",
+    "proof",
+    "review",
+    "decision",
+)
 
 
 def _object(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
@@ -35,19 +74,24 @@ def _object(properties: dict[str, Any], required: list[str] | None = None) -> di
     return schema
 
 
-STRING = {"type": "string"}
+STRING = {"type": "string", "maxLength": MAX_STDIO_REQUEST_BYTES}
 IDEMPOTENCY_KEY = {
     "type": "string",
     "pattern": "^[A-Za-z0-9_.:-]{1,200}$",
 }
-STRING_ARRAY = {"type": "array", "items": STRING}
+STRING_ARRAY = {"type": "array", "items": STRING, "maxItems": 100}
+NUMBER = {"type": "number"}
 SHA256_OR_NULL = {
     "anyOf": [
         {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         {"type": "null"},
     ]
 }
-HASH_MAP = {"type": "object", "additionalProperties": SHA256_OR_NULL}
+HASH_MAP = {
+    "type": "object",
+    "additionalProperties": SHA256_OR_NULL,
+    "maxProperties": 100,
+}
 NULLABLE_NONNEGATIVE_INTEGER = {
     "anyOf": [
         {"type": "integer", "minimum": 0},
@@ -293,8 +337,48 @@ TOOL_SCHEMAS = [
         "name": "join_room",
         "description": "Add an agent session seat to a room; the global agent remains reusable.",
         "inputSchema": _object(
-            {"room_id": STRING, "agent_id": STRING, "route_profile_id": STRING},
+            {
+                "room_id": STRING,
+                "agent_id": STRING,
+                "route_profile_id": STRING,
+                "role_id": {
+                    "type": "string",
+                    "enum": [
+                        "equal-participant",
+                        "researcher",
+                        "implementer",
+                        "reviewer",
+                        "custom",
+                    ],
+                },
+                "role_label": STRING,
+            },
             ["room_id"],
+        ),
+    },
+    {
+        "name": "set_room_member_role",
+        "description": (
+            "Assign a division-of-work label to one exact room membership without "
+            "changing Agent authority, permissions or room session identity."
+        ),
+        "inputSchema": _object(
+            {
+                "room_id": STRING,
+                "agent_id": STRING,
+                "role_id": {
+                    "type": "string",
+                    "enum": [
+                        "equal-participant",
+                        "researcher",
+                        "implementer",
+                        "reviewer",
+                        "custom",
+                    ],
+                },
+                "role_label": STRING,
+            },
+            ["room_id", "agent_id", "role_id"],
         ),
     },
     {
@@ -325,12 +409,25 @@ TOOL_SCHEMAS = [
                     "type": "string",
                     "enum": ["private", "room", "project"],
                 },
+                "record_type": {
+                    "type": "string",
+                    "enum": [
+                        "FACT",
+                        "DECISION",
+                        "CONSTRAINT",
+                        "PREFERENCE",
+                        "DEPRECATED",
+                    ],
+                },
+                "authority_id": STRING,
                 "room_id": STRING,
                 "title": STRING,
                 "body": STRING,
                 "source_message_id": STRING,
                 "artifact_paths": STRING_ARRAY,
                 "parent_memory_id": STRING,
+                "supersedes_memory_id": STRING,
+                "applicability": STRING_ARRAY,
             },
             ["visibility", "title", "body"],
         ),
@@ -385,6 +482,11 @@ TOOL_SCHEMAS = [
                 "provider_id": STRING,
                 "model_id": STRING,
                 "response_model_id": STRING,
+                "inference_timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 300,
+                },
                 "reasoning_mode": STRING,
                 "route_class": {
                     "type": "string",
@@ -756,6 +858,536 @@ TOOL_SCHEMAS = [
     },
 ]
 
+ALPHA52_TOOL_SCHEMAS = [
+    {
+        "name": "connect_observable_session",
+        "description": (
+            "Bind one external desktop or terminal conversation to its calling MCP "
+            "session. This authorizes only explicitly published observable events; it "
+            "does not expose private history, hidden reasoning, or PeerBridge input control."
+        ),
+        "inputSchema": _object(
+            {
+                "source_type": {
+                    "type": "string",
+                    "enum": ["authorized-desktop", "authorized-terminal"],
+                },
+                "source_session_id": STRING,
+                "source_conversation_id": STRING,
+                "adapter_id": STRING,
+                "display_name": STRING,
+                "client_name": STRING,
+                "client_version": STRING,
+                "room_id": STRING,
+                "requested_route": STRING,
+                "observed_route": STRING,
+                "observed_route_source": STRING,
+                "model_id": STRING,
+                "model_source": STRING,
+                "supports_events": {"type": "boolean"},
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "detected",
+                        "running",
+                        "waiting",
+                        "completed",
+                        "stopped",
+                        "failed",
+                    ],
+                },
+            },
+            [
+                "source_type",
+                "source_session_id",
+                "source_conversation_id",
+                "adapter_id",
+                "display_name",
+                "client_name",
+                "supports_events",
+            ],
+        ),
+    },
+    {
+        "name": "publish_observable_session_event",
+        "description": (
+            "Publish one bounded, redacted terminal output, tool event, explicit progress "
+            "summary, or final answer from the calling session's authorized adapter."
+        ),
+        "inputSchema": _object(
+            {
+                "source_type": {
+                    "type": "string",
+                    "enum": ["authorized-desktop", "authorized-terminal"],
+                },
+                "source_session_id": STRING,
+                "event_id": STRING,
+                "stream": {
+                    "type": "string",
+                    "enum": ["system", "stdout", "stderr"],
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["system", "terminal", "activity", "answer", "error"],
+                },
+                "text": STRING,
+                "summary": STRING,
+                "state": {
+                    "type": "string",
+                    "enum": [
+                        "detected",
+                        "running",
+                        "waiting",
+                        "completed",
+                        "stopped",
+                        "failed",
+                    ],
+                },
+            },
+            [
+                "source_type",
+                "source_session_id",
+                "event_id",
+                "stream",
+                "kind",
+                "text",
+            ],
+        ),
+    },
+    {
+        "name": "close_observable_session",
+        "description": (
+            "Mark the calling adapter's exact external session terminal without closing "
+            "or controlling the original desktop or terminal window."
+        ),
+        "inputSchema": _object(
+            {
+                "source_type": {
+                    "type": "string",
+                    "enum": ["authorized-desktop", "authorized-terminal"],
+                },
+                "source_session_id": STRING,
+                "state": {
+                    "type": "string",
+                    "enum": ["completed", "stopped", "failed"],
+                },
+            },
+            ["source_type", "source_session_id", "state"],
+        ),
+    },
+    {
+        "name": "list_own_observable_sessions",
+        "description": (
+            "List only external observable sessions owned by the calling Agent identity; "
+            "other Agents' sessions remain Control Room-only."
+        ),
+        "inputSchema": _object(
+            {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 64},
+                "after_sequences": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 0,
+                    },
+                },
+            }
+        ),
+    },
+    {
+        "name": "brief_task",
+        "description": (
+            "Create a SHA-bound task briefing from only visible, applicable, approved "
+            "memory records, excluding superseded and deprecated records."
+        ),
+        "inputSchema": _object(
+            {
+                "task_id": STRING,
+                "room_id": STRING,
+                "applicability": STRING_ARRAY,
+            },
+            ["task_id"],
+        ),
+    },
+    {
+        "name": "record_decision_conflict",
+        "description": (
+            "Record a source-bound decision conflict as a review finding only; it never "
+            "silently blocks or approves a change."
+        ),
+        "inputSchema": _object(
+            {
+                "task_id": STRING,
+                "briefing_id": STRING,
+                "memory_ids": STRING_ARRAY,
+                "summary": STRING,
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
+                },
+            },
+            ["task_id", "briefing_id", "memory_ids", "summary"],
+        ),
+    },
+    {
+        "name": "list_workflow_templates",
+        "description": "List the bounded local workflow templates shipped by PeerBridge.",
+        "inputSchema": _object({}),
+    },
+    {
+        "name": "enqueue_workflow",
+        "description": (
+            "Queue one human-requested local workflow with a stable operation id, bounded "
+            "attempts, timeout, resource serialization, and no automatic merge."
+        ),
+        "inputSchema": _object(
+            {
+                "operation_id": STRING,
+                "workflow_id": STRING,
+                "task_text": STRING,
+                "working_directory": STRING,
+                "resource_key": STRING,
+                "permission_decision_id": STRING,
+                "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+                "timeout_seconds": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 86400,
+                },
+                "not_before_epoch": NUMBER,
+            },
+            [
+                "operation_id",
+                "workflow_id",
+                "task_text",
+                "working_directory",
+                "resource_key",
+            ],
+        ),
+    },
+    {
+        "name": "list_operations",
+        "description": "List durable workflow operations and their exact terminal state.",
+        "inputSchema": _object(
+            {
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "queued",
+                        "running",
+                        "retry",
+                        "cancelling",
+                        "succeeded",
+                        "failed",
+                        "cancelled",
+                    ],
+                },
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            }
+        ),
+    },
+    {
+        "name": "bind_guided_discussion",
+        "description": (
+            "Permanently bind one queued guided workflow to the exact validated "
+            "room discussion before any worker may claim it."
+        ),
+        "inputSchema": _object(
+            {"operation_id": STRING, "discussion_id": STRING},
+            ["operation_id", "discussion_id"],
+        ),
+    },
+    {
+        "name": "cancel_operation",
+        "description": (
+            "Request operator-visible cancellation; running workers must acknowledge it, "
+            "while queued work reaches one terminal outcome immediately."
+        ),
+        "inputSchema": _object(
+            {"operation_id": STRING, "reason": STRING}, ["operation_id"]
+        ),
+    },
+    {
+        "name": "reconcile_operations",
+        "description": "Reconcile expired worker leases and hard attempt deadlines.",
+        "inputSchema": _object({}),
+    },
+    {
+        "name": "save_workflow_schedule",
+        "description": (
+            "Create one opt-in local schedule. Scheduled work keeps the normal queue, "
+            "permission, evidence, timeout, and stop controls."
+        ),
+        "inputSchema": _object(
+            {
+                "schedule_id": STRING,
+                "workflow_id": STRING,
+                "task_text": STRING,
+                "working_directory": STRING,
+                "resource_key": STRING,
+                "permission_decision_id": STRING,
+                "interval_seconds": {
+                    "type": "integer",
+                    "minimum": 60,
+                    "maximum": 2678400,
+                },
+                "next_run_epoch": NUMBER,
+                "enabled": {"type": "boolean"},
+            },
+            [
+                "schedule_id",
+                "workflow_id",
+                "task_text",
+                "working_directory",
+                "resource_key",
+                "interval_seconds",
+                "next_run_epoch",
+                "enabled",
+            ],
+        ),
+    },
+    {
+        "name": "list_workflow_schedules",
+        "description": "List SHA-verified local workflow schedules without materializing work.",
+        "inputSchema": _object(
+            {
+                "enabled": {"type": "boolean"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 500},
+            }
+        ),
+    },
+    {
+        "name": "set_workflow_schedule_enabled",
+        "description": "Enable or disable one schedule without deleting its history.",
+        "inputSchema": _object(
+            {"schedule_id": STRING, "enabled": {"type": "boolean"}},
+            ["schedule_id", "enabled"],
+        ),
+    },
+    {
+        "name": "materialize_workflow_schedules",
+        "description": "Atomically materialize due enabled schedules into the durable queue.",
+        "inputSchema": _object(
+            {"limit": {"type": "integer", "minimum": 1, "maximum": 100}}
+        ),
+    },
+    {
+        "name": "release_gate_status",
+        "description": (
+            "Recompute whether one Release Gate is current, successful, and explicitly "
+            "approved by the human operator without publishing anything."
+        ),
+        "inputSchema": _object(
+            {"fingerprint": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+        ),
+    },
+    {
+        "name": "register_capability",
+        "description": "Register one immutable version of a Skill or MCP tool capability.",
+        "inputSchema": _object(
+            {
+                "capability_id": STRING,
+                "registry_version": STRING,
+                "kind": {"type": "string", "enum": ["skill", "mcp-tool"]},
+                "display_name": STRING,
+                "source_sha256": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                },
+                "sensitivity": {
+                    "type": "string",
+                    "enum": ["read", "write", "sensitive"],
+                },
+                "enabled": {"type": "boolean"},
+            },
+            [
+                "capability_id",
+                "registry_version",
+                "kind",
+                "display_name",
+                "source_sha256",
+                "sensitivity",
+            ],
+        ),
+    },
+    {
+        "name": "grant_capability",
+        "description": "Append one human allow or deny decision for an Agent or Room capability.",
+        "inputSchema": _object(
+            {
+                "principal_type": {"type": "string", "enum": ["agent", "room"]},
+                "principal_id": STRING,
+                "capability_id": STRING,
+                "registry_version": STRING,
+                "decision": {"type": "string", "enum": ["allow", "deny"]},
+                "reason": STRING,
+            },
+            [
+                "principal_type",
+                "principal_id",
+                "capability_id",
+                "registry_version",
+                "decision",
+                "reason",
+            ],
+        ),
+    },
+    {
+        "name": "effective_capabilities",
+        "description": "List the latest enabled capabilities allowed for one Agent or Room.",
+        "inputSchema": _object(
+            {
+                "principal_type": {"type": "string", "enum": ["agent", "room"]},
+                "principal_id": STRING,
+            },
+            ["principal_type", "principal_id"],
+        ),
+    },
+    {
+        "name": "decide_permission",
+        "description": (
+            "Append one exact, bounded, expiring human allow or deny decision for a "
+            "sensitive local action."
+        ),
+        "inputSchema": _object(
+            {
+                "decision_id": STRING,
+                "task_id": STRING,
+                "agent_id": STRING,
+                "action": STRING,
+                "resource_key": STRING,
+                "decision": {"type": "string", "enum": ["allow", "deny"]},
+                "reason": STRING,
+                "expires_epoch": NUMBER,
+            },
+            [
+                "decision_id",
+                "task_id",
+                "agent_id",
+                "action",
+                "resource_key",
+                "decision",
+                "reason",
+                "expires_epoch",
+            ],
+        ),
+    },
+    {
+        "name": "create_execution_worktree",
+        "description": (
+            "Consume an exact human permission and create a detached isolated Git worktree; "
+            "this never applies or merges a patch."
+        ),
+        "inputSchema": _object(
+            {
+                "binding_id": STRING,
+                "task_id": STRING,
+                "agent_id": STRING,
+                "permission_decision_id": STRING,
+                "repository": STRING,
+                "base_commit": STRING,
+            },
+            [
+                "binding_id",
+                "task_id",
+                "agent_id",
+                "permission_decision_id",
+                "repository",
+            ],
+        ),
+    },
+    {
+        "name": "seal_execution",
+        "description": "Seal one worktree's exact commit and binary diff hash for review.",
+        "inputSchema": _object({"binding_id": STRING}, ["binding_id"]),
+    },
+    {
+        "name": "verify_execution_source",
+        "description": "Rehash a governed worktree and report whether its sealed source is stale.",
+        "inputSchema": _object({"binding_id": STRING}, ["binding_id"]),
+    },
+    {
+        "name": "record_trust",
+        "description": (
+            "Append a visible Trust Timeline record with exact relative source hashes. "
+            "Captured summaries are not hidden chain-of-thought."
+        ),
+        "inputSchema": _object(
+            {
+                "record_id": STRING,
+                "task_id": STRING,
+                "stage": {
+                    "type": "string",
+                    "enum": list(GENERIC_TRUST_STAGES),
+                },
+                "statement": STRING,
+                "artifact_paths": STRING_ARRAY,
+                "related_record_ids": STRING_ARRAY,
+            },
+            ["record_id", "task_id", "stage", "statement"],
+        ),
+    },
+    {
+        "name": "trust_timeline",
+        "description": "Read one task's Trust Timeline with live stale-evidence checks.",
+        "inputSchema": _object({"task_id": STRING}, ["task_id"]),
+    },
+    {
+        "name": "record_trust_disagreement",
+        "description": "Record a substantive disagreement bound to at least two fresh evidence records.",
+        "inputSchema": _object(
+            {
+                "task_id": STRING,
+                "statement": STRING,
+                "evidence_record_ids": STRING_ARRAY,
+            },
+            ["task_id", "statement", "evidence_record_ids"],
+        ),
+    },
+    {
+        "name": "recheck_trust_record",
+        "description": "Append one bounded recheck against the exact source of an earlier record.",
+        "inputSchema": _object(
+            {"record_id": STRING, "statement": STRING},
+            ["record_id", "statement"],
+        ),
+    },
+    {
+        "name": "complete_trust_timeline",
+        "description": (
+            "Record completion only when fresh test, proof, and review records bind one "
+            "exact source state; include the human decision for Proof Bundle export."
+        ),
+        "inputSchema": _object(
+            {
+                "task_id": STRING,
+                "statement": STRING,
+                "evidence_record_ids": STRING_ARRAY,
+            },
+            ["task_id", "statement", "evidence_record_ids"],
+        ),
+    },
+    {
+        "name": "export_proof_bundle",
+        "description": (
+            "Create one sanitized portable JSON and Markdown Proof Bundle with relative "
+            "evidence and manifest. Output is create-only and requires a trusted "
+            "installed PeerBridge verifier; unsigned results are structural-only."
+        ),
+        "inputSchema": _object(
+            {"task_id": STRING, "output_path": STRING},
+            ["task_id", "output_path"],
+        ),
+    },
+    {
+        "name": "verify_proof_bundle",
+        "description": "Verify a portable Proof Bundle without writing or following unsafe paths.",
+        "inputSchema": _object({"bundle_path": STRING}, ["bundle_path"]),
+    },
+]
+
+TOOL_SCHEMAS.extend(ALPHA52_TOOL_SCHEMAS)
+
 READ_ONLY_TOOLS = {
     "bridge_status",
     "poll_messages",
@@ -772,8 +1404,23 @@ READ_ONLY_TOOLS = {
     "poll_reviews",
     "review_summary",
     "change_log",
+    "effective_capabilities",
+    "list_operations",
+    "list_workflow_schedules",
+    "list_workflow_templates",
+    "release_gate_status",
+    "list_own_observable_sessions",
+    "trust_timeline",
+    "verify_execution_source",
     "verify_audit_chain",
+    "verify_proof_bundle",
 }
+LEGACY_CAPABILITY_TOOLS = frozenset(READ_ONLY_TOOLS) | {"hash_artifact"}
+_TOOL_INPUT_SCHEMAS = {
+    str(tool["name"]): tool["inputSchema"] for tool in TOOL_SCHEMAS
+}
+_AUDIT_REDACTED_ARGUMENT_KEYS = frozenset({"lease_token"})
+_CREDENTIAL_REJECTION_METADATA = {"reason": "credential-bearing-arguments"}
 
 # These tools allocate message, fanout, and dispatch identifiers. Persist their
 # completed results before the trailing tool audit so a retried JSON-RPC request
@@ -786,9 +1433,436 @@ for _tool in TOOL_SCHEMAS:
     _tool["annotations"] = {
         "readOnlyHint": _tool["name"] in READ_ONLY_TOOLS,
         "destructiveHint": False,
-        "idempotentHint": _tool["name"] in READ_ONLY_TOOLS,
+        "idempotentHint": _tool["name"] in READ_ONLY_TOOLS
+        ,
         "openWorldHint": False,
     }
+
+
+def _project_directory(bridge: Bridge, value: Any) -> str:
+    normalized = bridge._normalize_path(value)
+    if bridge._is_within_protected(normalized):
+        raise BridgeError("working directory is protected")
+    resolved = bridge.root if normalized == "." else bridge.root / normalized
+    if not resolved.is_dir():
+        raise BridgeError("working directory does not exist inside the project")
+    return normalized
+
+
+def _proof_bundle_directory(
+    bridge: Bridge, value: Any, *, must_exist: bool
+) -> Path:
+    normalized = bridge._normalize_path(value)
+    allowed_artifact_path = normalized == PROOF_OUTPUT_ROOT or normalized.startswith(
+        PROOF_OUTPUT_ROOT + "/"
+    )
+    if bridge._is_protected(normalized) and not allowed_artifact_path:
+        raise BridgeError("Proof Bundle path is protected")
+    resolved = bridge.root if normalized == "." else bridge.root / normalized
+    if must_exist and not resolved.is_dir():
+        raise BridgeError("Proof Bundle directory does not exist")
+    return resolved
+
+
+def _list_workflow_templates(
+    _bridge: Bridge, _args: dict[str, Any]
+) -> dict[str, Any]:
+    templates = list(DurableOperationQueue.templates())
+    return {"templates": templates, "count": len(templates)}
+
+
+def _enqueue_workflow(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return DurableOperationQueue(bridge).enqueue(
+        operation_id=str(args["operation_id"]),
+        workflow_id=str(args["workflow_id"]),
+        task_text=str(args["task_text"]),
+        working_directory=_project_directory(bridge, args["working_directory"]),
+        resource_key=str(args["resource_key"]),
+        requested_by=bridge.agent_id,
+        permission_decision_id=(
+            str(args["permission_decision_id"])
+            if args.get("permission_decision_id")
+            else None
+        ),
+        max_attempts=int(args.get("max_attempts", 3)),
+        timeout_seconds=int(args.get("timeout_seconds", 1_800)),
+        not_before_epoch=(
+            float(args["not_before_epoch"])
+            if args.get("not_before_epoch") is not None
+            else None
+        ),
+    )
+
+
+def _list_operations(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    operations = DurableOperationQueue(bridge).list_operations(
+        status=str(args["status"]) if args.get("status") else None,
+        limit=int(args.get("limit", 100)),
+    )
+    return {"operations": operations, "count": len(operations)}
+
+
+def _bind_guided_discussion(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return DurableOperationQueue(bridge).bind_guided_discussion(
+        str(args["operation_id"]), str(args["discussion_id"])
+    )
+
+
+def _cancel_operation(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return DurableOperationQueue(bridge).request_cancel(
+        str(args["operation_id"]),
+        requested_by=bridge.agent_id,
+        reason=str(args.get("reason") or "Cancelled by the operator."),
+    )
+
+
+def _reconcile_operations(
+    bridge: Bridge, _args: dict[str, Any]
+) -> dict[str, Any]:
+    operations = DurableOperationQueue(bridge).reconcile()
+    return {"operations": operations, "count": len(operations)}
+
+
+def _save_workflow_schedule(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return DurableOperationQueue(bridge).save_schedule(
+        schedule_id=str(args["schedule_id"]),
+        workflow_id=str(args["workflow_id"]),
+        task_text=str(args["task_text"]),
+        working_directory=_project_directory(bridge, args["working_directory"]),
+        resource_key=str(args["resource_key"]),
+        interval_seconds=int(args["interval_seconds"]),
+        next_run_epoch=float(args["next_run_epoch"]),
+        enabled=bool(args["enabled"]),
+        requested_by=bridge.agent_id,
+        permission_decision_id=(
+            str(args["permission_decision_id"])
+            if args.get("permission_decision_id")
+            else None
+        ),
+    )
+
+
+def _list_workflow_schedules(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    schedules = DurableOperationQueue(bridge).list_schedules(
+        enabled=args.get("enabled"), limit=int(args.get("limit", 100))
+    )
+    return {"schedules": schedules, "count": len(schedules)}
+
+
+def _set_workflow_schedule_enabled(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return DurableOperationQueue(bridge).set_schedule_enabled(
+        str(args["schedule_id"]),
+        enabled=bool(args["enabled"]),
+        requested_by=bridge.agent_id,
+    )
+
+
+def _materialize_workflow_schedules(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    operations = DurableOperationQueue(bridge).materialize_due_schedules(
+        limit=int(args.get("limit", 20))
+    )
+    return {"operations": operations, "count": len(operations)}
+
+
+def _release_gate_status(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return ReleaseGateService(bridge).status(
+        str(args["fingerprint"]) if args.get("fingerprint") else None
+    )
+
+
+def _register_capability(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return ExecutionGovernance(bridge).register_capability(
+        capability_id=str(args["capability_id"]),
+        registry_version=str(args["registry_version"]),
+        kind=str(args["kind"]),
+        display_name=str(args["display_name"]),
+        source_sha256=str(args["source_sha256"]),
+        sensitivity=str(args["sensitivity"]),
+        enabled=bool(args.get("enabled", True)),
+    )
+
+
+def _grant_capability(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return ExecutionGovernance(bridge).grant_capability(
+        principal_type=str(args["principal_type"]),
+        principal_id=str(args["principal_id"]),
+        capability_id=str(args["capability_id"]),
+        registry_version=str(args["registry_version"]),
+        decision=str(args["decision"]),
+        reason=str(args["reason"]),
+    )
+
+
+def _effective_capabilities(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    capabilities = ExecutionGovernance(bridge).effective_capabilities(
+        principal_type=str(args["principal_type"]),
+        principal_id=str(args["principal_id"]),
+    )
+    return {"capabilities": capabilities, "count": len(capabilities)}
+
+
+def _decide_permission(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return ExecutionGovernance(bridge).decide_permission(
+        decision_id=str(args["decision_id"]),
+        task_id=str(args["task_id"]),
+        agent_id=str(args["agent_id"]),
+        action=str(args["action"]),
+        resource_key=str(args["resource_key"]),
+        decision=str(args["decision"]),
+        reason=str(args["reason"]),
+        expires_epoch=float(args["expires_epoch"]),
+    )
+
+
+def _create_execution_worktree(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    repository_path = _project_directory(bridge, args["repository"])
+    repository = (
+        bridge.root if repository_path == "." else bridge.root / repository_path
+    )
+    return ExecutionGovernance(bridge).create_isolated_worktree(
+        binding_id=str(args["binding_id"]),
+        task_id=str(args["task_id"]),
+        agent_id=str(args["agent_id"]),
+        permission_decision_id=str(args["permission_decision_id"]),
+        repository=repository,
+        base_commit=str(args.get("base_commit") or "HEAD"),
+    )
+
+
+def _seal_execution(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    return ExecutionGovernance(bridge).seal_execution(str(args["binding_id"]))
+
+
+def _verify_execution_source(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return ExecutionGovernance(bridge).verify_execution_source(
+        str(args["binding_id"])
+    )
+
+
+def _record_trust(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    stage = str(args["stage"])
+    if stage not in GENERIC_TRUST_STAGES:
+        raise TrustTimelineError(
+            "specialized trust stages require their dedicated MCP tool"
+        )
+    return TrustTimeline(bridge).record(
+        record_id=str(args["record_id"]),
+        task_id=str(args["task_id"]),
+        stage=stage,
+        statement=str(args["statement"]),
+        artifact_paths=args.get("artifact_paths", []),
+        related_record_ids=args.get("related_record_ids", []),
+    )
+
+
+def _trust_timeline(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    records = TrustTimeline(bridge).timeline(str(args["task_id"]))
+    return {"records": records, "count": len(records)}
+
+
+def _record_trust_disagreement(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return TrustTimeline(bridge).record_disagreement(
+        task_id=str(args["task_id"]),
+        statement=str(args["statement"]),
+        evidence_record_ids=args["evidence_record_ids"],
+    )
+
+
+def _recheck_trust_record(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return TrustTimeline(bridge).recheck(
+        str(args["record_id"]), statement=str(args["statement"])
+    )
+
+
+def _complete_trust_timeline(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return TrustTimeline(bridge).record_completion(
+        task_id=str(args["task_id"]),
+        statement=str(args["statement"]),
+        evidence_record_ids=args["evidence_record_ids"],
+    )
+
+
+def _export_proof_bundle(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    output = _proof_bundle_directory(bridge, args["output_path"], must_exist=False)
+    return create_proof_bundle(
+        bridge, task_id=str(args["task_id"]), output_path=output
+    )
+
+
+def _verify_proof_bundle(bridge: Bridge, args: dict[str, Any]) -> dict[str, Any]:
+    bundle = _proof_bundle_directory(bridge, args["bundle_path"], must_exist=True)
+    return verify_proof_bundle(bundle)
+
+
+def _connect_observable_session(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return AuthorizedSessionRegistry(bridge).connect(args)
+
+
+def _publish_observable_session_event(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return AuthorizedSessionRegistry(bridge).publish_event(args)
+
+
+def _close_observable_session(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    return AuthorizedSessionRegistry(bridge).close(args)
+
+
+def _list_own_observable_sessions(
+    bridge: Bridge, args: dict[str, Any]
+) -> dict[str, Any]:
+    after_sequences = args.get("after_sequences")
+    if after_sequences is not None and not isinstance(after_sequences, dict):
+        raise AuthorizedSessionError("after_sequences must be an object")
+    sessions = AuthorizedSessionRegistry(bridge).list_owned(
+        limit=int(args.get("limit", 64)),
+        after_sequences=after_sequences,
+    )
+    return {"sessions": list(sessions), "count": len(sessions)}
+
+
+def _transport_response_bytes(response: dict[str, Any]) -> int:
+    serialized = json.dumps(response, ensure_ascii=False, separators=(",", ":")) + "\n"
+    return len(serialized.encode("utf-8"))
+
+
+def _bounded_observable_sessions_response(
+    request_id: Any,
+    result: dict[str, Any],
+    *,
+    modern: bool,
+) -> dict[str, Any]:
+    max_bytes = max(1, int(authorized_sessions_module.MAX_AUTHORIZED_RESPONSE_BYTES))
+    response = content_response(request_id, result, modern=modern)
+    if _transport_response_bytes(response) <= max_bytes:
+        return response
+
+    sessions = result.get("sessions")
+    if not isinstance(sessions, list):
+        return error_response(
+            request_id,
+            -32603,
+            "authorized session response has an invalid shape",
+        )
+
+    event_lists = [
+        session.get("events", []) if isinstance(session, dict) else []
+        for session in sessions
+    ]
+    if any(not isinstance(events, list) for events in event_lists):
+        return error_response(
+            request_id,
+            -32603,
+            "authorized session response has an invalid event list",
+        )
+
+    event_order = [
+        session_index
+        for event_index in range(max((len(events) for events in event_lists), default=0))
+        for session_index, events in enumerate(event_lists)
+        if event_index < len(events)
+    ]
+
+    def response_with_event_count(event_count: int) -> dict[str, Any]:
+        keep_counts = [0] * len(sessions)
+        for session_index in event_order[:event_count]:
+            keep_counts[session_index] += 1
+        bounded_sessions: list[dict[str, Any]] = []
+        for session_index, session in enumerate(sessions):
+            if not isinstance(session, dict):
+                continue
+            bounded_session = dict(session)
+            bounded_session["events"] = event_lists[session_index][
+                : keep_counts[session_index]
+            ]
+            bounded_sessions.append(bounded_session)
+        bounded_result = {**result, "sessions": bounded_sessions}
+        return content_response(request_id, bounded_result, modern=modern)
+
+    empty_response = response_with_event_count(0)
+    if _transport_response_bytes(empty_response) > max_bytes:
+        overflow = error_response(
+            request_id,
+            -32603,
+            "authorized session response metadata exceeds the UTF-8 byte limit",
+        )
+        if _transport_response_bytes(overflow) <= max_bytes:
+            return overflow
+        return error_response(None, -32603, "response byte limit exceeded")
+
+    best = empty_response
+    lower = 1
+    upper = len(event_order)
+    while lower <= upper:
+        candidate_count = (lower + upper) // 2
+        candidate = response_with_event_count(candidate_count)
+        if _transport_response_bytes(candidate) <= max_bytes:
+            best = candidate
+            lower = candidate_count + 1
+        else:
+            upper = candidate_count - 1
+    return best
+
+
+SPECIAL_HANDLERS: dict[
+    str, Callable[[Bridge, dict[str, Any]], dict[str, Any]]
+] = {
+    "connect_observable_session": _connect_observable_session,
+    "publish_observable_session_event": _publish_observable_session_event,
+    "close_observable_session": _close_observable_session,
+    "list_own_observable_sessions": _list_own_observable_sessions,
+    "list_workflow_templates": _list_workflow_templates,
+    "enqueue_workflow": _enqueue_workflow,
+    "bind_guided_discussion": _bind_guided_discussion,
+    "list_operations": _list_operations,
+    "cancel_operation": _cancel_operation,
+    "reconcile_operations": _reconcile_operations,
+    "save_workflow_schedule": _save_workflow_schedule,
+    "list_workflow_schedules": _list_workflow_schedules,
+    "set_workflow_schedule_enabled": _set_workflow_schedule_enabled,
+    "materialize_workflow_schedules": _materialize_workflow_schedules,
+    "release_gate_status": _release_gate_status,
+    "register_capability": _register_capability,
+    "grant_capability": _grant_capability,
+    "effective_capabilities": _effective_capabilities,
+    "decide_permission": _decide_permission,
+    "create_execution_worktree": _create_execution_worktree,
+    "seal_execution": _seal_execution,
+    "verify_execution_source": _verify_execution_source,
+    "record_trust": _record_trust,
+    "trust_timeline": _trust_timeline,
+    "record_trust_disagreement": _record_trust_disagreement,
+    "recheck_trust_record": _recheck_trust_record,
+    "complete_trust_timeline": _complete_trust_timeline,
+    "export_proof_bundle": _export_proof_bundle,
+    "verify_proof_bundle": _verify_proof_bundle,
+}
 
 
 HANDLERS: dict[str, str] = {
@@ -805,9 +1879,12 @@ HANDLERS: dict[str, str] = {
     "list_rooms": "list_rooms",
     "list_agents": "list_agents",
     "join_room": "join_room",
+    "set_room_member_role": "set_room_member_role",
     "leave_room": "leave_room",
     "room_members": "room_members",
     "record_memory": "record_memory",
+    "brief_task": "brief_task",
+    "record_decision_conflict": "record_decision_conflict",
     "list_memories": "list_memories",
     "read_memory": "read_memory",
     "revoke_memory": "revoke_memory",
@@ -840,9 +1917,24 @@ HANDLERS: dict[str, str] = {
     "complete_task": "complete_task",
     "verify_audit_chain": "verify_audit_chain",
 }
+HANDLERS.update({name: "__alpha52__" for name in SPECIAL_HANDLERS})
 
 
 def dispatch(bridge: Bridge, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    special = SPECIAL_HANDLERS.get(name)
+    if special is not None:
+        try:
+            return special(bridge, arguments)
+        except (
+            AuthorizedSessionError,
+            GovernanceError,
+            OperationQueueError,
+            ProofBundleError,
+            ReleaseGateError,
+            TrustTimelineError,
+            OSError,
+        ) as exc:
+            raise BridgeError(str(exc)) from exc
     method_name = HANDLERS.get(name)
     if method_name is None:
         raise BridgeError(f"unknown tool: {name}")
@@ -969,6 +2061,13 @@ def _validate_schema_value(value: Any, schema: dict[str, Any]) -> bool:
         valid = isinstance(value, bool)
     elif expected == "integer":
         valid = isinstance(value, int) and not isinstance(value, bool)
+    elif expected == "number":
+        valid = (
+            isinstance(value, int)
+            and not isinstance(value, bool)
+            or isinstance(value, float)
+            and math.isfinite(value)
+        )
     elif expected == "array":
         valid = isinstance(value, list) and all(
             _validate_schema_value(item, schema.get("items", {})) for item in value
@@ -986,7 +2085,15 @@ def _validate_schema_value(value: Any, schema: dict[str, Any]) -> bool:
     if expected == "string" and "pattern" in schema:
         if re.fullmatch(str(schema["pattern"]), value) is None:
             return False
+    if expected == "string" and "maxLength" in schema:
+        if len(value) > int(schema["maxLength"]):
+            return False
+    if expected == "array" and "maxItems" in schema:
+        if len(value) > int(schema["maxItems"]):
+            return False
     if expected == "object":
+        if "maxProperties" in schema and len(value) > int(schema["maxProperties"]):
+            return False
         properties = schema.get("properties", {})
         if not isinstance(properties, dict):
             properties = {}
@@ -1008,7 +2115,7 @@ def _validate_schema_value(value: Any, schema: dict[str, Any]) -> bool:
                 item, additional
             ):
                 return False
-    if expected == "integer":
+    if expected in {"integer", "number"}:
         if "minimum" in schema and value < schema["minimum"]:
             return False
         if "maximum" in schema and value > schema["maximum"]:
@@ -1017,10 +2124,7 @@ def _validate_schema_value(value: Any, schema: dict[str, Any]) -> bool:
 
 
 def _validate_tool_arguments(name: str, arguments: dict[str, Any]) -> str | None:
-    schema = next(
-        (tool["inputSchema"] for tool in TOOL_SCHEMAS if tool["name"] == name),
-        None,
-    )
+    schema = _TOOL_INPUT_SCHEMAS.get(name)
     if schema is None:
         return "unknown tool schema"
     properties = schema.get("properties", {})
@@ -1039,13 +2143,61 @@ def _validate_tool_arguments(name: str, arguments: dict[str, Any]) -> str | None
     return None
 
 
+def _tool_arguments_contain_credentials(arguments: dict[str, Any]) -> bool:
+    candidate = json.dumps(
+        _audit_safe_arguments(arguments),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return contains_secret(candidate)
+
+
+def _audit_safe_arguments(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                "token"
+                if str(key) in _AUDIT_REDACTED_ARGUMENT_KEYS
+                else _audit_safe_arguments(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_audit_safe_arguments(item) for item in value]
+    return value
+
+
+def _record_credential_rejection(bridge: Bridge) -> None:
+    with bridge._connect() as connection:
+        bridge._event(
+            connection,
+            "tool.rejected",
+            dict(_CREDENTIAL_REJECTION_METADATA),
+        )
+
+
+def _room_binding_error(
+    name: str, arguments: dict[str, Any], bound_room_id: str | None
+) -> str | None:
+    if bound_room_id is None:
+        return None
+    schema = _TOOL_INPUT_SCHEMAS.get(name, {})
+    properties = schema.get("properties", {})
+    if "room_id" in properties and arguments.get("room_id") != bound_room_id:
+        return "Tool call must use the capability-bound room_id"
+    return None
+
+
 def handle_request(
     bridge: Bridge,
     request: dict[str, Any],
     allowed_tools: AbstractSet[str] | None = None,
     denied_tools: AbstractSet[str] = frozenset(),
+    *,
+    capability_validator: Callable[[], None] | None = None,
+    bound_room_id: str | None = None,
 ) -> dict[str, Any] | None:
-    bridge.touch_presence("stdio")
     request_id = request.get("id")
     method = request.get("method")
     requested_version = _request_protocol_version(request)
@@ -1112,19 +2264,36 @@ def handle_request(
             )
         return direct_response(request_id, result)
     if method == "tools/call":
+        if capability_validator is not None:
+            try:
+                capability_validator()
+            except AgentIdentityError:
+                return error_response(
+                    request_id,
+                    -32003,
+                    "Agent identity capability is invalid or revoked; session fenced",
+                )
         params = request.get("params", {})
         if not isinstance(params, dict):
             return error_response(request_id, -32602, "tool call params must be an object")
         name = params.get("name")
+        arguments = params.get("arguments") or {}
+        if not isinstance(arguments, dict):
+            return error_response(request_id, -32602, "tool arguments must be an object")
+        credential_rejected = _tool_arguments_contain_credentials(arguments)
+        if credential_rejected:
+            try:
+                _record_credential_rejection(bridge)
+            except sqlite3.Error:
+                return error_response(
+                    request_id, -32603, "internal bridge database error"
+                )
         if not isinstance(name, str) or name not in HANDLERS:
             return error_response(request_id, -32602, f"Unknown tool: {name}")
         if allowed_tools is not None and name not in allowed_tools:
             return error_response(request_id, -32602, f"Tool is not allowed: {name}")
         if name in denied_tools:
             return error_response(request_id, -32602, f"Tool is not allowed: {name}")
-        arguments = params.get("arguments") or {}
-        if not isinstance(arguments, dict):
-            return error_response(request_id, -32602, "tool arguments must be an object")
         validation_error = _validate_tool_arguments(name, arguments)
         if validation_error:
             if validation_error == "tool arguments contain unsupported fields":
@@ -1132,6 +2301,21 @@ def handle_request(
             return content_response(
                 request_id,
                 {"error": validation_error, "tool": name},
+                modern=modern,
+                is_error=True,
+            )
+        if credential_rejected:
+            return content_response(
+                request_id,
+                {"error": "tool arguments contain credential material"},
+                modern=modern,
+                is_error=True,
+            )
+        room_binding_error = _room_binding_error(name, arguments, bound_room_id)
+        if room_binding_error is not None:
+            return content_response(
+                request_id,
+                {"error": room_binding_error},
                 modern=modern,
                 is_error=True,
             )
@@ -1168,7 +2352,12 @@ def handle_request(
                 bridge._event(
                     connection,
                     "tool.called",
-                    {"tool": name, "arguments_sha256": stable_sha256(arguments)},
+                    {
+                        "tool": name,
+                        "arguments_sha256": stable_sha256(
+                            _audit_safe_arguments(arguments)
+                        ),
+                    },
                 )
         try:
             dispatch_arguments = arguments
@@ -1189,6 +2378,12 @@ def handle_request(
             )
             if audit_tool_call:
                 _audit_tool_result_fail_safe(bridge, name, result)
+            if name == "list_own_observable_sessions":
+                return _bounded_observable_sessions_response(
+                    request_id,
+                    result,
+                    modern=modern,
+                )
             return content_response(request_id, result, modern=modern)
         except (BridgeError, ValueError, TypeError) as exc:
             if audit_tool_call:
@@ -1224,11 +2419,198 @@ def _heartbeat(bridge: Bridge, stop: threading.Event) -> None:
             continue
 
 
+def _read_bounded_stdio_frame(stream: Any) -> tuple[str | None, str | None]:
+    """Read one newline-delimited request without retaining an oversized frame."""
+
+    binary = getattr(stream, "buffer", None)
+    if binary is not None:
+        payload = binary.readline(MAX_STDIO_REQUEST_BYTES + 1)
+        if not payload:
+            return None, None
+        oversized = len(payload) > MAX_STDIO_REQUEST_BYTES
+        while oversized and payload and not payload.endswith(b"\n"):
+            payload = binary.readline(MAX_STDIO_REQUEST_BYTES + 1)
+        if oversized:
+            return "", "request exceeds the stdio byte limit"
+        try:
+            return payload.decode("utf-8"), None
+        except UnicodeDecodeError:
+            return "", "request is not valid UTF-8"
+
+    line = stream.readline(MAX_STDIO_REQUEST_BYTES + 1)
+    if not line:
+        return None, None
+    try:
+        oversized = len(line.encode("utf-8")) > MAX_STDIO_REQUEST_BYTES
+    except UnicodeEncodeError:
+        return "", "request is not valid UTF-8"
+    while oversized and line and not line.endswith("\n"):
+        line = stream.readline(MAX_STDIO_REQUEST_BYTES + 1)
+    if oversized:
+        return "", "request exceeds the stdio byte limit"
+    return line, None
+
+
+def _serialize_stdio_frame_with_limit(
+    response: dict[str, Any], max_bytes: int
+) -> str | None:
+    encoder = json.JSONEncoder(
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    parts: list[str] = []
+    byte_count = 1  # Trailing newline.
+    for part in encoder.iterencode(response):
+        byte_count += len(part.encode("utf-8"))
+        if byte_count > max_bytes:
+            return None
+        parts.append(part)
+    return "".join(parts) + "\n"
+
+
+def _bounded_stdio_response_frame(response: dict[str, Any]) -> str:
+    max_bytes = max(1, int(MAX_STDIO_RESPONSE_BYTES))
+    serialized = _serialize_stdio_frame_with_limit(response, max_bytes)
+    if serialized is not None:
+        return serialized
+    request_id = response.get("id") if isinstance(response, dict) else None
+    overflow = error_response(
+        request_id,
+        -32603,
+        "response exceeds the stdio byte limit",
+    )
+    serialized = _serialize_stdio_frame_with_limit(overflow, max_bytes)
+    if serialized is not None:
+        return serialized
+    minimal = error_response(None, -32603, "stdio response too large")
+    serialized = _serialize_stdio_frame_with_limit(minimal, max_bytes)
+    if serialized is None:
+        raise ValueError("stdio response byte limit is too small for an error frame")
+    return serialized
+
+
+def _write_stdio_response(response: dict[str, Any]) -> None:
+    frame = _bounded_stdio_response_frame(response)
+    binary = getattr(sys.stdout, "buffer", None)
+    if binary is not None:
+        binary.write(frame.encode("utf-8"))
+        binary.flush()
+        return
+    sys.stdout.write(frame)
+    sys.stdout.flush()
+
+
+def _effective_capability_tools(
+    capability: AgentIdentityCapability,
+) -> frozenset[str]:
+    if capability.uses_legacy_tool_fallback:
+        return LEGACY_CAPABILITY_TOOLS
+    return frozenset(capability.allowed_tools)
+
+
+def _revalidate_bound_room_revision(
+    bridge: Bridge, capability: AgentIdentityCapability
+) -> None:
+    room_id = capability.bound_room_id
+    if room_id is None:
+        return
+    with bridge._connect() as connection:
+        membership = connection.execute(
+            """SELECT room_session_id, route_profile_id
+                 FROM room_memberships
+                WHERE scope=? AND room_id=? AND agent_id=? AND status='active'""",
+            (bridge.scope, room_id, bridge.agent_id),
+        ).fetchone()
+        if membership is None:
+            raise AgentIdentityError("capability-bound room membership is inactive")
+        if (
+            capability.bound_room_session_id is not None
+            and membership["room_session_id"] != capability.bound_room_session_id
+        ):
+            raise AgentIdentityError("capability-bound room session changed")
+        if (
+            capability.bound_route_profile_id is not None
+            and membership["route_profile_id"] != capability.bound_route_profile_id
+        ):
+            raise AgentIdentityError("capability-bound room route changed")
+        if capability.bound_route_profile_id is not None:
+            profile = connection.execute(
+                """SELECT * FROM route_profiles
+                    WHERE scope=? AND route_id=? AND enabled=1""",
+                (bridge.scope, capability.bound_route_profile_id),
+            ).fetchone()
+            if profile is None:
+                raise AgentIdentityError("capability-bound route profile is unavailable")
+            try:
+                profile_sha256 = bridge._verified_route_profile_sha256(profile)
+            except BridgeError as exc:
+                raise AgentIdentityError(
+                    "capability-bound route profile is invalid"
+                ) from exc
+            if not secrets.compare_digest(
+                profile_sha256,
+                str(capability.bound_route_profile_sha256 or ""),
+            ):
+                raise AgentIdentityError("capability-bound route profile changed")
+
+
+def _revalidate_identity_capability_session(
+    bridge: Bridge,
+    expected: AgentIdentityCapability,
+    allowed_tools: AbstractSet[str],
+) -> None:
+    current = verify_agent_identity_capability(
+        bridge.root,
+        bridge.db_path,
+        bridge.scope,
+        bridge.agent_id,
+        expected.path,
+    )
+    if (
+        current.capability_id != expected.capability_id
+        or current.capability_sha256 != expected.capability_sha256
+        or current.schema != expected.schema
+        or current.allowed_tools != expected.allowed_tools
+        or current.issued_by != expected.issued_by
+        or current.route_binding != expected.route_binding
+        or current.bound_room_id != expected.bound_room_id
+        or current.bound_room_session_id != expected.bound_room_session_id
+        or current.bound_route_profile_id != expected.bound_route_profile_id
+        or current.bound_route_profile_sha256
+        != expected.bound_route_profile_sha256
+    ):
+        raise AgentIdentityError("Agent identity capability binding changed")
+    verify_agent_identity_route_binding(
+        current,
+        client_name=bridge.client_name,
+        provider_id=bridge.provider_id,
+        model_id=bridge.model_id,
+        reasoning_mode=bridge.reasoning_mode,
+        route_class=bridge.route_class,
+    )
+    _revalidate_bound_room_revision(bridge, current)
+    if not set(allowed_tools).issubset(_effective_capability_tools(current)):
+        raise AgentIdentityError("Agent identity capability tool binding changed")
+
+
 def serve(
     bridge: Bridge,
     allowed_tools: AbstractSet[str] | None = None,
     denied_tools: AbstractSet[str] = frozenset(),
+    *,
+    identity_capability: AgentIdentityCapability | None = None,
 ) -> int:
+    if identity_capability is not None:
+        capability_tools = _effective_capability_tools(identity_capability)
+        if allowed_tools is None:
+            allowed_tools = capability_tools
+        if identity_capability.bound_room_id is not None:
+            denied_tools = frozenset({*denied_tools, "list_rooms", "read_memory"})
+        _revalidate_identity_capability_session(
+            bridge,
+            identity_capability,
+            allowed_tools,
+        )
     if allowed_tools is not None:
         unknown = sorted(set(allowed_tools) - HANDLERS.keys())
         if unknown:
@@ -1237,35 +2619,110 @@ def serve(
     if unknown_denied:
         raise ValueError(f"unknown denied tools: {', '.join(unknown_denied)}")
     bridge.touch_presence("stdio")
+    recent_calls: deque[float] = deque()
+    call_count = 0
     stop = threading.Event()
+    capability_fenced = False
+
+    def revalidate_capability() -> None:
+        nonlocal capability_fenced
+        if capability_fenced:
+            raise AgentIdentityError("Agent identity capability session is fenced")
+        if identity_capability is None:
+            return
+        try:
+            _revalidate_identity_capability_session(
+                bridge,
+                identity_capability,
+                allowed_tools or frozenset(),
+            )
+        except AgentIdentityError:
+            capability_fenced = True
+            stop.set()
+            try:
+                bridge.clear_presence()
+            except sqlite3.Error:
+                pass
+            raise AgentIdentityError(
+                "Agent identity capability session is fenced"
+            ) from None
+
     thread = threading.Thread(target=_heartbeat, args=(bridge, stop), daemon=True)
     thread.start()
     try:
-        for line in sys.stdin:
+        while True:
+            line, frame_error = _read_bounded_stdio_frame(sys.stdin)
+            if line is None:
+                break
+            if frame_error is not None or line.strip():
+                now = time.monotonic()
+                while recent_calls and now - recent_calls[0] >= 60.0:
+                    recent_calls.popleft()
+                if (
+                    call_count >= MAX_STDIO_CALLS_PER_SESSION
+                    or len(recent_calls) >= MAX_STDIO_CALLS_PER_MINUTE
+                ):
+                    _write_stdio_response(
+                        error_response(
+                            None,
+                            -32003,
+                            "MCP session call budget exceeded; session closed",
+                        )
+                    )
+                    break
+                call_count += 1
+                recent_calls.append(now)
+            if frame_error is not None:
+                _write_stdio_response(error_response(None, -32600, frame_error))
+                continue
             if not line.strip():
                 continue
+            request: Any = None
             try:
                 request = json.loads(line.lstrip("\ufeff"))
+                if (
+                    isinstance(request, dict)
+                    and request.get("method") == "tools/call"
+                ):
+                    try:
+                        revalidate_capability()
+                    except AgentIdentityError:
+                        _write_stdio_response(
+                            error_response(
+                                request.get("id"),
+                                -32003,
+                                "Agent identity capability is invalid or revoked; "
+                                "session fenced",
+                            )
+                        )
+                        continue
                 result = handle_request(
                     bridge,
                     request,
                     allowed_tools,
                     denied_tools,
+                    bound_room_id=(
+                        identity_capability.bound_room_id
+                        if identity_capability is not None
+                        else None
+                    ),
                 )
                 if result is not None:
-                    sys.stdout.write(json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n")
-                    sys.stdout.flush()
+                    _write_stdio_response(result)
             except json.JSONDecodeError as exc:
-                sys.stdout.write(json.dumps(error_response(None, -32700, f"invalid JSON: {exc}")) + "\n")
-                sys.stdout.flush()
+                _write_stdio_response(
+                    error_response(None, -32700, f"invalid JSON: {exc}")
+                )
             except Exception as exc:  # pragma: no cover - final transport guard
                 print(f"peerbridge internal error: {exc}", file=sys.stderr, flush=True)
-                request_id = request.get("id") if isinstance(locals().get("request"), dict) else None
+                request_id = request.get("id") if isinstance(request, dict) else None
                 if request_id is not None:
-                    sys.stdout.write(json.dumps(error_response(request_id, -32603, "internal bridge error")) + "\n")
-                    sys.stdout.flush()
+                    _write_stdio_response(
+                        error_response(request_id, -32603, "internal bridge error")
+                    )
     finally:
         stop.set()
         thread.join(timeout=2)
         bridge.clear_presence()
+        bridge.checkpoint_wal()
     return 0

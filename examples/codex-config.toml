@@ -4,6 +4,7 @@ args = [
   "-m", "peerbridge_mcp", "serve",
   "--project-root", "C:\\work\\my-project",
   "--agent-id", "codex-main",
+  "--identity-capability", "C:\\work\\my-project\\.peerbridge\\identity-capabilities\\<issued-file>.json",
   "--scope", "my-project",
 ]
 enabled = true

@@ -109,8 +109,27 @@ def _message_snapshot(
         "discussion_role": row["discussion_role"] if "discussion_role" in keys else None,
         "created_utc": row["created_utc"],
     }
+    visibility = str(row["visibility"] or "direct") if "visibility" in keys else "direct"
+    room_visibility_content = {
+        **{key: value for key, value in room_bound_content.items() if key != "created_utc"},
+        "visibility": visibility,
+        "created_utc": row["created_utc"],
+    }
+    discussion_visibility_content = {
+        **{
+            key: value
+            for key, value in discussion_bound_content.items()
+            if key != "created_utc"
+        },
+        "visibility": visibility,
+        "created_utc": row["created_utc"],
+    }
     observed_sha = str(row["content_sha256"])
-    if stable_sha256(discussion_bound_content) == observed_sha:
+    if stable_sha256(discussion_visibility_content) == observed_sha:
+        hash_contract = "discussion-visibility-bound-v4"
+    elif stable_sha256(room_visibility_content) == observed_sha:
+        hash_contract = "room-visibility-bound-v4"
+    elif stable_sha256(discussion_bound_content) == observed_sha:
         hash_contract = "discussion-bound-v3"
     elif stable_sha256(room_bound_content) == observed_sha:
         hash_contract = "room-bound-v2"
@@ -135,6 +154,7 @@ def _message_snapshot(
     }
     if receipt_schema in {RECEIPT_SCHEMA_V2, RECEIPT_SCHEMA_V3}:
         snapshot["room_id"] = room_id
+        snapshot["visibility"] = visibility
         snapshot["content_hash_contract"] = hash_contract
     return snapshot
 

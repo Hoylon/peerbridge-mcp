@@ -37,13 +37,6 @@ function Get-StringDigest {
 }
 $Archive = (Resolve-Path -LiteralPath $Archive).Path
 $archiveItem = Get-Item -LiteralPath $Archive
-if ($archiveItem.Length -gt $maxArchiveBytes) {
-    throw "Portable archive exceeds the $maxArchiveBytes-byte input limit."
-}
-$archiveSha256 = (Get-FileHash -LiteralPath $Archive -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($archiveSha256 -cne $ExpectedSha256.ToLowerInvariant()) {
-    throw 'Portable archive SHA-256 differs from the independently supplied expected digest.'
-}
 if (-not $OutputRoot) {
     $stamp = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
     $OutputRoot = Join-Path $projectRoot ".peerbridge-artifacts\portable-verification\$stamp"
@@ -54,8 +47,51 @@ if (Test-Path -LiteralPath $OutputRoot) {
 }
 New-Item -ItemType Directory -Path $OutputRoot -Force:$false | Out-Null
 
+$stagedArchive = Join-Path $OutputRoot 'verified-input.zip'
+$sourceStream = [System.IO.FileStream]::new(
+    $Archive,
+    [System.IO.FileMode]::Open,
+    [System.IO.FileAccess]::Read,
+    [System.IO.FileShare]::Read
+)
+try {
+    if ($sourceStream.Length -gt $maxArchiveBytes) {
+        throw "Portable archive exceeds the $maxArchiveBytes-byte input limit."
+    }
+    $archiveStream = [System.IO.FileStream]::new(
+        $stagedArchive,
+        [System.IO.FileMode]::CreateNew,
+        [System.IO.FileAccess]::ReadWrite,
+        [System.IO.FileShare]::Read
+    )
+    $sourceStream.CopyTo($archiveStream)
+    $archiveStream.Flush($true)
+} finally {
+    $sourceStream.Dispose()
+}
+
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+    $archiveStream.Position = 0
+    $archiveSha256 = ([System.BitConverter]::ToString(
+        $sha256.ComputeHash($archiveStream)
+    )).Replace('-', '').ToLowerInvariant()
+} finally {
+    $sha256.Dispose()
+}
+if ($archiveSha256 -cne $ExpectedSha256.ToLowerInvariant()) {
+    $archiveStream.Dispose()
+    throw 'Portable archive SHA-256 differs from the independently supplied expected digest.'
+}
+
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
-$zip = [System.IO.Compression.ZipFile]::OpenRead($Archive)
+$archiveStream.Position = 0
+$zip = [System.IO.Compression.ZipArchive]::new(
+    $archiveStream,
+    [System.IO.Compression.ZipArchiveMode]::Read,
+    $true
+)
 try {
     $entries = @($zip.Entries)
     if ($entries.Count -lt 3) {
@@ -117,9 +153,10 @@ try {
     }
 } finally {
     $zip.Dispose()
+    $archiveStream.Dispose()
 }
 
-Expand-Archive -LiteralPath $Archive -DestinationPath $OutputRoot
+Expand-Archive -LiteralPath $stagedArchive -DestinationPath $OutputRoot
 $packageRoot = Get-ChildItem -LiteralPath $OutputRoot -Directory | Select-Object -First 1
 if (-not $packageRoot) {
     throw 'Portable archive did not extract a package directory.'
@@ -155,6 +192,74 @@ foreach ($localizedName in $localizedReadmes.Keys) {
         (Get-FileHash -LiteralPath $packaged -Algorithm SHA256).Hash
     ) {
         throw "Portable localized quickstart differs from source: $localizedName"
+    }
+}
+
+$supportRoot = Join-Path $packageRoot.FullName '_internal\peerbridge_mcp\release_support'
+$supportConfigPath = Join-Path $supportRoot 'support.json'
+$supportPublicKeyPath = Join-Path $supportRoot 'peerbridge-support-public.pub'
+foreach ($supportPath in @($supportConfigPath, $supportPublicKeyPath)) {
+    if (-not (Test-Path -LiteralPath $supportPath -PathType Leaf)) {
+        throw "Portable support trust anchor is missing: $supportPath"
+    }
+}
+try {
+    $supportConfig = Get-Content -LiteralPath $supportConfigPath -Raw -Encoding UTF8 |
+        ConvertFrom-Json
+} catch {
+    throw 'Portable support configuration is not valid UTF-8 JSON.'
+}
+$expectedSupportFields = @(
+    'endpoint',
+    'endpoint_transport',
+    'privacy_url',
+    'public_key_path',
+    'public_key_sha256',
+    'recipient_label',
+    'schema',
+    'support_email'
+) | Sort-Object
+$supportFields = @($supportConfig.PSObject.Properties.Name | Sort-Object)
+if (@(Compare-Object -ReferenceObject $expectedSupportFields -DifferenceObject $supportFields).Count -ne 0) {
+    throw 'Portable support configuration fields are invalid.'
+}
+$supportPublicKeySha256 = (
+    Get-FileHash -LiteralPath $supportPublicKeyPath -Algorithm SHA256
+).Hash.ToLowerInvariant()
+if (
+    $supportConfig.schema -ne 'peerbridge.feedback-config.v1' -or
+    $supportConfig.endpoint_transport -ne 'json-base64-v1' -or
+    $supportConfig.public_key_path -ne 'peerbridge-support-public.pub' -or
+    ([string]$supportConfig.public_key_sha256).ToLowerInvariant() -cne $supportPublicKeySha256 -or
+    $null -ne $supportConfig.support_email
+) {
+    throw 'Portable support configuration does not bind the packaged public key.'
+}
+$supportEndpoint = $null
+if (
+    -not [System.Uri]::TryCreate(
+        [string]$supportConfig.endpoint,
+        [System.UriKind]::Absolute,
+        [ref]$supportEndpoint
+    ) -or
+    $supportEndpoint.Scheme -cne 'https' -or
+    -not [string]::IsNullOrEmpty($supportEndpoint.UserInfo) -or
+    -not [string]::IsNullOrEmpty($supportEndpoint.Query) -or
+    -not [string]::IsNullOrEmpty($supportEndpoint.Fragment) -or
+    $supportEndpoint.AbsolutePath -cne '/v1/feedback'
+) {
+    throw 'Portable support endpoint is invalid.'
+}
+$sourceSupportRoot = Join-Path $projectRoot 'src\peerbridge_mcp\release_support'
+foreach ($supportName in @('support.json', 'peerbridge-support-public.pub')) {
+    $sourceSupportPath = Join-Path $sourceSupportRoot $supportName
+    $packagedSupportPath = Join-Path $supportRoot $supportName
+    if (
+        -not (Test-Path -LiteralPath $sourceSupportPath -PathType Leaf) -or
+        (Get-FileHash -LiteralPath $sourceSupportPath -Algorithm SHA256).Hash -cne
+        (Get-FileHash -LiteralPath $packagedSupportPath -Algorithm SHA256).Hash
+    ) {
+        throw "Portable support trust anchor differs from source: $supportName"
     }
 }
 
@@ -200,6 +305,19 @@ $cffiRuntimePresent = @(
 if ($cffiRuntimePresent -and $runtimeComponentNames -cnotcontains 'cffi') {
     throw 'Portable runtime-license manifest omits bundled cffi.'
 }
+$runtimeRoot = Join-Path $packageRoot.FullName '_internal'
+foreach ($runtimeBinding in @(
+    @{ Path = 'webview'; Component = 'PyWebView' },
+    @{ Path = 'pythonnet'; Component = 'pythonnet' },
+    @{ Path = 'clr_loader'; Component = 'clr-loader' }
+)) {
+    if (
+        (Test-Path -LiteralPath (Join-Path $runtimeRoot $runtimeBinding.Path)) -and
+        $runtimeComponentNames -cnotcontains $runtimeBinding.Component
+    ) {
+        throw "Portable runtime-license manifest omits bundled $($runtimeBinding.Component)."
+    }
+}
 $runtimeLicenseFiles = @(
     Get-ChildItem -LiteralPath $runtimeLicenseRoot -File |
         Where-Object { $_.Name -ne 'LICENSES_MANIFEST.json' }
@@ -238,7 +356,13 @@ foreach ($record in $runtimeLicenseRecords) {
     }
 }
 foreach ($component in $runtimeComponents) {
-    if ([string]::IsNullOrWhiteSpace([string]$component.version)) {
+    if (
+        [string]::IsNullOrWhiteSpace([string]$component.version) -or
+        ([string]$component.spdx_id) -cnotmatch '^SPDXRef-[A-Za-z0-9.-]+$' -or
+        [string]::IsNullOrWhiteSpace([string]$component.license_declared) -or
+        ([string]$component.package_url) -cnotmatch
+            '^pkg:[A-Za-z0-9.+-]+/[A-Za-z0-9._%+-]+@[A-Za-z0-9._%+-]+$'
+    ) {
         throw "Portable runtime-license component lacks a version: $($component.name)"
     }
     foreach ($licenseName in @($component.licenses)) {
@@ -264,10 +388,24 @@ if (
     throw 'Portable SPDX SBOM has an invalid document identity.'
 }
 $packages = @($sbom.packages)
-if ($packages.Count -ne 1) {
+if ($packages.Count -ne ($runtimeComponents.Count + 1)) {
+    throw 'Portable SPDX SBOM component count differs from the runtime manifest.'
+}
+$packageIds = [System.Collections.Generic.HashSet[string]]::new(
+    [System.StringComparer]::Ordinal
+)
+foreach ($candidatePackage in $packages) {
+    if (-not $packageIds.Add([string]$candidatePackage.SPDXID)) {
+        throw 'Portable SPDX SBOM contains duplicate package identifiers.'
+    }
+}
+$peerbridgePackages = @(
+    $packages | Where-Object { $_.SPDXID -eq 'SPDXRef-Package-PeerBridge-MCP' }
+)
+if ($peerbridgePackages.Count -ne 1) {
     throw 'Portable SPDX SBOM must describe exactly one PeerBridge package.'
 }
-$package = $packages[0]
+$package = $peerbridgePackages[0]
 $packageMatch = [regex]::Match(
     $packageRoot.Name,
     '^PeerBridgeControlRoom-(?<version>.+)-windows-x64-portable$'
@@ -276,9 +414,37 @@ if (
     -not $packageMatch.Success -or $package.name -ne 'peerbridge-mcp' -or
     $package.SPDXID -ne 'SPDXRef-Package-PeerBridge-MCP' -or
     $package.versionInfo -ne $packageMatch.Groups['version'].Value -or
-    $package.filesAnalyzed -ne $true -or $package.licenseDeclared -ne 'Apache-2.0'
+    $package.filesAnalyzed -ne $true -or $package.licenseDeclared -ne 'Apache-2.0' -or
+    $package.primaryPackagePurpose -ne 'APPLICATION'
 ) {
     throw 'Portable SPDX SBOM package metadata differs from the archive identity.'
+}
+foreach ($runtimeComponent in $runtimeComponents) {
+    $componentPackages = @(
+        $packages | Where-Object { $_.SPDXID -eq [string]$runtimeComponent.spdx_id }
+    )
+    if ($componentPackages.Count -ne 1) {
+        throw "Portable SPDX SBOM runtime component is missing: $($runtimeComponent.name)"
+    }
+    $componentPackage = $componentPackages[0]
+    $purlReferences = @(
+        $componentPackage.externalRefs |
+            Where-Object {
+                $_.referenceCategory -eq 'PACKAGE-MANAGER' -and
+                $_.referenceType -eq 'purl'
+            }
+    )
+    if (
+        $componentPackage.name -cne [string]$runtimeComponent.name -or
+        $componentPackage.versionInfo -cne [string]$runtimeComponent.version -or
+        $componentPackage.filesAnalyzed -ne $false -or
+        $componentPackage.licenseDeclared -cne [string]$runtimeComponent.license_declared -or
+        $componentPackage.primaryPackagePurpose -ne 'LIBRARY' -or
+        $purlReferences.Count -ne 1 -or
+        $purlReferences[0].referenceLocator -cne [string]$runtimeComponent.package_url
+    ) {
+        throw "Portable SPDX SBOM runtime component metadata differs: $($runtimeComponent.name)"
+    }
 }
 
 $actualFiles = @(
@@ -355,11 +521,33 @@ $containsIds = @(
         } |
         ForEach-Object { [string]$_.relatedSpdxElement }
 )
+$expectedContainsIds = @($seenIds | ForEach-Object { [string]$_ })
 if (
     $containsIds.Count -ne $seenIds.Count -or
-    @($containsIds | Where-Object { -not $seenIds.Contains($_) }).Count -ne 0
+    @(
+        Compare-Object `
+            -ReferenceObject $expectedContainsIds `
+            -DifferenceObject $containsIds
+    ).Count -ne 0
 ) {
     throw 'Portable SPDX SBOM package relationships do not match its files.'
+}
+$dependencyIds = @(
+    $sbom.relationships |
+        Where-Object {
+            $_.spdxElementId -eq 'SPDXRef-Package-PeerBridge-MCP' -and
+            $_.relationshipType -eq 'DEPENDS_ON'
+        } |
+        ForEach-Object { [string]$_.relatedSpdxElement }
+)
+$expectedDependencyIds = @(
+    $runtimeComponents | ForEach-Object { [string]$_.spdx_id }
+)
+if (
+    $dependencyIds.Count -ne $expectedDependencyIds.Count -or
+    @(Compare-Object -ReferenceObject $expectedDependencyIds -DifferenceObject $dependencyIds).Count -ne 0
+) {
+    throw 'Portable SPDX SBOM dependency relationships differ from runtime components.'
 }
 $describes = @(
     $sbom.relationships |
@@ -703,10 +891,6 @@ if (-not $SkipLiveAnnouncement) {
         -RequireReceipt `
         -ExpectedReceiptTest 'announcement-feed'
 }
-if (-not $Headless) {
-    $checks += Invoke-PortableCheck -Name 'ui-self-test' -Arguments @('--ui-self-test')
-}
-$checks += Invoke-PortableCheck -Name 'mcp-send-self-test' -Arguments @('--send-self-test')
 $runtimeRoot = Join-Path $OutputRoot 'runtime-smoke'
 $quotedRuntime = '"' + $runtimeRoot + '"'
 $checks += Invoke-PortableCheck -Name 'create-only-init' -Arguments @(
@@ -717,6 +901,33 @@ if (-not (Test-Path -LiteralPath $database -PathType Leaf)) {
     throw 'Portable create-only init did not create the expected SQLite database.'
 }
 $quotedDatabase = '"' + $database + '"'
+$monitorArguments = @(
+    '--project-root', $quotedRuntime,
+    '--db', $quotedDatabase,
+    '--scope', 'portable-e2e'
+)
+if (-not $Headless) {
+    foreach ($uiLocale in @('zh-Hant', 'zh-Hans', 'en')) {
+        foreach ($uiTheme in @('pixel', 'modern')) {
+            foreach ($uiScale in @('1.0', '1.25', '1.5')) {
+                $scaleName = $uiScale.Replace('.', '-')
+                $checks += Invoke-PortableCheck `
+                    -Name "ui-self-test-$uiLocale-$uiTheme-$scaleName" `
+                    -Arguments (
+                        $monitorArguments + @(
+                            '--ui-self-test',
+                            '--ui-scale-factor', $uiScale,
+                            '--locale', $uiLocale,
+                            '--theme', $uiTheme
+                        )
+                    )
+            }
+        }
+    }
+}
+$checks += Invoke-PortableCheck `
+    -Name 'mcp-send-self-test' `
+    -Arguments ($monitorArguments + @('--send-self-test'))
 $checks += Invoke-PortableCheck -Name 'audit-doctor' -Arguments @(
     '-m', 'peerbridge_mcp', 'doctor', '--project-root', $quotedRuntime,
     '--db', $quotedDatabase, '--scope', 'portable-e2e'
@@ -732,8 +943,13 @@ $checks += Invoke-StartupLifecycle -Name 'cmd-zero-argument' -ViaCmd
     RuntimeLicenseManifestSha256 = (
         Get-FileHash -LiteralPath $runtimeLicenseManifestPath -Algorithm SHA256
     ).Hash.ToLowerInvariant()
+    SupportConfigSha256 = (
+        Get-FileHash -LiteralPath $supportConfigPath -Algorithm SHA256
+    ).Hash.ToLowerInvariant()
+    SupportPublicKeySha256 = $supportPublicKeySha256
     ExtractedRoot = $packageRoot.FullName
     SbomFiles = $records.Count
+    SbomComponents = $runtimeComponents.Count
     PeMachine = ('0x{0:X4}' -f $peMachine)
     ProductVersion = $versionInfo.ProductVersion
     FileVersion = $versionInfo.FileVersion

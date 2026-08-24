@@ -4,6 +4,7 @@ import hashlib
 import runpy
 import struct
 import sys
+from types import SimpleNamespace
 from pathlib import Path
 
 from peerbridge_mcp.monitor import (
@@ -102,6 +103,14 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert "$hookRoot" in build_script
     assert "--additional-hooks-dir $hookRoot" in build_script
     assert "-m PyInstaller" not in build_script
+    assert "--collect-all webview" not in build_script
+    assert "--hidden-import webview" in build_script
+    assert "--collect-data peerbridge_mcp" not in build_script
+    assert "$packageData = [ordered]@{" in build_script
+    assert "@dataArguments" in build_script
+    assert "workbench\\app.js" in build_script
+    assert "acpx_runtime_bridge.mjs" in build_script
+    assert "--exclude-module cffi._shimmed_dist_utils" in build_script
     assert "--collect-all cryptography" not in build_script
     for module in (
         "cryptography.hazmat.primitives.hashes",
@@ -126,12 +135,29 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert ".peerbridge-artifacts" not in launcher
     assert "PeerBridgeControlRoom.exe" not in launcher
     assert "main as monitor_main" in entry
+    assert "make_server, run_native_workbench" in entry
+    assert "return run_native_workbench(workbench)" in entry
+    assert 'args[:1] == ["--legacy-pixel"]' in entry
+    webview_hook = (
+        PROJECT_ROOT / "scripts" / "pyinstaller-hooks" / "hook-webview.py"
+    ).read_text(encoding="utf-8")
+    assert 'collect_data_files("webview", subdir="lib")' in webview_hook
+    assert 'collect_data_files("webview", subdir="js")' in webview_hook
+    assert 'collect_dynamic_libs("webview")' in webview_hook
+    assert '"webview.platforms.edgechromium"' in webview_hook
+    top_level_imports = entry.split("STARTUP_TIMEOUT_SECONDS", maxsplit=1)[0]
+    assert "peerbridge_mcp.monitor" not in top_level_imports
+    assert "peerbridge_mcp.mailbox_supervisor" not in top_level_imports
+    assert "peerbridge_mcp.cli" not in top_level_imports
     assert "def _ensure_frozen_standard_streams()" in entry
     assert 'open(os.devnull, "w", encoding="utf-8")' in entry
     assert "_ensure_frozen_standard_streams()" in entry
     assert "PEERBRIDGE_SELF_TEST_RECEIPT_PATH" in entry
     assert "peerbridge-packaged-self-test-v1" in entry
     assert 'args == ["--announcement-self-test"]' in entry
+    assert 'args == ["--modern-workbench-self-test"]' in entry
+    assert '"test": "modern-workbench"' in entry
+    assert '"navigation_panel_count": 12' in entry
     assert '"test": "announcement-feed"' in entry
     assert "_write_json_create_only(receipt_path, receipt)" in entry
     assert '"runtime_sha256": _runtime_sha256()' in entry
@@ -177,6 +203,70 @@ def test_source_launcher_keeps_managed_children_in_the_active_environment() -> N
         assert environment["__PYVENV_LAUNCHER__"] == str(expected_runtime)
 
 
+def test_existing_instance_receipt_reports_the_running_binary_not_the_new_launcher(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry_path = PROJECT_ROOT / "scripts" / "peerbridge_control_room_entry.py"
+    namespace = runpy.run_path(str(entry_path), run_name="peerbridge_entry_identity_test")
+    requested = tmp_path / "requested.exe"
+    running = tmp_path / "running.exe"
+    requested.write_bytes(b"requested build")
+    running.write_bytes(b"older running build")
+    payload_factory = namespace["_existing_instance_payload"]
+    monkeypatch.setitem(payload_factory.__globals__, "_runtime_path", lambda: requested)
+    monkeypatch.setitem(payload_factory.__globals__, "_runtime_kind", lambda: "frozen")
+
+    payload = payload_factory(
+        {
+            "existing_pid": 1234,
+            "runtime_kind": "frozen",
+            "runtime_path": str(running),
+            "runtime_sha256": hashlib.sha256(running.read_bytes()).hexdigest(),
+        }
+    )
+
+    assert payload["runtime_path"] == str(running)
+    assert payload["runtime_sha256"] == hashlib.sha256(running.read_bytes()).hexdigest()
+    assert payload["requested_runtime_path"] == str(requested)
+    assert payload["requested_runtime_sha256"] == hashlib.sha256(
+        requested.read_bytes()
+    ).hexdigest()
+    assert payload["same_runtime"] is False
+    assert payload["version"] is None
+
+
+def test_missing_instance_mutex_returns_no_existing_control_room(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry_path = PROJECT_ROOT / "scripts" / "peerbridge_control_room_entry.py"
+    namespace = runpy.run_path(str(entry_path), run_name="peerbridge_entry_mutex_test")
+    activate = namespace["_activate_existing_control_room"]
+
+    class FakeFunction:
+        def __init__(self, result: object) -> None:
+            self.result = result
+
+        def __call__(self, *_args: object) -> object:
+            return self.result
+
+    kernel32 = SimpleNamespace(
+        OpenMutexW=FakeFunction(0),
+        CloseHandle=FakeFunction(True),
+    )
+    fake_ctypes = SimpleNamespace(
+        WinDLL=lambda *_args, **_kwargs: kernel32,
+        c_uint32=object,
+        c_bool=object,
+        c_wchar_p=object,
+        c_void_p=object,
+    )
+    monkeypatch.setitem(activate.__globals__, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setitem(activate.__globals__, "ctypes", fake_ctypes)
+
+    assert activate(wait_seconds=0) is None
+
+
 def test_pyinstaller_runner_avoids_windows_wmi_dependency() -> None:
     script = (PROJECT_ROOT / "scripts" / "run_pyinstaller.py").read_text(
         encoding="utf-8"
@@ -219,6 +309,12 @@ def test_windows_portable_packager_is_create_only_and_credential_free() -> None:
     assert "LicenseManifestSha256" in script
     assert "SPDX-2.3" in script
     assert "packageVerificationCodeValue" in script
+    assert "primaryPackagePurpose = 'APPLICATION'" in script
+    assert "primaryPackagePurpose = 'LIBRARY'" in script
+    assert "relationshipType = 'DEPENDS_ON'" in script
+    assert "referenceType = 'purl'" in script
+    assert "support_public_key_sha256" in script
+    assert "Portable support configuration does not bind the packaged public key" in script
     assert "Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256" in script
     assert '"%~dp0PeerBridgeControlRoom.exe"' in script
     assert 'PeerBridgeControlRoom\\PeerBridgeControlRoom.exe' not in script
@@ -238,9 +334,99 @@ def test_windows_runtime_license_collector_binds_exact_build_components() -> Non
     assert '"pyinstaller", "PyInstaller"' in script
     assert '"cryptography"' in script
     assert '"cffi"' in script
+    assert '"pywebview", "PyWebView"' in script
+    assert '"pythonnet"' in script
+    assert '"clr-loader"' in script
     assert '"Tcl-Tk"' in script
     assert '"sha256"' in script
+    assert '"spdx_id"' in script
+    assert '"license_declared"' in script
+    assert '"package_url"' in script
     assert "create-only" in script
+
+
+def test_runtime_license_manifest_emits_component_sbom_identity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import json
+
+    from scripts import collect_windows_runtime_licenses as collector
+
+    bundle = tmp_path / "bundle"
+    internal = bundle / "_internal"
+    crypto_licenses = internal / "cryptography-50.0.0.dist-info" / "licenses"
+    tk_data = internal / "_tk_data"
+    crypto_licenses.mkdir(parents=True)
+    tk_data.mkdir()
+    (internal / "python313.dll").write_bytes(b"python")
+    (internal / "_cffi_backend.cp313-win_amd64.pyd").write_bytes(b"cffi")
+    (internal / "tcl86t.dll").write_bytes(b"tcl")
+    for marker in ("webview", "pythonnet", "clr_loader"):
+        (internal / marker).mkdir()
+    (crypto_licenses / "LICENSE").write_text("crypto license\n", encoding="utf-8")
+    (tk_data / "license.terms").write_text("tcl license\n", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "LICENSE.txt").write_text("python license\n", encoding="utf-8")
+    monkeypatch.setattr(collector.sys, "base_prefix", str(runtime))
+
+    versions = {
+        "pyinstaller": "6.22.1",
+        "cffi": "2.1.1",
+        "pywebview": "6.1",
+        "pythonnet": "3.0.5",
+        "clr-loader": "0.2.7.post0",
+    }
+
+    def fake_distribution_licenses(
+        distribution_name: str,
+        component_name: str,
+        output_root: Path,
+    ):
+        source = tmp_path / f"{distribution_name}-LICENSE.txt"
+        source.write_text(f"{distribution_name} license\n", encoding="utf-8")
+        version = versions[distribution_name]
+        record = collector._copy_license(
+            source,
+            output_root,
+            f"{distribution_name}-{version}-LICENSE.txt",
+            component_name,
+            f"fixture:{distribution_name}",
+        )
+        return version, "MIT", [record]
+
+    monkeypatch.setattr(collector, "_distribution_licenses", fake_distribution_licenses)
+    monkeypatch.setattr(
+        collector.importlib.metadata,
+        "distribution",
+        lambda name: SimpleNamespace(
+            version="50.0.0",
+            metadata={"License-Expression": "Apache-2.0 OR BSD-3-Clause"},
+        ),
+    )
+
+    output = tmp_path / "licenses"
+    collector.collect(bundle, output)
+    manifest = json.loads(
+        (output / "LICENSES_MANIFEST.json").read_text(encoding="utf-8")
+    )
+    components = {item["name"]: item for item in manifest["components"]}
+
+    assert set(components) == {
+        "Python",
+        "PyInstaller",
+        "cryptography",
+        "cffi",
+        "PyWebView",
+        "pythonnet",
+        "clr-loader",
+        "Tcl-Tk",
+    }
+    assert components["Python"]["license_declared"] == "Python-2.0"
+    assert components["cryptography"]["package_url"] == "pkg:pypi/cryptography@50.0.0"
+    assert components["PyInstaller"]["spdx_id"] == "SPDXRef-Package-Runtime-PyInstaller"
+    assert all(item["package_url"].startswith("pkg:") for item in components.values())
 
 
 def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
@@ -256,10 +442,35 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "$maxExpandedBytes" in script
     assert "$maxMemberBytes" in script
     assert "$maxCompressionRatio" in script
+    assert "[System.IO.FileMode]::CreateNew" in script
+    assert "$stagedArchive" in script
+    assert "$archiveItem = Get-Item -LiteralPath $Archive" in script
+    assert "Add-Type -AssemblyName System.IO.Compression" in script
+    assert "Add-Type -AssemblyName System.IO.Compression.FileSystem" in script
+    assert "$sha256.ComputeHash($archiveStream)" in script
+    assert "Expand-Archive -LiteralPath $stagedArchive" in script
+    assert script.index("$archiveStream.Dispose()", script.index("$zip.Dispose()")) < script.index(
+        "Expand-Archive -LiteralPath $stagedArchive"
+    )
+    assert "Get-FileHash -LiteralPath $Archive" not in script
     assert "--ui-self-test" in script
+    assert "@('1.0', '1.25', '1.5')" in script
+    assert "--ui-scale-factor" in script
+    assert "@('zh-Hant', 'zh-Hans', 'en')" in script
+    assert "@('pixel', 'modern')" in script
+    assert "--locale" in script
+    assert "--theme" in script
     assert "--send-self-test" in script
     assert "--announcement-self-test" in script
     assert "SkipLiveAnnouncement" in script
+    assert script.index("-Name 'create-only-init'") < script.index(
+        '-Name "ui-self-test-$uiLocale-$uiTheme-$scaleName"'
+    )
+    assert "$monitorArguments = @(" in script
+    assert "'--ui-self-test'," in script
+    assert "'--locale', $uiLocale" in script
+    assert "'--theme', $uiTheme" in script
+    assert "-Arguments ($monitorArguments + @('--send-self-test'))" in script
     assert "'peerbridge_mcp', 'doctor'" in script
     assert "Portable create-only init did not create" in script
     assert "Portable localized quickstart differs from source" in script
@@ -268,10 +479,14 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "peerbridge.windows-runtime-licenses.v1" in script
     assert "Portable runtime-license file differs from its manifest" in script
     assert "Portable runtime-license manifest omits bundled cffi" in script
+    assert "Portable runtime-license manifest omits bundled" in script
     assert "Portable SPDX SBOM file count differs" in script
     assert "Portable SPDX SBOM checksum differs" in script
     assert "package verification code is invalid" in script
     assert "document namespace does not bind" in script
+    assert "dependency relationships differ from runtime components" in script
+    assert "Portable support configuration does not bind the packaged public key" in script
+    assert "SupportPublicKeySha256" in script
     assert "Get-PeMachine" in script
     assert "$peMachine -ne 0x8664" in script
     for field in (
@@ -298,6 +513,18 @@ def test_windows_portable_verifier_extracts_and_runs_real_mcp_checks() -> None:
     assert "taskkill" not in script.lower()
 
 
+def test_ui_self_test_is_hidden_before_layout_and_runs_offscreen() -> None:
+    source = (PROJECT_ROOT / "src" / "peerbridge_mcp" / "monitor.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert "hidden_self_test=True" in source
+    assert "if hidden_self_test:" in source
+    assert 'self.root.attributes("-alpha", 0.0)' in source
+    assert "self.root.overrideredirect(True)" in source
+    assert 'self.root.geometry("980x650-32000-32000")' in source
+
+
 def test_published_release_vm_workflow_verifies_the_downloaded_asset() -> None:
     workflow = (
         PROJECT_ROOT / ".github" / "workflows" / "release-vm-acceptance.yml"
@@ -314,7 +541,7 @@ def test_published_release_vm_workflow_verifies_the_downloaded_asset() -> None:
     assert "release_ref=refs/tags/$($env:RELEASE_TAG)" in workflow
     assert "tag = $env:RELEASE_TAG" in workflow
     assert "tag = '${{ inputs.tag }}'" not in workflow
-    assert "published-release-vm-acceptance.v1" in workflow
+    assert "published-release-vm-acceptance.v2" in workflow
     assert "source_commit = $env:SOURCE_COMMIT" in workflow
     assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
 
@@ -354,6 +581,11 @@ def test_alpha_five_is_published_as_a_normal_non_latest_release() -> None:
     assert "Publish GitHub Alpha release" in workflow
     assert "--latest=false" in workflow
     assert "--prerelease" not in workflow
+    assert (
+        "--notes-file release-publication/docs/"
+        "GITHUB_ALPHA_5_2_RELEASE_DRAFT_20260819.md"
+    ) in workflow
+    assert "--notes-file docs/GITHUB_ALPHA_RELEASE_DRAFT_20260818.md" not in workflow
 
 
 def test_brand_assets_are_explicitly_separate_from_apache_code_license() -> None:

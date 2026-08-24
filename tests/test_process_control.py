@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 
 import pytest
 
@@ -81,3 +82,38 @@ def test_job_termination_never_reopens_descendant_pids(
     process_control.terminate_process_tree(child)
 
     assert calls == [("terminate", 1), ("close", 0)]
+
+
+def test_bounded_stdin_writer_terminates_a_child_that_stops_reading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    released = threading.Event()
+    terminated: list[bool] = []
+
+    class BlockingInput:
+        closed = False
+
+        def write(self, _payload: bytes) -> int:
+            released.wait(1)
+            return 0
+
+        def flush(self) -> None:
+            return
+
+    class Process:
+        stdin = BlockingInput()
+
+    def terminate(_process, *, wait_seconds: float) -> None:
+        assert wait_seconds == 2
+        terminated.append(True)
+        released.set()
+
+    monkeypatch.setattr(process_control, "terminate_process_tree", terminate)
+
+    with pytest.raises(TimeoutError, match="bounded deadline"):
+        process_control.write_process_stdin_bounded(
+            Process(),  # type: ignore[arg-type]
+            b"payload",
+            timeout_seconds=0.01,
+        )
+    assert terminated == [True]

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "peerbridge-mcp"
-version = "0.1.0a5.post1"
+version = "0.1.0a5.post2"
 description = "Local-first, auditable MCP coordination for equal AI coding peers and their human operator."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -32,14 +32,16 @@ dev = [
   "setuptools==84.0.0",
   "wheel==0.48.0",
 ]
-windows = ["cryptography==50.0.0", "pyinstaller==6.22.1"]
+windows = [
+  "cryptography==50.0.0",
+  "pyinstaller==6.22.1",
+  "pywebview==6.2.1",
+]
 
 [project.scripts]
 peerbridge = "peerbridge_mcp.cli:main"
 peerbridge-monitor = "peerbridge_mcp.monitor:main"
 peerbridge-supervisor = "peerbridge_mcp.cli:supervisor_main"
-peerbridge-remote = "peerbridge_mcp.remote:main"
-peerbridge-remote-evidence = "peerbridge_mcp.remote_evidence:main"
 peerbridge-provider-receipt = "peerbridge_mcp.provider_receipt:capture_main"
 peerbridge-verify-provider-receipt = "peerbridge_mcp.provider_receipt:verify_main"
 peerbridge-mcp-client-receipt = "peerbridge_mcp.mcp_client_receipt:capture_main"
@@ -54,6 +56,8 @@ peerbridge-continuity = "peerbridge_mcp.continuity:main"
 peerbridge-room-fanout-receipt = "peerbridge_mcp.room_fanout_receipt:capture_main"
 peerbridge-verify-room-fanout-receipt = "peerbridge_mcp.room_fanout_receipt:verify_main"
 peerbridge-local-alpha-soak = "peerbridge_mcp.local_alpha_soak:main"
+peerbridge-proof-bundle = "peerbridge_mcp.proof_bundle:main"
+peerbridge-workbench = "peerbridge_mcp.local_workbench:main"
 
 [project.urls]
 Homepage = "https://github.com/hoylon/peerbridge-mcp"
@@ -67,7 +71,17 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-peerbridge_mcp = ["release_support/*.ico", "release_support/*.json", "release_support/*.pub", "release_support/*.png"]
+peerbridge_mcp = [
+  "release_support/*.ico",
+  "release_support/*.json",
+  "release_support/*.pub",
+  "release_support/*.png",
+  "release_support/*.py",
+  "workbench/*.html",
+  "workbench/*.css",
+  "workbench/*.js",
+  "*.mjs",
+]
 
 [tool.pytest.ini_options]
 addopts = "-q"

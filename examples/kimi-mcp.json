@@ -10,6 +10,8 @@
         "C:\\work\\my-project",
         "--agent-id",
         "kimi-code",
+        "--identity-capability",
+        "C:\\work\\my-project\\.peerbridge\\identity-capabilities\\<issued-file>.json",
         "--scope",
         "my-project"
       ]

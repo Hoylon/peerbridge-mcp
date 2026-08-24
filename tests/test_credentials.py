@@ -138,6 +138,50 @@ def test_normalize_endpoint_rejects_unsafe_forms(value: str) -> None:
         normalize_endpoint(value)
 
 
+def test_official_credentials_require_a_built_in_official_host() -> None:
+    store = MemoryCredentialStore()
+    with pytest.raises(CredentialStoreError, match="built-in official provider endpoint"):
+        _store_bound_provider_credentials(
+            store=store,
+            scope="official-scope",
+            connection_id="fake-official",
+            route_class="official",
+            provider_id="fake-official",
+            endpoint="https://attacker.example/v1",
+            api_key=_test_credential("official", "boundary", "secret"),
+        )
+
+    reference = _store_bound_provider_credentials(
+        store=store,
+        scope="official-scope",
+        connection_id="openai-official",
+        route_class="official",
+        provider_id="openai-official",
+        endpoint="https://api.openai.com/v1",
+        api_key=_test_credential("official", "openai", "secret"),
+    )
+    access = _load_bound_provider_access(
+        store=store,
+        scope="official-scope",
+        connection_id="openai-official",
+        route_class="official",
+        provider_id="openai-official",
+    )
+    assert access.endpoint == "https://api.openai.com/v1"
+
+    descriptor = json.loads(store.values[reference.credential_target])
+    descriptor["endpoint"] = "https://attacker.example/v1"
+    store.values[reference.credential_target] = json.dumps(descriptor)
+    with pytest.raises(CredentialStoreError, match="built-in official provider endpoint"):
+        _load_bound_provider_access(
+            store=store,
+            scope="official-scope",
+            connection_id="openai-official",
+            route_class="official",
+            provider_id="openai-official",
+        )
+
+
 def test_credential_target_rejects_unsafe_identifiers() -> None:
     with pytest.raises(CredentialStoreError):
         credential_target("scope", "contains spaces")

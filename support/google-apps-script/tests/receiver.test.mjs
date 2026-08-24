@@ -24,7 +24,11 @@ function unsignedBuffer(value) {
   return Buffer.from([...value].map((item) => (item + 256) % 256));
 }
 
-function receiver({ failSentStateWrites = 0, sendEmailFailures = 0 } = {}) {
+function receiver({
+  failSentStateWrites = 0,
+  sendEmailFailures = 0,
+  remainingDailyQuota = 100,
+} = {}) {
   const properties = new Map([
     ["PEERBRIDGE_INGRESS_HMAC_SECRET", TEST_INGRESS_SECRET],
     ["PEERBRIDGE_SUPPORT_EMAIL", "maintainer@example.com"],
@@ -61,7 +65,7 @@ function receiver({ failSentStateWrites = 0, sendEmailFailures = 0 } = {}) {
       },
     },
     MailApp: {
-      getRemainingDailyQuota: () => 100,
+      getRemainingDailyQuota: () => remainingDailyQuota,
       sendEmail(message) {
         mailAttempts.push(message);
         if (remainingSendFailures > 0) {
@@ -182,6 +186,22 @@ test("sends the verified private ZIP to the configured maintainer mailbox", () =
   assert.match(sent[0].body, /validated private feedback bundle is attached/u);
   assert.match(sent[0].body, /encrypted locally/u);
   assert.doesNotMatch(sent[0].body, /Synthetic parser failure/u);
+});
+
+
+test("anonymous feedback cannot consume protected mailbox capacity", () => {
+  const reserve = 20;
+  const atReserve = receiver({ remainingDailyQuota: reserve });
+  assert.deepEqual(post(atReserve.context, payload()), {
+    ok: false,
+    error: "protected_notification_capacity_reserved",
+  });
+  assert.equal(atReserve.sent.length, 0);
+  assert.equal(atReserve.properties.has("daily:2026-08-17"), false);
+
+  const aboveReserve = receiver({ remainingDailyQuota: reserve + 1 });
+  assert.equal(post(aboveReserve.context, payload()).receipt, "emailed_to_private_support");
+  assert.equal(aboveReserve.sent.length, 1);
 });
 
 test("rejects every unrecognized envelope field even when the known fields are signed", () => {

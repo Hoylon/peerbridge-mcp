@@ -33,11 +33,27 @@ def test_safe_attachments_are_content_addressed_and_idempotent(tmp_path: Path) -
         assert (tmp_path / item.relative_path).read_bytes() == payload
 
 
+def test_safe_audio_attachment_is_signature_checked_and_content_addressed(
+    tmp_path: Path,
+) -> None:
+    payload = b"RIFF" + (8).to_bytes(4, "little") + b"WAVE" + b"data"
+    audio = tmp_path / "private-recording.wav"
+    audio.write_bytes(payload)
+
+    (staged,) = stage_chat_attachments(tmp_path, [audio])
+
+    assert staged.media_type == "audio/wav"
+    assert staged.sha256 == hashlib.sha256(payload).hexdigest()
+    assert "private-recording" not in staged.relative_path
+    assert (tmp_path / staged.relative_path).read_bytes() == payload
+
+
 @pytest.mark.parametrize(
     ("name", "payload", "message"),
     [
         ("program.exe", b"MZ", "type is not allowed"),
         ("fake.png", b"this is not a png", "does not match"),
+        ("fake.wav", b"this is not a wav", "does not match"),
         ("broken.json", b"{not-json", "does not match"),
     ],
 )

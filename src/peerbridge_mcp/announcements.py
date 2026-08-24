@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
@@ -19,6 +20,9 @@ ANNOUNCEMENT_FEED_SCHEMA = "peerbridge.announcement-feed.v1"
 ANNOUNCEMENT_CACHE_SCHEMA = "peerbridge.announcement-cache.v1"
 ANNOUNCEMENT_PREFERENCES_SCHEMA = "peerbridge.announcement-preferences.v2"
 LEGACY_ANNOUNCEMENT_PREFERENCES_SCHEMA = "peerbridge.announcement-preferences.v1"
+PACKAGED_ANNOUNCEMENT_CONFIG_SHA256 = (
+    "d9dfe3d50c16e361f9208870b4b10030780042bbba1d6b71f970eb5a5908bc04"
+)
 SUPPORTED_LOCALES = frozenset({"en", "zh-Hans", "zh-Hant"})
 SUPPORTED_SEVERITIES = frozenset({"info", "important", "critical"})
 MAX_RESPONSE_BYTES = 256 * 1024
@@ -61,6 +65,15 @@ class AnnouncementConfig:
         path = Path(__file__).resolve().parent / "release_support" / "announcements.json"
         if not path.exists():
             return None
+        try:
+            config_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise AnnouncementError("packaged announcement configuration is unavailable") from exc
+        if not secrets.compare_digest(
+            config_sha256,
+            PACKAGED_ANNOUNCEMENT_CONFIG_SHA256,
+        ):
+            raise AnnouncementError("packaged announcement configuration trust anchor mismatch")
         return cls.load_from_file(path)
 
     @classmethod

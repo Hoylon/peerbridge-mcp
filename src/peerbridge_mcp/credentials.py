@@ -21,6 +21,17 @@ _ERROR_NOT_FOUND = 1168
 _MAX_CREDENTIAL_BLOB_BYTES = 2560
 _DESCRIPTOR_SCHEMA = "peerbridge.provider-credential.v2"
 _LOCAL_DESCRIPTOR_KIND = "local-openai-compatible"
+_OFFICIAL_API_HOSTS = frozenset(
+    {
+        "api.anthropic.com",
+        "api.deepseek.com",
+        "api.moonshot.cn",
+        "api.openai.com",
+        "api.x.ai",
+        "aiplatform.googleapis.com",
+        "generativelanguage.googleapis.com",
+    }
+)
 
 
 class CredentialStoreError(RuntimeError):
@@ -259,6 +270,20 @@ def _bound_route(route_class: str) -> str:
     return route
 
 
+def _require_official_endpoint(endpoint: str) -> None:
+    parsed = urlsplit(endpoint)
+    host = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or host not in _OFFICIAL_API_HOSTS
+        or parsed.port not in {None, 443}
+    ):
+        raise CredentialStoreError(
+            "official routes must use a built-in official provider endpoint; "
+            "use relay for custom HTTPS endpoints"
+        )
+
+
 def _version_fingerprint(version_id: str) -> str:
     return hashlib.sha256(
         f"PeerBridgeMCP:opaque-credential-version:{version_id}".encode("ascii")
@@ -302,6 +327,8 @@ def store_provider_credentials(
     route = _bound_route(route_class)
     if route == "local":
         raise CredentialStoreError("remote provider credentials cannot use local route class")
+    if route == "official":
+        _require_official_endpoint(normalized_endpoint)
     bound_provider = _bound_identifier(provider_id or connection_id, "provider ID")
     secret = str(api_key or "").strip()
     if not secret or len(secret) > 2048:
@@ -439,6 +466,8 @@ def load_provider_access(
             or not re.fullmatch(r"[0-9a-f]{32}", version_id)
         ):
             raise CredentialStoreError("provider credential binding mismatch")
+    if route == "official":
+        _require_official_endpoint(endpoint)
 
     api_key: str | None
     if route == "local":

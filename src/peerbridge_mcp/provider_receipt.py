@@ -14,7 +14,9 @@ import sys
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
+from .agent_identity import AgentIdentityError, verify_agent_identity_launch_args
 from .bridge import ZERO_SHA256, sha256_bytes, stable_sha256, utc_now
+from .child_environment import build_local_child_environment
 from .secret_scan import contains_secret
 
 
@@ -114,14 +116,19 @@ def _stream_prefix_sha256(path: Path, line_count: int) -> str:
 
 def _session_identity(session: dict[str, Any]) -> dict[str, Any]:
     """Select fields that identify a session but do not change as it continues."""
+
+    command = str(session.get("agent_command") or "").strip()
+    argv = _safe_command_args(session.get("agent_argv") or (), "Agent argv")
+    if not command or len(command) > 240 or contains_secret(command):
+        raise ReceiptError("Agent command identity is invalid or sensitive")
     return {
         "schema": session.get("schema"),
         "acpx_record_id": session.get("acpx_record_id"),
         "acp_session_id": session.get("acp_session_id"),
         "agent_session_id": session.get("agent_session_id"),
-        "agent_command": session.get("agent_command"),
-        "agent_argv": session.get("agent_argv"),
-        "cwd": session.get("cwd"),
+        "agent_command": command,
+        "agent_argv_sha256": stable_sha256(argv),
+        "cwd_sha256": stable_sha256(str(session.get("cwd") or "")),
         "name": session.get("name"),
         "created_at": session.get("created_at"),
         "protocol_version": session.get("protocol_version"),
@@ -134,6 +141,7 @@ def _provider_version(binary: Path, version_args: Iterable[str]) -> str:
         [str(binary), *version_args],
         text=True,
         capture_output=True,
+        env=build_local_child_environment(),
         timeout=30,
         check=False,
     )
@@ -142,7 +150,15 @@ def _provider_version(binary: Path, version_args: Iterable[str]) -> str:
         raise ReceiptError(
             f"provider version command failed ({completed.returncode}): {binary}"
         )
-    return output.splitlines()[0].strip()
+    version = output.splitlines()[0].strip()
+    if (
+        not version
+        or len(version) > 240
+        or any(character in version for character in "\x00\r\n")
+        or contains_secret(version)
+    ):
+        raise ReceiptError("provider version output is invalid or sensitive")
+    return version
 
 
 def _safe_command_args(values: Iterable[str], label: str) -> tuple[str, ...]:
@@ -200,11 +216,13 @@ def _write_json_create_only(path: Path, value: dict[str, Any]) -> None:
 
 def _route_from_args(args: list[str]) -> dict[str, str | None]:
     def option(name: str) -> str | None:
-        try:
-            index = args.index(name)
-        except ValueError:
+        positions = [index for index, value in enumerate(args) if value == name]
+        if not positions:
             return None
-        if index + 1 >= len(args):
+        if len(positions) != 1:
+            raise ReceiptError(f"MCP server option appears more than once: {name}")
+        index = positions[0]
+        if index + 1 >= len(args) or str(args[index + 1]).startswith("--"):
             raise ReceiptError(f"MCP server option lacks a value: {name}")
         return str(args[index + 1])
 
@@ -222,6 +240,7 @@ def _route_from_args(args: list[str]) -> dict[str, str | None]:
 def _mcp_config_evidence(
     path: Path,
     *,
+    db_path: Path,
     agent_id: str,
     scope: str,
     runtime_identity: dict[str, Any],
@@ -244,6 +263,15 @@ def _mcp_config_evidence(
             isinstance(value, str) for value in args
         ):
             raise ReceiptError("MCP config server command/args are invalid")
+        try:
+            sanitized_args, identity_capability = verify_agent_identity_launch_args(
+                args,
+                db_path=db_path,
+                scope=scope,
+                claimed_agent_id=agent_id,
+            )
+        except AgentIdentityError as exc:
+            raise ReceiptError("MCP config Agent identity binding is invalid") from exc
         route = _route_from_args(args)
         if not include_route_class:
             route.pop("route_class", None)
@@ -252,8 +280,9 @@ def _mcp_config_evidence(
                 {
                     "name": str(server.get("name") or ""),
                     "command": command,
-                    "args": args,
+                    "args": sanitized_args,
                     "route": route,
+                    "identity_capability": identity_capability,
                 }
             )
     if len(matches) != 1:
@@ -480,7 +509,9 @@ def capture_receipt(
     provider_version_args = _safe_command_args(
         provider_version_args, "provider version arguments"
     )
-    paths = [db_path, session_path, stream_path, provider_binary]
+    if mcp_config_path is None:
+        raise ReceiptError("provider receipt requires a capability-bound MCP config")
+    paths = [db_path, session_path, stream_path, provider_binary, mcp_config_path]
     for path in paths:
         if not path.is_file():
             raise ReceiptError(f"required evidence file is absent: {path}")
@@ -523,18 +554,18 @@ def capture_receipt(
         raise ReceiptError("ACPX tool output does not match PeerBridge tool.returned SHA")
     provider_identity_path = _hashable_file_path(provider_binary)
     artifacts: dict[str, Any] = {}
-    for name, path in (("acpx_cli", acpx_cli_path), ("mcp_config", mcp_config_path)):
+    for name, path in (("acpx_cli", acpx_cli_path),):
         if path is not None:
             if not path.is_file():
                 raise ReceiptError(f"optional evidence file is absent: {path}")
             artifacts[name] = {"path": str(path.resolve()), "sha256": _file_sha256(path)}
-    if mcp_config_path is not None:
-        artifacts["mcp_config"] = _mcp_config_evidence(
-            mcp_config_path,
-            agent_id=agent_id,
-            scope=scope,
-            runtime_identity=runtime_identity,
-        )
+    artifacts["mcp_config"] = _mcp_config_evidence(
+        mcp_config_path,
+        db_path=db_path,
+        agent_id=agent_id,
+        scope=scope,
+        runtime_identity=runtime_identity,
+    )
     receipt: dict[str, Any] = {
         "schema": RECEIPT_SCHEMA,
         "created_utc": utc_now(),
@@ -550,7 +581,9 @@ def capture_receipt(
         "acpx": {
             "record_id": session.get("acpx_record_id"),
             "acp_session_id": acp_session_id,
-            "agent_command": session.get("agent_command"),
+            "agent_command_sha256": stable_sha256(
+                str(session.get("agent_command") or "")
+            ),
             "current_model_id": current_model,
             "session_path": str(session_path.resolve()),
             "session_identity": _session_identity(session),
@@ -650,6 +683,7 @@ def verify_receipt(receipt_path: Path) -> dict[str, Any]:
         try:
             current_config = _mcp_config_evidence(
                 Path(artifacts["mcp_config"]["path"]),
+                db_path=Path(bridge["database_path"]),
                 agent_id=bridge["agent_id"],
                 scope=bridge["scope"],
                 runtime_identity=bridge["runtime_identity"],
@@ -735,7 +769,7 @@ def capture_main() -> int:
     parser.add_argument("--provider-binary", type=Path, required=True)
     parser.add_argument("--provider-version-arg", action="append", default=[])
     parser.add_argument("--acpx-cli", type=Path)
-    parser.add_argument("--mcp-config", type=Path)
+    parser.add_argument("--mcp-config", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     receipt = capture_receipt(
@@ -753,7 +787,7 @@ def capture_main() -> int:
         provider_binary=args.provider_binary.resolve(),
         provider_version_args=tuple(args.provider_version_arg or ["--version"]),
         acpx_cli_path=args.acpx_cli.resolve() if args.acpx_cli else None,
-        mcp_config_path=args.mcp_config.resolve() if args.mcp_config else None,
+        mcp_config_path=args.mcp_config.resolve(),
     )
     try:
         _write_json_create_only(args.output, receipt)

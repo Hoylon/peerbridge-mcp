@@ -59,6 +59,7 @@ def test_cloudflare_migration_chain_preserves_legacy_rows_and_enforces_caps(
             "0006_feedback_object_cleanup.sql",
             "0007_feedback_notification_retry.sql",
             "0008_feedback_notification_claim.sql",
+            "0009_external_capacity_and_announcement_reads.sql",
         ]
         for path in migration_paths:
             connection.executescript(path.read_text(encoding="utf-8"))
@@ -85,6 +86,25 @@ def test_cloudflare_migration_chain_preserves_legacy_rows_and_enforces_caps(
                 "UPDATE rate_limits SET request_count=501 "
                 "WHERE rate_key='attempt-global' AND rate_day='2026-08-17'"
             )
+        for rate_key, maximum, message in (
+            ("announcement-source:fixture", 240, "source announcement rate limit"),
+            ("announcement-global", 20_000, "global announcement rate limit"),
+            (
+                "notification-anonymous-global",
+                20,
+                "anonymous notification capacity",
+            ),
+        ):
+            connection.execute(
+                "INSERT INTO rate_limits VALUES (?, ?, ?, ?)",
+                (rate_key, "2026-08-18", maximum, "2026-08-18T00:00:00Z"),
+            )
+            with pytest.raises(sqlite3.IntegrityError, match=message):
+                connection.execute(
+                    "UPDATE rate_limits SET request_count=? "
+                    "WHERE rate_key=? AND rate_day='2026-08-18'",
+                    (maximum + 1, rate_key),
+                )
         cleanup_objects = dict(
             connection.execute(
                 "SELECT name, type FROM sqlite_master "

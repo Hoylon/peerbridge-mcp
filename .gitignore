@@ -38,10 +38,17 @@ venv/
 drafts/
 logs/
 *.log
+/tmp/
+/docs/CODEX_FOR_OSS_APPLICATION_ANSWERS_20260818_V2.pdf
+/docs/CODEX_FOR_OSS_APPLICATION_ANSWERS_20260818_V3.pdf
+/docs/CODEX_FOR_OSS_APPLICATION_ANSWERS_20260818_V4.pdf
+/docs/CODEX_FOR_OSS_APPLICATION_DRAFT_20260818.md
+/docs/CODEX_FOR_OSS_APPLICATION_DRAFT_20260818.pdf
 demo-workspace/
 .ruff_cache/
 .mypy_cache/
 node_modules/
+test-results/
 .wrangler/
 .dev.vars
 support/cloudflare-edge/wrangler.jsonc

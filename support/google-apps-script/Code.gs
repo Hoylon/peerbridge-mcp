@@ -2,6 +2,7 @@ const FEEDBACK_SCHEMA = "peerbridge.feedback-upload.v1";
 const MAX_BUNDLE_BYTES = 8 * 1024 * 1024;
 const MAX_ENVELOPE_CHARS = Math.ceil(MAX_BUNDLE_BYTES / 3) * 4 + 16 * 1024;
 const MAX_NEW_CASES_PER_UTC_DAY = 20;
+const PROTECTED_MAIL_QUOTA_RESERVE = 20;
 const MAX_UNRESOLVED_DELIVERIES = 20;
 const MAX_DELIVERY_ATTEMPTS = 3;
 const MAX_AUTH_SKEW_MS = 10 * 60 * 1000;
@@ -442,11 +443,15 @@ function doPost(event) {
     if (!Number.isFinite(dayCount) || dayCount < 0) {
       dayCount = 0;
     }
-    if (
-      (!isOperatorApprovedRetry && dayCount >= MAX_NEW_CASES_PER_UTC_DAY)
-      || MailApp.getRemainingDailyQuota() < 1
-    ) {
+    if (!isOperatorApprovedRetry && dayCount >= MAX_NEW_CASES_PER_UTC_DAY) {
       return fail_("daily_quota_reached");
+    }
+    var remainingMailQuota = Number(MailApp.getRemainingDailyQuota());
+    if (
+      !Number.isFinite(remainingMailQuota)
+      || remainingMailQuota <= PROTECTED_MAIL_QUOTA_RESERVE
+    ) {
+      return fail_("protected_notification_capacity_reserved");
     }
     if (!isOperatorApprovedRetry && unresolvedDeliveryCount_(properties, nowMs) >= MAX_UNRESOLVED_DELIVERIES) {
       return fail_("delivery_reconciliation_required");

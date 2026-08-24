@@ -16,7 +16,8 @@ maintainer notification and a second private delivery path.
 - Raw client IP addresses are never stored. A server-secret HMAC is used only for daily
   abuse limits.
 - Provider API keys may exist only inside a locally encrypted bundle. The Worker never
-  decrypts them.
+  decrypts them. Encrypted envelopes must name the non-secret DER SHA-256 fingerprint of
+  the support key shipped in the package; ordinary anonymous feedback needs no client secret.
 - Gmail notification is performed by a private Google Apps Script backend. The public desktop
   never receives its URL or the shared HMAC secret, and unsigned direct requests cannot mail.
 - Gmail receives the validated private ZIP as an attachment plus server-bound case metadata
@@ -24,7 +25,8 @@ maintainer notification and a second private delivery path.
   not copied into the email body. Any optional full credential is already encrypted locally
   to the pinned maintainer public key inside the ZIP.
 - Announcement publishing requires `ADMIN_TOKEN`. Announcement text cannot execute code,
-  invoke an Agent, or contain non-HTTPS links.
+  invoke an Agent, or contain non-HTTPS links. Public reads have independent per-source and
+  global D1 limits, and normalized responses use a five-minute edge cache.
 - Do not commit `wrangler.jsonc`, `.dev.vars`, binding IDs, admin tokens, rate salts, digest
   secrets, or a feedback decryption private key.
 
@@ -41,8 +43,9 @@ maintainer notification and a second private delivery path.
    `migrations/0005_global_feedback_attempt_cap.sql`, in that order. Apply
    `migrations/0006_feedback_object_cleanup.sql`,
    `migrations/0007_feedback_notification_retry.sql`, and
-   `migrations/0008_feedback_notification_claim.sql` in that order to both new and
-   existing databases.
+   `migrations/0008_feedback_notification_claim.sql`, then
+   `migrations/0009_external_capacity_and_announcement_reads.sql` in that order to both new
+   and existing databases.
    Do not re-run `schema.sql` over a live database as an upgrade mechanism.
 5. Add an independent R2 lifecycle rule for the `feedback/` prefix. The Worker cron is the
    primary metadata-aware deletion path; this bucket rule is the object-retention backstop:
@@ -56,6 +59,8 @@ maintainer notification and a second private delivery path.
    `wrangler secret put ADMIN_TOKEN` and `wrangler secret put RATE_SALT`.
    Each must be 32-256 non-whitespace characters; weak or incomplete
    configuration makes the Worker fail closed.
+   Keep `SUPPORT_PUBLIC_KEY_DER_SHA256` as the committed, non-secret DER fingerprint from the
+   packaged support key. It authenticates the encryption target, not the anonymous sender.
 7. Deploy the private Google Apps Script backend first. Store its exact `/exec` URL with
    `wrangler secret put GOOGLE_APPS_SCRIPT_URL`, and store the same 43-256 character opaque
    secret used by the Script Property with
@@ -75,6 +80,7 @@ every deployment without an admin or Worker secret:
 ```powershell
 $health = Invoke-RestMethod https://YOUR_WORKER/health
 if (-not $health.bindings.bundles -or
+    -not $health.bindings.support_key_fingerprint -or
     -not $health.retention.r2_lifecycle_rule.required -or
     $health.retention.r2_lifecycle_rule.prefix -ne 'feedback/' -or
     $health.retention.r2_lifecycle_rule.expiration_days -ne 30) {
@@ -115,7 +121,8 @@ deletes create durable D1 cleanup records for the scheduled retry path. Anonymou
 attempts have an independent per-source limit, so invalid traffic cannot consume the
 accepted global case allowance; valid new cases are capped independently per source and
 globally. Duplicate submissions remain idempotent and do not consume a second accepted-case
-slot.
+slot. Anonymous notification attempts have a separate daily cap, leaving outbound capacity
+for authenticated operational notifications and later retries.
 
 Cloudflare Email Service remains an optional domain-backed fallback through the
 `FEEDBACK_EMAIL` and `FEEDBACK_EMAIL_FROM` bindings. It is not needed for the zero-domain

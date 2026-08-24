@@ -16,7 +16,7 @@ PeerBridge 把 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本地模
 ### Windows 便携版（推荐）
 
 从 GitHub Alpha 正式发布页下载
-`PeerBridgeControlRoom-0.1.0a5.post1-windows-x64-portable.zip`，完整解压到可写入的文件夹，
+`PeerBridgeControlRoom-0.1.0a5.post2-windows-x64-portable.zip`，完整解压到可写入的文件夹，
 再双击 `Launch PeerBridge.cmd`。程序会把本地工作区放在
 `%LOCALAPPDATA%\PeerBridge\workspace`；压缩包不包含 provider 凭据或私人运行数据。
 
@@ -50,6 +50,26 @@ peerbridge monitor --project-root . --scope demo
 第一次打开会显示教程。你可以创建房间、把 Global Agent Library 的 Agent 加入
 房间、为每个 Seat 选择 provider／model／reasoning，然后由人类或 Agent 发布房间
 根消息。
+
+顶部“外观”可以选择“像素控制室”或“现代简约”。选择会保存在本机，重新启动
+控制室后应用；它不会下载或加载第三方主题代码。
+
+在 **01 多智能体控制台** 查看当前房间智能体及已授权的桌面或外部终端工作，无需先
+选择文件夹。只有启动新的受管 CLI 才要选择已安装的 Codex 或 Claude Code 和工作文件夹；
+工作内容通过 stdin 发送且不由控制台保存。所有角色都在 **02 对话** 的房间座位设置，
+默认是平等参与者。你可以用网格、聚焦或时间线查看各自的终端、活动、答案和证据。
+PeerBridge 只显示实际捕捉或经 adapter 明确授权的输出，不会声称看到隐藏思考，也
+不能补回在其他外部终端中发生的历史。
+
+要完成首次多智能体流程，先在 **02 对话** 准备至少两个已有模型路线的房间座位，再点击
+“启动只读调查与比较”。它会沿用同一房间、角色和路线，最多执行两轮；不会重开另一组
+智能体。对应的持久作业会显示在 **09 信任与任务验证工作**，可取消、超时、重试，并在
+程序重启后恢复跟踪。只有讨论真正完成时才会留下完成收据。
+
+在 **09 信任与任务验证工作** 可选择 Implement + Review、Investigate + Debate、Read-only Audit
+或 Release Gate 模板，并管理本地作业队列、计划、权限决策、隔离 Git worktree、
+Trust Timeline、任务简报、冲突和 Proof Bundle。Cloud collaboration 在 Alpha 5.2
+保持停用；本地 SQLite 仍是唯一协作权威。
 
 - **Off**：只记录，不唤醒模型。
 - **One round**：所有可用 Seat 同时回复一次。

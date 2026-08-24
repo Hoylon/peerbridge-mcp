@@ -10,6 +10,7 @@ from peerbridge_mcp.acp_client_receipt import (
     capture_receipt,
     verify_receipt,
 )
+from peerbridge_mcp.agent_identity import ensure_agent_identity_capability
 from peerbridge_mcp.bridge import Bridge
 from peerbridge_mcp.collaboration_receipt import CHILD_RECEIPT_VERIFIERS
 from peerbridge_mcp.provider_receipt import ReceiptError
@@ -19,7 +20,13 @@ from peerbridge_mcp.server import handle_request
 META = {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}
 
 
-def _server(root: Path, *, model_id: str = "sonnet") -> dict:
+def _server(
+    root: Path,
+    db: Path,
+    capability_path: Path,
+    *,
+    model_id: str = "sonnet",
+) -> dict:
     return {
         "name": "peerbridge-claude-test",
         "command": "python",
@@ -28,11 +35,15 @@ def _server(root: Path, *, model_id: str = "sonnet") -> dict:
             "peerbridge_mcp",
             "serve",
             "--project-root",
-            str(root),
+            str(root.resolve()),
+            "--db",
+            str(db.resolve()),
             "--agent-id",
             "claude-relay-test",
             "--scope",
             "acp-client-test",
+            "--identity-capability",
+            str(capability_path),
             "--client-name",
             "claude-agent-acp",
             "--provider-id",
@@ -54,7 +65,21 @@ def _write_evidence(
     model_id: str = "sonnet",
     allow_permission: bool = True,
 ) -> tuple[Path, Path]:
-    server = _server(root, model_id=model_id)
+    db = root / "bridge.sqlite3"
+    capability = ensure_agent_identity_capability(
+        root,
+        db,
+        "acp-client-test",
+        "claude-relay-test",
+        route_binding={
+            "client_name": "claude-agent-acp",
+            "provider_id": "relay:test",
+            "model_id": model_id,
+            "reasoning_mode": "default",
+            "route_class": None,
+        },
+    )
+    server = _server(root, db, capability.path, model_id=model_id)
     config = root / "claude-acp-config.json"
     config.write_text(json.dumps({"mcpServers": [server]}), encoding="utf-8")
     session_id = "claude-acp-session-test"
@@ -185,7 +210,7 @@ def _write_evidence(
     return transcript, config
 
 
-def _grok_server(root: Path) -> dict:
+def _grok_server(root: Path, db: Path, capability_path: Path) -> dict:
     return {
         "name": "peerbridge-grok-test",
         "command": "python",
@@ -194,11 +219,15 @@ def _grok_server(root: Path) -> dict:
             "peerbridge_mcp",
             "serve",
             "--project-root",
-            str(root),
+            str(root.resolve()),
+            "--db",
+            str(db.resolve()),
             "--agent-id",
             "grok-official-test",
             "--scope",
             "grok-acp-client-test",
+            "--identity-capability",
+            str(capability_path),
             "--client-name",
             "grok-build-acpx",
             "--provider-id",
@@ -214,7 +243,21 @@ def _grok_server(root: Path) -> dict:
 
 
 def _write_grok_evidence(root: Path, *, tool_result: dict) -> tuple[Path, Path]:
-    server = _grok_server(root)
+    db = root / "grok-bridge.sqlite3"
+    capability = ensure_agent_identity_capability(
+        root,
+        db,
+        "grok-acp-client-test",
+        "grok-official-test",
+        route_binding={
+            "client_name": "grok-build-acpx",
+            "provider_id": "xai-official:grok-build",
+            "model_id": "grok-4.6",
+            "reasoning_mode": "default",
+            "route_class": None,
+        },
+    )
+    server = _grok_server(root, db, capability.path)
     config = root / "grok-acp-config.json"
     config.write_text(json.dumps({"mcpServers": [server]}), encoding="utf-8")
     session_id = "grok-acp-session-test"

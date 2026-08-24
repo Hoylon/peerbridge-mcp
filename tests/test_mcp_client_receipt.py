@@ -7,6 +7,11 @@ from pathlib import Path
 import pytest
 
 import peerbridge_mcp.mcp_client_receipt as mcp_client_receipt_module
+from peerbridge_mcp.agent_identity import (
+    REDACTED_CAPABILITY_ARGUMENT,
+    ensure_agent_identity_capability,
+    revoke_agent_identity_capability,
+)
 from peerbridge_mcp.bridge import Bridge
 from peerbridge_mcp.mcp_client_receipt import capture_receipt, verify_receipt
 from peerbridge_mcp.server import handle_request
@@ -30,7 +35,15 @@ def _evidence(root: Path) -> tuple[dict, Path, Path, Path, Bridge]:
         "model_id": "gpt-test",
         "reasoning_mode": "high",
     }
-    bridge = Bridge(root, root / "bridge.sqlite3", agent_id, scope, **identity)
+    db = root / "bridge.sqlite3"
+    bridge = Bridge(root, db, agent_id, scope, **identity)
+    capability = ensure_agent_identity_capability(
+        root,
+        db,
+        scope,
+        agent_id,
+        route_binding={**identity, "route_class": None},
+    )
     response = handle_request(
         bridge,
         {
@@ -78,7 +91,29 @@ def _evidence(root: Path) -> tuple[dict, Path, Path, Path, Bridge]:
         "transport": {
             "type": "stdio",
             "command": sys.executable,
-            "args": ["-m", "peerbridge_mcp", "serve"],
+            "args": [
+                "-m",
+                "peerbridge_mcp",
+                "serve",
+                "--project-root",
+                str(root.resolve()),
+                "--db",
+                str(db.resolve()),
+                "--scope",
+                scope,
+                "--agent-id",
+                agent_id,
+                "--identity-capability",
+                str(capability.path),
+                "--client-name",
+                identity["client_name"],
+                "--provider-id",
+                identity["provider_id"],
+                "--model-id",
+                identity["model_id"],
+                "--reasoning-mode",
+                identity["reasoning_mode"],
+            ],
             "env": None,
             "env_vars": [],
             "cwd": None,
@@ -158,6 +193,22 @@ def test_receipt_binds_transcript_client_config_and_adjacent_events(tmp_path: Pa
     assert verified["valid"] is True
     assert verified["writes_performed"] == 0
     assert before == after
+    serialized = json.dumps(receipt, sort_keys=True)
+    assert REDACTED_CAPABILITY_ARGUMENT in serialized
+    assert "identity-capabilities" not in serialized
+
+
+def test_receipt_fails_closed_after_identity_capability_revocation(tmp_path: Path) -> None:
+    path, receipt = _capture(tmp_path)
+    binding = receipt["client"]["sanitized_mcp_config"]["identity_capability"]
+    revoke_agent_identity_capability(
+        tmp_path / "bridge.sqlite3",
+        "receipt-test",
+        binding["capability_id"],
+    )
+    verified = verify_receipt(path)
+    assert verified["valid"] is False
+    assert any(error.startswith("agent_identity:") for error in verified["errors"])
 
 
 def test_receipt_allows_append_only_bridge_events(tmp_path: Path) -> None:

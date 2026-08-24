@@ -91,6 +91,12 @@ configured explicitly and established by real discovery and inference evidence. 
 runner MUST reject any other response model and record requested, expected-response,
 and observed-response identities separately in its content-free receipt.
 
+Each route may also bind an explicit `inference_timeout_seconds` from 1 to 300.
+Omitting it keeps the audited defaults: 60 seconds for relay/local HTTP requests and
+180 seconds for native ACP. Slow build/reasoning routes must use a new immutable route
+ID with an explicit override; timeout policy must never be inferred from a model name,
+response alias, provider label, or credential backend.
+
 Model discovery receipts bind a canonical registry containing only sorted,
 deduplicated model IDs. Provider ordering, duplicate entries, and unrelated response
 metadata do not alter the registry hash. A model list never proves upstream provider

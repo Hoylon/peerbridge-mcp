@@ -7,13 +7,20 @@ import hashlib
 import importlib.metadata
 import json
 import platform
+import re
 import shutil
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 
 SCHEMA = "peerbridge.windows-runtime-licenses.v1"
+FROZEN_RUNTIME_DISTRIBUTIONS = (
+    ("pywebview", "PyWebView", ("webview",)),
+    ("pythonnet", "pythonnet", ("pythonnet",)),
+    ("clr-loader", "clr-loader", ("clr_loader",)),
+)
 
 
 class LicenseCollectionError(RuntimeError):
@@ -50,11 +57,50 @@ def _copy_license(
     }
 
 
+def _declared_license(distribution: importlib.metadata.Distribution) -> str:
+    value = str(distribution.metadata.get("License-Expression") or "").strip()
+    if (
+        not value
+        or len(value) > 200
+        or any(ord(character) < 0x20 or ord(character) > 0x7E for character in value)
+    ):
+        return "NOASSERTION"
+    return value
+
+
+def _purl(package_type: str, name: str, version: str) -> str:
+    return (
+        f"pkg:{package_type}/{quote(name, safe='._-')}@"
+        f"{quote(version, safe='._-+')}"
+    )
+
+
+def _component(
+    *,
+    name: str,
+    version: str,
+    scope: str,
+    licenses: list[str],
+    spdx_id: str,
+    license_declared: str,
+    package_url: str,
+) -> dict[str, Any]:
+    return {
+        "name": name,
+        "version": version,
+        "scope": scope,
+        "spdx_id": spdx_id,
+        "license_declared": license_declared,
+        "package_url": package_url,
+        "licenses": licenses,
+    }
+
+
 def _distribution_licenses(
     distribution_name: str,
     component_name: str,
     output_root: Path,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, str, list[dict[str, Any]]]:
     try:
         distribution = importlib.metadata.distribution(distribution_name)
     except importlib.metadata.PackageNotFoundError as exc:
@@ -90,7 +136,7 @@ def _distribution_licenses(
                 f"distribution:{distribution_name}/{item.as_posix()}",
             )
         )
-    return distribution.version, records
+    return distribution.version, _declared_license(distribution), records
 
 
 def collect(bundle_root: Path, output_root: Path) -> dict[str, Any]:
@@ -122,25 +168,31 @@ def collect(bundle_root: Path, output_root: Path) -> dict[str, Any]:
     )
     files.append(python_record)
     components.append(
-        {
-            "name": "Python",
-            "version": platform.python_version(),
-            "scope": "bundled-runtime",
-            "licenses": [python_record["path"]],
-        }
+        _component(
+            name="Python",
+            version=platform.python_version(),
+            scope="bundled-runtime",
+            spdx_id="SPDXRef-Package-Runtime-CPython",
+            license_declared="Python-2.0",
+            package_url=_purl("generic", "cpython", platform.python_version()),
+            licenses=[python_record["path"]],
+        )
     )
 
-    pyinstaller_version, pyinstaller_records = _distribution_licenses(
+    pyinstaller_version, pyinstaller_license, pyinstaller_records = _distribution_licenses(
         "pyinstaller", "PyInstaller", destination
     )
     files.extend(pyinstaller_records)
     components.append(
-        {
-            "name": "PyInstaller",
-            "version": pyinstaller_version,
-            "scope": "bundled-bootloader",
-            "licenses": [record["path"] for record in pyinstaller_records],
-        }
+        _component(
+            name="PyInstaller",
+            version=pyinstaller_version,
+            scope="bundled-bootloader",
+            spdx_id="SPDXRef-Package-Runtime-PyInstaller",
+            license_declared=pyinstaller_license,
+            package_url=_purl("pypi", "pyinstaller", pyinstaller_version),
+            licenses=[record["path"] for record in pyinstaller_records],
+        )
     )
 
     cryptography_infos = sorted(internal.glob("cryptography-*.dist-info"))
@@ -152,6 +204,16 @@ def collect(bundle_root: Path, output_root: Path) -> dict[str, Any]:
     cryptography_version = cryptography_info.name.removeprefix("cryptography-").removesuffix(
         ".dist-info"
     )
+    try:
+        cryptography_distribution = importlib.metadata.distribution("cryptography")
+    except importlib.metadata.PackageNotFoundError as exc:
+        raise LicenseCollectionError(
+            "required build distribution is missing: cryptography"
+        ) from exc
+    if cryptography_distribution.version != cryptography_version:
+        raise LicenseCollectionError(
+            "bundled cryptography version differs from the build distribution"
+        )
     cryptography_sources = sorted((cryptography_info / "licenses").glob("*"))
     if not cryptography_sources:
         raise LicenseCollectionError("bundled cryptography licenses are missing")
@@ -170,26 +232,52 @@ def collect(bundle_root: Path, output_root: Path) -> dict[str, Any]:
         cryptography_records.append(record)
         files.append(record)
     components.append(
-        {
-            "name": "cryptography",
-            "version": cryptography_version,
-            "scope": "bundled-runtime",
-            "licenses": [record["path"] for record in cryptography_records],
-        }
+        _component(
+            name="cryptography",
+            version=cryptography_version,
+            scope="bundled-runtime",
+            spdx_id="SPDXRef-Package-Runtime-cryptography",
+            license_declared=_declared_license(cryptography_distribution),
+            package_url=_purl("pypi", "cryptography", cryptography_version),
+            licenses=[record["path"] for record in cryptography_records],
+        )
     )
 
     if list(internal.glob("_cffi_backend*.pyd")):
-        cffi_version, cffi_records = _distribution_licenses(
+        cffi_version, cffi_license, cffi_records = _distribution_licenses(
             "cffi", "cffi", destination
         )
         files.extend(cffi_records)
         components.append(
-            {
-                "name": "cffi",
-                "version": cffi_version,
-                "scope": "bundled-runtime",
-                "licenses": [record["path"] for record in cffi_records],
-            }
+            _component(
+                name="cffi",
+                version=cffi_version,
+                scope="bundled-runtime",
+                spdx_id="SPDXRef-Package-Runtime-cffi",
+                license_declared=cffi_license,
+                package_url=_purl("pypi", "cffi", cffi_version),
+                licenses=[record["path"] for record in cffi_records],
+            )
+        )
+
+    for distribution_name, component_name, markers in FROZEN_RUNTIME_DISTRIBUTIONS:
+        if not any((internal / marker).exists() for marker in markers):
+            continue
+        version, declared, records = _distribution_licenses(
+            distribution_name, component_name, destination
+        )
+        files.extend(records)
+        spdx_name = re.sub(r"[^A-Za-z0-9.-]", "-", component_name)
+        components.append(
+            _component(
+                name=component_name,
+                version=version,
+                scope="bundled-runtime",
+                spdx_id=f"SPDXRef-Package-Runtime-{spdx_name}",
+                license_declared=declared,
+                package_url=_purl("pypi", distribution_name, version),
+                licenses=[record["path"] for record in records],
+            )
         )
 
     if (internal / "tcl86t.dll").is_file() or (internal / "tk86t.dll").is_file():
@@ -203,12 +291,15 @@ def collect(bundle_root: Path, output_root: Path) -> dict[str, Any]:
         )
         files.append(tcl_tk_record)
         components.append(
-            {
-                "name": "Tcl-Tk",
-                "version": "8.6",
-                "scope": "bundled-runtime",
-                "licenses": [tcl_tk_record["path"]],
-            }
+            _component(
+                name="Tcl-Tk",
+                version="8.6",
+                scope="bundled-runtime",
+                spdx_id="SPDXRef-Package-Runtime-Tcl-Tk",
+                license_declared="TCL",
+                package_url=_purl("generic", "tcl-tk", "8.6"),
+                licenses=[tcl_tk_record["path"]],
+            )
         )
 
     manifest = {

@@ -16,6 +16,28 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Resolve-TrustedTailscaleExecutable {
+    $Candidates = @(
+        (Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe')
+    )
+    if (-not [string]::IsNullOrWhiteSpace(${env:ProgramFiles(x86)})) {
+        $Candidates += Join-Path ${env:ProgramFiles(x86)} 'Tailscale\tailscale.exe'
+    }
+    foreach ($Candidate in $Candidates) {
+        if (-not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { continue }
+        $Item = Get-Item -LiteralPath $Candidate -Force
+        if (($Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { continue }
+        $Signature = Get-AuthenticodeSignature -LiteralPath $Candidate
+        if ($Signature.Status -ne 'Valid' -or
+            $null -eq $Signature.SignerCertificate -or
+            $Signature.SignerCertificate.Subject -notmatch '(^|,\s*)O=Tailscale Inc\.(,|$)') {
+            continue
+        }
+        return $Item.FullName
+    }
+    throw 'A publisher-verified Tailscale CLI was not found in Program Files.'
+}
 if ($Port -lt 1 -or $Port -gt 65535) {
     throw "PeerBridge remote port must be between 1 and 65535."
 }
@@ -44,7 +66,7 @@ $HealthTimeoutSeconds = 2
 $ExternalTimeoutSeconds = 20
 $Root = $ProductionRoot
 $BackendExecutable = Join-Path $Root ".venv\Scripts\python.exe"
-$TailscaleExecutable = "tailscale.exe"
+$TailscaleExecutable = $null
 
 if ($TestMode) {
     if ($env:PEERBRIDGE_REMOTE_LAUNCHER_TESTING -ne "isolated-fixture-v1") {
@@ -89,6 +111,8 @@ if ($TestMode) {
     $HealthDelayMilliseconds = $TestHealthDelayMilliseconds
     $HealthTimeoutSeconds = $TestHealthTimeoutSeconds
     $ExternalTimeoutSeconds = $TestExternalTimeoutSeconds
+} else {
+    $TailscaleExecutable = Resolve-TrustedTailscaleExecutable
 }
 
 $State = Join-Path $Root ".peerbridge"

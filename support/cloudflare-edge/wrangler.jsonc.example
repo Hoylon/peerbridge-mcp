@@ -21,6 +21,9 @@
       "bucket_name": "peerbridge-feedback-bundles"
     }
   ],
+  "vars": {
+    "SUPPORT_PUBLIC_KEY_DER_SHA256": "04dedc1d8982654ede5a58146d292666467130274fcb0c4a0f813b0509f8eea3"
+  },
   "triggers": {
     "crons": ["17 * * * *"]
   }

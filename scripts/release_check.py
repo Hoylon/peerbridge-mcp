@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import copy
 import configparser
+import csv
 import gzip
 import hashlib
+import io
 import json
 import os
 import re
@@ -78,6 +81,9 @@ PRIVATE_PATTERNS = (
     re.compile(r"(?i)source_discovery_[A-Za-z0-9_-]+"),
     re.compile(r"(?i)[A-Z]:[\\/]Users[\\/][^\\/\r\n]+"),
     re.compile(r"(?i)/(?:Users|home)/[^/\r\n]+"),
+)
+PUBLIC_SANDBOX_HOME_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_.-])/" + r"home/peerbridge(?=/|[\s'\"),]|$)"
 )
 TEXT_FILENAMES = {
     "Dockerfile",
@@ -225,6 +231,9 @@ class ProjectInfo:
     source_modules: tuple[str, ...]
     package_data: tuple[str, ...]
     scripts: Mapping[str, str]
+    requires_python: str
+    dependencies: tuple[str, ...]
+    optional_dependencies: Mapping[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True)
@@ -1152,6 +1161,9 @@ def load_project_info(root: Path = ROOT) -> ProjectInfo:
     name = project.get("name")
     version = project.get("version")
     scripts = project.get("scripts", {})
+    requires_python = project.get("requires-python")
+    dependencies = project.get("dependencies", [])
+    optional_dependencies = project.get("optional-dependencies", {})
     if not isinstance(name, str) or not name.strip():
         raise ReleaseCheckError("project.name must be a non-empty string")
     if not isinstance(version, str) or not version.strip():
@@ -1160,6 +1172,22 @@ def load_project_info(root: Path = ROOT) -> ProjectInfo:
         isinstance(key, str) and isinstance(value, str) for key, value in scripts.items()
     ):
         raise ReleaseCheckError("project.scripts must contain string entry points")
+    if not isinstance(requires_python, str) or not requires_python.strip():
+        raise ReleaseCheckError("project.requires-python must be a non-empty string")
+    if not isinstance(dependencies, list) or not all(
+        isinstance(value, str) and value.strip() for value in dependencies
+    ):
+        raise ReleaseCheckError("project.dependencies must contain requirement strings")
+    if not isinstance(optional_dependencies, dict) or not all(
+        isinstance(extra, str)
+        and extra.strip()
+        and isinstance(values, list)
+        and all(isinstance(value, str) and value.strip() for value in values)
+        for extra, values in optional_dependencies.items()
+    ):
+        raise ReleaseCheckError(
+            "project.optional-dependencies must contain requirement lists"
+        )
 
     source_base = _source_base(project_document, root)
     modules = tuple(
@@ -1184,6 +1212,12 @@ def load_project_info(root: Path = ROOT) -> ProjectInfo:
         source_modules=modules,
         package_data=package_data,
         scripts=dict(scripts),
+        requires_python=requires_python.strip(),
+        dependencies=tuple(dependencies),
+        optional_dependencies={
+            str(extra): tuple(values)
+            for extra, values in optional_dependencies.items()
+        },
     )
 
 
@@ -1231,6 +1265,17 @@ def _is_test_source_path(relative: str) -> bool:
     return "tests" in PurePosixPath(relative).parts
 
 
+def _contains_private_path_or_project_marker(text: str) -> bool:
+    # The fixed `peerbridge` Linux account is a public sandbox identity, not
+    # an operator-specific home. Match it only on a path boundary so a
+    # lookalike account name remains blocked.
+    inspected = PUBLIC_SANDBOX_HOME_PATTERN.sub(
+        "/opt/peerbridge-public-sandbox",
+        text,
+    )
+    return any(pattern.search(inspected) for pattern in PRIVATE_PATTERNS)
+
+
 def run_dev_checks(root: Path = ROOT) -> DevCheckResult:
     errors: list[str] = []
     missing = sorted(name for name in REQUIRED if not (root / name).is_file())
@@ -1260,7 +1305,7 @@ def run_dev_checks(root: Path = ROOT) -> DevCheckResult:
         except (OSError, UnicodeError):
             errors.append(f"text file is not readable UTF-8: {relative}")
             continue
-        if any(pattern.search(text) for pattern in PRIVATE_PATTERNS):
+        if _contains_private_path_or_project_marker(text):
             errors.append(f"private path or project marker in {relative}")
         if any(marker in text for marker in local_markers):
             errors.append(f"operator denylist match in {relative}")
@@ -1320,6 +1365,38 @@ def _archive_size_errors(
     return errors
 
 
+def _requirement_key(value: str, *, extra: str | None = None) -> tuple[object, ...]:
+    try:
+        from packaging.requirements import Requirement
+        from packaging.utils import canonicalize_name
+    except ImportError as exc:
+        raise ReleaseCheckError("packaging is required for artifact metadata checks") from exc
+    try:
+        requirement = Requirement(value)
+    except Exception as exc:
+        raise ReleaseCheckError("project requirement metadata is invalid") from exc
+    marker = str(requirement.marker) if requirement.marker is not None else ""
+    if extra is not None:
+        extra_marker = f'extra == "{extra}"'
+        marker = f"({marker}) and {extra_marker}" if marker else extra_marker
+    return (
+        canonicalize_name(requirement.name),
+        tuple(sorted(requirement.extras)),
+        str(requirement.specifier),
+        requirement.url or "",
+        marker,
+    )
+
+
+def _expected_requires_dist(info: ProjectInfo) -> tuple[tuple[object, ...], ...]:
+    expected = [_requirement_key(value) for value in info.dependencies]
+    for extra, requirements in info.optional_dependencies.items():
+        expected.extend(
+            _requirement_key(value, extra=extra) for value in requirements
+        )
+    return tuple(sorted(expected, key=repr))
+
+
 def _metadata_errors(text: str, info: ProjectInfo, label: str) -> list[str]:
     metadata = Parser().parsestr(text)
     errors: list[str] = []
@@ -1327,6 +1404,80 @@ def _metadata_errors(text: str, info: ProjectInfo, label: str) -> list[str]:
         errors.append(f"{label} project name differs from pyproject.toml")
     if metadata.get("Version") != info.version:
         errors.append(f"{label} version differs from pyproject.toml")
+    if metadata.get("Requires-Python") != info.requires_python:
+        errors.append(f"{label} Requires-Python differs from pyproject.toml")
+    actual_extras = tuple(sorted(metadata.get_all("Provides-Extra") or ()))
+    expected_extras = tuple(sorted(info.optional_dependencies))
+    if actual_extras != expected_extras:
+        errors.append(f"{label} optional extras differ from pyproject.toml")
+    try:
+        actual_requirements = tuple(
+            sorted(
+                (_requirement_key(value) for value in metadata.get_all("Requires-Dist") or ()),
+                key=repr,
+            )
+        )
+        expected_requirements = _expected_requires_dist(info)
+    except ReleaseCheckError as exc:
+        errors.append(f"{label} requirement metadata is invalid: {exc}")
+    else:
+        if actual_requirements != expected_requirements:
+            errors.append(f"{label} dependencies differ from pyproject.toml")
+    return errors
+
+
+def _wheel_control_errors(
+    archive_payloads: Mapping[str, bytes], dist_info: str
+) -> list[str]:
+    errors: list[str] = []
+    wheel_name = f"{dist_info}/WHEEL"
+    record_name = f"{dist_info}/RECORD"
+    wheel_payload = archive_payloads.get(wheel_name)
+    if wheel_payload is None:
+        errors.append("wheel is missing WHEEL metadata")
+    else:
+        try:
+            wheel_metadata = Parser().parsestr(wheel_payload.decode("utf-8"))
+        except UnicodeDecodeError:
+            errors.append("wheel WHEEL metadata is not UTF-8")
+        else:
+            expected = {
+                "Wheel-Version": "1.0",
+                "Root-Is-Purelib": "true",
+                "Tag": "py3-none-any",
+            }
+            for key, value in expected.items():
+                if wheel_metadata.get(key) != value:
+                    errors.append(f"wheel {key} is invalid")
+    record_payload = archive_payloads.get(record_name)
+    if record_payload is None:
+        errors.append("wheel is missing RECORD metadata")
+        return errors
+    try:
+        rows = list(csv.reader(io.StringIO(record_payload.decode("utf-8"))))
+    except (UnicodeDecodeError, csv.Error):
+        errors.append("wheel RECORD metadata is invalid")
+        return errors
+    records: dict[str, tuple[str, str]] = {}
+    for row in rows:
+        if len(row) != 3 or not row[0] or row[0] in records:
+            errors.append("wheel RECORD rows are malformed or duplicated")
+            return errors
+        records[row[0]] = (row[1], row[2])
+    if set(records) != set(archive_payloads):
+        errors.append("wheel RECORD member inventory does not match the archive")
+        return errors
+    for name, payload in archive_payloads.items():
+        digest, size = records[name]
+        if name == record_name:
+            if digest or size:
+                errors.append("wheel RECORD self-entry must omit hash and size")
+            continue
+        expected_digest = base64.urlsafe_b64encode(
+            hashlib.sha256(payload).digest()
+        ).rstrip(b"=").decode("ascii")
+        if digest != f"sha256={expected_digest}" or size != str(len(payload)):
+            errors.append(f"wheel RECORD binding differs for {name}")
     return errors
 
 
@@ -1445,6 +1596,7 @@ def _wheel_errors(path: Path, info: ProjectInfo, root: Path) -> list[str]:
             errors.extend(
                 _source_payload_errors(archive_payloads, source_bound, "wheel")
             )
+            errors.extend(_wheel_control_errors(archive_payloads, dist_info))
             metadata_names = [
                 name for name in names if name.endswith(".dist-info/METADATA")
             ]

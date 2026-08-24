@@ -17,7 +17,8 @@ import pytest
 
 import peerbridge_mcp.lifecycle_receipt as lifecycle_receipt
 from peerbridge_mcp import __version__
-from peerbridge_mcp.bridge import stable_sha256
+from peerbridge_mcp.agent_identity import ensure_agent_identity_capability
+from peerbridge_mcp.bridge import Bridge, stable_sha256
 from peerbridge_mcp.lifecycle_receipt import (
     EVIDENCE_SCHEMA,
     RECEIPT_SCHEMA,
@@ -56,6 +57,7 @@ class _StdioChild:
         db_path: Path,
         scope: str,
         agent_id: str,
+        identity_capability_path: Path,
         session_id: str,
         allowed_tools: tuple[str, ...],
     ) -> None:
@@ -72,6 +74,8 @@ class _StdioChild:
             scope,
             "--agent-id",
             agent_id,
+            "--identity-capability",
+            str(identity_capability_path),
             "--session-id",
             session_id,
         ]
@@ -281,6 +285,15 @@ def _run_lifecycle(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], list[_St
     agent_id = "recovering-agent"
     session_id = "bounded-session"
     children: list[_StdioChild] = []
+    Bridge(project_root, db_path, "test-identity-authority", scope)
+    identity_capability = ensure_agent_identity_capability(
+        project_root,
+        db_path,
+        scope,
+        agent_id,
+        allowed_tools=("bridge_status", "poll_messages", "send_message"),
+        issued_by="test-lifecycle-receipt",
+    )
 
     try:
         before = _StdioChild(
@@ -288,6 +301,7 @@ def _run_lifecycle(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], list[_St
             db_path=db_path,
             scope=scope,
             agent_id=agent_id,
+            identity_capability_path=identity_capability.path,
             session_id=session_id,
             allowed_tools=("bridge_status", "send_message"),
         )
@@ -339,6 +353,7 @@ def _run_lifecycle(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], list[_St
             db_path=db_path,
             scope=scope,
             agent_id=agent_id,
+            identity_capability_path=identity_capability.path,
             session_id=session_id,
             allowed_tools=("bridge_status", "poll_messages"),
         )
@@ -375,6 +390,8 @@ def _run_lifecycle(tmp_path: Path) -> tuple[Path, Path, dict[str, Any], list[_St
             child.cleanup()
 
     assert children and all(child.process.poll() is not None for child in children)
+    wal_path = db_path.with_name(db_path.name + "-wal")
+    assert not wal_path.exists() or wal_path.stat().st_size == 0
     evidence = {
         "schema": EVIDENCE_SCHEMA,
         "project_root": str(project_root.resolve()),
@@ -459,6 +476,11 @@ def test_bounded_crash_recovery_authorization_lifecycle_receipt(
         "bridge_status",
         "poll_messages",
     ]
+    assert receipt["launches"]["before_crash"]["identity_capability"] == (
+        receipt["launches"]["after_restart"]["identity_capability"]
+    )
+    assert receipt["launches"]["before_crash"]["identity_capability"]["bound"] is True
+    assert "identity-capabilities" not in json.dumps(receipt, sort_keys=True)
     assert (
         receipt["presence"]["live_after_restart"]["last_seen_epoch"]
         > receipt["presence"]["residue_after_crash"]["last_seen_epoch"]
@@ -514,11 +536,19 @@ def test_bounded_crash_recovery_authorization_lifecycle_receipt(
     assert tampered_result["writes_performed"] == 0
 
     event_count_before = receipt["database"]["chain_prefix_event_count"]
+    unrelated_capability = ensure_agent_identity_capability(
+        project_root,
+        db_path,
+        receipt["database"]["scope"],
+        "unrelated-agent",
+        allowed_tools=("bridge_status",),
+    )
     later = _StdioChild(
         project_root=project_root,
         db_path=db_path,
         scope=receipt["database"]["scope"],
         agent_id="unrelated-agent",
+        identity_capability_path=unrelated_capability.path,
         session_id="unrelated-session",
         allowed_tools=("bridge_status",),
     )
@@ -551,6 +581,18 @@ def test_bounded_crash_recovery_authorization_lifecycle_receipt(
     evidence_path.write_bytes(original_evidence)
     assert verify_receipt(receipt_path)["valid"] is True
 
+    capability_drift = json.loads(original_evidence)
+    capability_command = capability_drift["before_crash"]["command"]
+    capability_index = capability_command.index("--identity-capability") + 1
+    capability_command[capability_index] = str(project_root / "forged-capability.json")
+    evidence_path.write_text(json.dumps(capability_drift), encoding="utf-8")
+    capability_result = verify_receipt(receipt_path)
+    assert capability_result["valid"] is False
+    assert any("identity capability" in error.lower() for error in capability_result["errors"])
+    assert capability_result["writes_performed"] == 0
+    evidence_path.write_bytes(original_evidence)
+    assert verify_receipt(receipt_path)["valid"] is True
+
     launch_drift = json.loads(original_evidence)
     launch_drift["before_crash"]["command"].extend(
         ["--provider-id", "forbidden-provider"]
@@ -569,6 +611,8 @@ def test_bounded_crash_recovery_authorization_lifecycle_receipt(
             ("drifted durable body", receipt["message"]["message_id"]),
         )
         connection.commit()
+        checkpoint = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+    assert checkpoint is not None and checkpoint[0] == 0
     database_drift = verify_receipt(receipt_path)
     assert database_drift["valid"] is False
     assert any("content SHA mismatch" in error for error in database_drift["errors"])

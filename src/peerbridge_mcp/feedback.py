@@ -11,6 +11,7 @@ import json
 import os
 import re
 import secrets
+import stat
 import sys
 import urllib.error
 import urllib.parse
@@ -33,6 +34,12 @@ FEEDBACK_REPORT_SCHEMA = "peerbridge.feedback-report.v1"
 FEEDBACK_SECRET_SCHEMA = "peerbridge.feedback-secret-envelope.v1"
 FEEDBACK_RESULT_SCHEMA = "peerbridge.feedback-result.v1"
 FEEDBACK_UPLOAD_SCHEMA = "peerbridge.feedback-upload.v1"
+PACKAGED_SUPPORT_CONFIG_SHA256 = (
+    "014b829cc465f486be15ce7f20fefde0b927238bb70356b6df4910027adaaeca"
+)
+PACKAGED_SUPPORT_PUBLIC_KEY_SHA256 = (
+    "6c99aa67bf12d01cd8c231b67533f311a98de710ee4263d72358b9b97010ef53"
+)
 
 RAW_ZIP_TRANSPORT = "raw-zip-v1"
 JSON_BASE64_TRANSPORT = "json-base64-v1"
@@ -44,6 +51,8 @@ MAX_CONTACT_CHARS = 320
 MAX_ATTACHMENT_COUNT = 5
 MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024
 MAX_TOTAL_ATTACHMENT_BYTES = 16 * 1024 * 1024
+MAX_OUTBOX_BUNDLES = 200
+MAX_OUTBOX_BYTES = 512 * 1024 * 1024
 MAX_RESPONSE_BYTES = 64 * 1024
 MAX_CREDENTIAL_CHARS = 16_384
 ALLOWED_ATTACHMENT_SUFFIXES = frozenset(
@@ -115,6 +124,22 @@ class FeedbackConfig:
         path = packaged_support / "support.json"
         if not path.exists():
             return cls()
+        try:
+            config_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise FeedbackError("packaged support configuration is unavailable") from exc
+        if not secrets.compare_digest(config_sha256, PACKAGED_SUPPORT_CONFIG_SHA256):
+            raise FeedbackError("packaged support configuration trust anchor mismatch")
+        public_key_path = packaged_support / "peerbridge-support-public.pub"
+        try:
+            public_key_sha256 = hashlib.sha256(public_key_path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise FeedbackError("packaged support public key is unavailable") from exc
+        if not secrets.compare_digest(
+            public_key_sha256,
+            PACKAGED_SUPPORT_PUBLIC_KEY_SHA256,
+        ):
+            raise FeedbackError("packaged support public key trust anchor mismatch")
         return cls.load_from_file(path)
 
     @classmethod
@@ -522,14 +547,24 @@ def create_feedback_bundle(
             support.public_key_sha256,
             case_id,
         )
-    destination_root = (
-        output_root.resolve()
-        if output_root is not None
-        else root / ".peerbridge" / "feedback" / "outbox"
-    )
-    destination_root.mkdir(parents=True, exist_ok=True)
+    if output_root is None:
+        destination_root = _feedback_outbox(root)
+    else:
+        destination_root = output_root.resolve()
+        destination_root.mkdir(parents=True, exist_ok=True)
+        if _is_reparse(destination_root):
+            raise FeedbackError("feedback output root must not be a filesystem link")
     with contextlib.suppress(OSError):
         os.chmod(destination_root, 0o700)
+    existing_bundles = []
+    existing_bytes = 0
+    for candidate in destination_root.glob("peerbridge-feedback-*.zip"):
+        if _is_reparse(candidate) or not candidate.is_file():
+            raise FeedbackError("feedback outbox contains an unsafe entry")
+        existing_bundles.append(candidate)
+        existing_bytes += int(candidate.stat().st_size)
+        if len(existing_bundles) >= MAX_OUTBOX_BUNDLES:
+            raise FeedbackError("feedback outbox quota exceeded")
     destination = destination_root / f"peerbridge-feedback-{case_id}.zip"
     temporary = destination_root / f".{destination.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
     try:
@@ -546,6 +581,8 @@ def create_feedback_bundle(
                 archive.writestr(attachment["archive_name"], attachment["payload"])
         with contextlib.suppress(OSError):
             os.chmod(temporary, 0o600)
+        if existing_bytes + int(temporary.stat().st_size) > MAX_OUTBOX_BYTES:
+            raise FeedbackError("feedback outbox quota exceeded")
         if destination.exists():
             raise FeedbackError("feedback bundle destination already exists")
         os.replace(temporary, destination)
@@ -572,12 +609,12 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def _json_base64_payload(bundle: FeedbackBundle) -> bytes:
+def _json_base64_payload(bundle: FeedbackBundle, bundle_payload: bytes) -> bytes:
     payload = {
         "schema": FEEDBACK_UPLOAD_SCHEMA,
         "case_id": bundle.case_id,
         "bundle_sha256": bundle.sha256,
-        "bundle_base64": base64.b64encode(bundle.path.read_bytes()).decode("ascii"),
+        "bundle_base64": base64.b64encode(bundle_payload).decode("ascii"),
     }
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
@@ -602,7 +639,7 @@ def deliver_feedback_bundle(
     if not secrets.compare_digest(observed_sha256, bundle.sha256):
         raise FeedbackError("feedback bundle changed after it was sealed")
     if config.endpoint_transport == JSON_BASE64_TRANSPORT:
-        payload = _json_base64_payload(bundle)
+        payload = _json_base64_payload(bundle, bundle_payload)
         content_type = "application/json; charset=utf-8"
         redirect_handler: urllib.request.BaseHandler = _NoRedirect()
     else:
@@ -671,3 +708,24 @@ def feedback_mailto(config: FeedbackConfig, bundle: FeedbackBundle) -> str | Non
     return "mailto:" + config.support_email + "?" + urllib.parse.urlencode(
         {"subject": subject, "body": body}
     )
+def _is_reparse(path: Path) -> bool:
+    try:
+        info = path.lstat()
+    except OSError:
+        return True
+    attributes = int(getattr(info, "st_file_attributes", 0))
+    reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400))
+    return stat.S_ISLNK(info.st_mode) or bool(attributes & reparse_flag)
+
+
+def _feedback_outbox(root: Path) -> Path:
+    current = root.resolve()
+    for name in (".peerbridge", "feedback", "outbox"):
+        if _is_reparse(current):
+            raise FeedbackError("feedback outbox crosses a filesystem link")
+        child = current / name
+        child.mkdir(exist_ok=True)
+        if _is_reparse(child) or child.resolve().parent != current.resolve():
+            raise FeedbackError("feedback outbox crosses a filesystem link")
+        current = child
+    return current

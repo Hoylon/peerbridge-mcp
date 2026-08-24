@@ -7,8 +7,11 @@ from pathlib import Path
 import pytest
 
 import peerbridge_mcp.provider_receipt as provider_receipt_module
+from peerbridge_mcp.agent_identity import ensure_agent_identity_capability
 from peerbridge_mcp.bridge import Bridge
 from peerbridge_mcp.provider_receipt import (
+    ReceiptError,
+    _route_from_args,
     _write_json_create_only,
     capture_receipt,
     verify_receipt,
@@ -17,6 +20,74 @@ from peerbridge_mcp.server import handle_request
 
 
 MODERN_META = {"_meta": {"io.modelcontextprotocol/protocolVersion": "2026-07-28"}}
+
+
+def _write_mcp_config(
+    root: Path,
+    *,
+    db: Path,
+    scope: str,
+    agent_id: str,
+    client_name: str,
+    provider_id: str,
+    model_id: str,
+    reasoning_mode: str | None,
+    route_class: str | None = None,
+) -> Path:
+    capability = ensure_agent_identity_capability(
+        root,
+        db,
+        scope,
+        agent_id,
+        route_binding={
+            "client_name": client_name,
+            "provider_id": provider_id,
+            "model_id": model_id,
+            "reasoning_mode": reasoning_mode,
+            "route_class": route_class,
+        },
+    )
+    args = [
+        "-m",
+        "peerbridge_mcp",
+        "serve",
+        "--project-root",
+        str(root.resolve()),
+        "--db",
+        str(db.resolve()),
+        "--scope",
+        scope,
+        "--agent-id",
+        agent_id,
+        "--identity-capability",
+        str(capability.path),
+        "--client-name",
+        client_name,
+        "--provider-id",
+        provider_id,
+        "--model-id",
+        model_id,
+    ]
+    if reasoning_mode is not None:
+        args.extend(("--reasoning-mode", reasoning_mode))
+    if route_class is not None:
+        args.extend(("--route-class", route_class))
+    path = root / "mcp.json"
+    path.write_text(
+        json.dumps(
+            {
+                "mcpServers": [
+                    {
+                        "name": "smoke",
+                        "command": sys.executable,
+                        "args": args,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _write_fake_acpx_evidence(
@@ -99,6 +170,13 @@ def _write_fake_acpx_evidence(
     return session, stream
 
 
+def test_provider_route_rejects_duplicate_or_missing_values() -> None:
+    with pytest.raises(ReceiptError, match="appears more than once"):
+        _route_from_args(["--model-id", "first", "--model-id", "second"])
+    with pytest.raises(ReceiptError, match="lacks a value"):
+        _route_from_args(["--model-id", "--provider-id", "official:test"])
+
+
 def test_provider_receipt_binds_binary_acpx_tool_result_and_chain(tmp_path: Path) -> None:
     scope = "provider-test"
     agent_id = "official-provider"
@@ -126,6 +204,16 @@ def test_provider_receipt_binds_binary_acpx_tool_result_and_chain(tmp_path: Path
     session, stream = _write_fake_acpx_evidence(
         tmp_path, scope=scope, agent_id=agent_id, model_id=model_id, result=result
     )
+    config = _write_mcp_config(
+        tmp_path,
+        db=tmp_path / "bridge.sqlite3",
+        scope=scope,
+        agent_id=agent_id,
+        client_name="provider-acpx",
+        provider_id="official:provider",
+        model_id=model_id,
+        reasoning_mode=None,
+    )
     receipt = capture_receipt(
         db_path=tmp_path / "bridge.sqlite3",
         scope=scope,
@@ -140,7 +228,7 @@ def test_provider_receipt_binds_binary_acpx_tool_result_and_chain(tmp_path: Path
         provider_binary=Path(sys.executable),
         provider_version_args=("--version",),
         acpx_cli_path=None,
-        mcp_config_path=None,
+        mcp_config_path=config,
     )
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -185,6 +273,16 @@ def test_provider_receipt_fails_closed_after_stream_drift(tmp_path: Path) -> Non
     session, stream = _write_fake_acpx_evidence(
         tmp_path, scope=scope, agent_id=agent_id, model_id=model_id, result=result
     )
+    config = _write_mcp_config(
+        tmp_path,
+        db=tmp_path / "bridge.sqlite3",
+        scope=scope,
+        agent_id=agent_id,
+        client_name="provider-acpx",
+        provider_id="official:provider",
+        model_id=model_id,
+        reasoning_mode=None,
+    )
     receipt = capture_receipt(
         db_path=tmp_path / "bridge.sqlite3",
         scope=scope,
@@ -197,6 +295,7 @@ def test_provider_receipt_fails_closed_after_stream_drift(tmp_path: Path) -> Non
         session_path=session,
         stream_path=stream,
         provider_binary=Path(sys.executable),
+        mcp_config_path=config,
     )
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -237,6 +336,16 @@ def test_provider_receipt_allows_append_only_session_progress(tmp_path: Path) ->
     session, stream = _write_fake_acpx_evidence(
         tmp_path, scope=scope, agent_id=agent_id, model_id=model_id, result=result
     )
+    config = _write_mcp_config(
+        tmp_path,
+        db=tmp_path / "bridge.sqlite3",
+        scope=scope,
+        agent_id=agent_id,
+        client_name="provider-acpx",
+        provider_id="official:provider",
+        model_id=model_id,
+        reasoning_mode=None,
+    )
     receipt = capture_receipt(
         db_path=tmp_path / "bridge.sqlite3",
         scope=scope,
@@ -249,6 +358,7 @@ def test_provider_receipt_allows_append_only_session_progress(tmp_path: Path) ->
         session_path=session,
         stream_path=stream,
         provider_binary=Path(sys.executable),
+        mcp_config_path=config,
     )
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
@@ -305,34 +415,15 @@ def test_provider_receipt_binds_intervening_domain_event_window(tmp_path: Path) 
         result=result,
         tool="send_message",
     )
-    config = tmp_path / "mcp.json"
-    config.write_text(
-        json.dumps(
-            {
-                "mcpServers": [
-                    {
-                        "name": "smoke",
-                        "command": sys.executable,
-                        "args": [
-                            "-m",
-                            "peerbridge_mcp",
-                            "serve",
-                            "--agent-id",
-                            agent_id,
-                            "--scope",
-                            scope,
-                            "--client-name",
-                            "provider-acpx",
-                            "--provider-id",
-                            "official:provider",
-                            "--model-id",
-                            model_id,
-                        ],
-                    }
-                ]
-            }
-        ),
-        encoding="utf-8",
+    config = _write_mcp_config(
+        tmp_path,
+        db=tmp_path / "bridge.sqlite3",
+        scope=scope,
+        agent_id=agent_id,
+        client_name="provider-acpx",
+        provider_id="official:provider",
+        model_id=model_id,
+        reasoning_mode=None,
     )
     receipt = capture_receipt(
         db_path=tmp_path / "bridge.sqlite3",
@@ -412,6 +503,16 @@ def test_provider_verify_never_starts_a_process(
         model_id=model_id,
         result=response["result"]["structuredContent"],
     )
+    config = _write_mcp_config(
+        tmp_path,
+        db=tmp_path / "bridge.sqlite3",
+        scope=scope,
+        agent_id=agent_id,
+        client_name="provider-acpx",
+        provider_id="official:provider",
+        model_id=model_id,
+        reasoning_mode=None,
+    )
     receipt = capture_receipt(
         db_path=tmp_path / "bridge.sqlite3",
         scope=scope,
@@ -424,6 +525,7 @@ def test_provider_verify_never_starts_a_process(
         session_path=session,
         stream_path=stream,
         provider_binary=Path(sys.executable),
+        mcp_config_path=config,
     )
     receipt_path = tmp_path / "receipt.json"
     receipt_path.write_text(json.dumps(receipt), encoding="utf-8")

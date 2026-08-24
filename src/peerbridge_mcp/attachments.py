@@ -23,18 +23,24 @@ CHAT_ATTACHMENT_ROOT = ".peerbridge-artifacts/chat"
 
 _MEDIA_TYPES = {
     ".csv": "text/csv",
+    ".flac": "audio/flac",
     ".gif": "image/gif",
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
     ".json": "application/json",
     ".log": "text/plain",
+    ".m4a": "audio/mp4",
     ".md": "text/markdown",
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
     ".png": "image/png",
     ".txt": "text/plain",
+    ".wav": "audio/wav",
     ".webp": "image/webp",
 }
 CHAT_ATTACHMENT_SUFFIXES = frozenset(_MEDIA_TYPES)
 _TEXT_SUFFIXES = frozenset({".csv", ".json", ".log", ".md", ".txt"})
+_AUDIO_SUFFIXES = frozenset({".flac", ".m4a", ".mp3", ".ogg", ".wav"})
 
 
 class AttachmentError(ValueError):
@@ -111,9 +117,32 @@ def read_stable_attachment_source(
     return StableAttachmentSource(path=resolved, suffix=suffix, payload=payload)
 
 
+def _audio_payload_is_valid(suffix: str, payload: bytes) -> bool:
+    if suffix == ".wav":
+        return len(payload) >= 12 and payload[:4] == b"RIFF" and payload[8:12] == b"WAVE"
+    if suffix == ".mp3":
+        return (
+            (len(payload) >= 10 and payload[:3] == b"ID3")
+            or (
+                len(payload) >= 4
+                and payload[0] == 0xFF
+                and payload[1] & 0xE0 == 0xE0
+            )
+        )
+    if suffix == ".m4a":
+        return len(payload) >= 12 and payload[4:8] == b"ftyp"
+    if suffix == ".ogg":
+        return len(payload) >= 27 and payload[:5] == b"OggS\x00"
+    if suffix == ".flac":
+        return len(payload) >= 8 and payload[:4] == b"fLaC"
+    return False
+
+
 def _payload_is_valid(suffix: str, payload: bytes) -> bool:
     if suffix in {".gif", ".jpeg", ".jpg", ".png", ".webp"}:
         return image_payload_is_valid(suffix, payload)
+    if suffix in _AUDIO_SUFFIXES:
+        return _audio_payload_is_valid(suffix, payload)
     if suffix not in _TEXT_SUFFIXES or b"\x00" in payload:
         return False
     try:
@@ -123,6 +152,18 @@ def _payload_is_valid(suffix: str, payload: bytes) -> bool:
     except (UnicodeDecodeError, json.JSONDecodeError):
         return False
     return True
+
+
+def attachment_payload_is_valid(suffix: str, payload: bytes) -> bool:
+    """Return whether bytes still match an allowed chat attachment type."""
+
+    return _payload_is_valid(str(suffix or "").lower(), payload)
+
+
+def chat_attachment_media_type(suffix: str) -> str | None:
+    """Return the canonical media type for an allowed attachment suffix."""
+
+    return _MEDIA_TYPES.get(str(suffix or "").lower())
 
 
 def _safe_output_root(project_root: Path) -> Path:
@@ -171,6 +212,77 @@ def _atomic_create_or_verify(path: Path, payload: bytes, expected_sha256: str) -
             temporary.unlink()
 
 
+def _persist_prepared_attachments(
+    project_root: Path,
+    prepared: Iterable[tuple[str, str, bytes, str]],
+) -> tuple[StagedAttachment, ...]:
+    project = project_root.resolve(strict=True)
+    output_root = _safe_output_root(project_root)
+    results: list[StagedAttachment] = []
+    for digest, suffix, payload, media_type in prepared:
+        target = output_root / f"{digest}{suffix}"
+        _atomic_create_or_verify(target, payload, digest)
+        relative_path = target.resolve(strict=True).relative_to(project).as_posix()
+        results.append(
+            StagedAttachment(
+                relative_path=relative_path,
+                sha256=digest,
+                bytes=len(payload),
+                media_type=media_type,
+            )
+        )
+    return tuple(results)
+
+
+def stage_chat_attachment_payloads(
+    project_root: Path,
+    payloads: Iterable[tuple[str, bytes]],
+) -> tuple[StagedAttachment, ...]:
+    """Validate browser-selected bytes without accepting a client filesystem path."""
+    selected = tuple(payloads)
+    if len(selected) > MAX_CHAT_ATTACHMENT_COUNT:
+        raise AttachmentError("too many chat attachments")
+
+    total = 0
+    prepared: list[tuple[str, str, bytes, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw_name, raw_payload in selected:
+        name = str(raw_name or "")
+        if (
+            not name
+            or len(name) > 240
+            or name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+        ):
+            raise AttachmentError("chat attachment name is invalid")
+        suffix = Path(name).suffix.lower()
+        if suffix not in CHAT_ATTACHMENT_SUFFIXES:
+            raise AttachmentError("chat attachment type is not allowed")
+        if not isinstance(raw_payload, bytes):
+            raise AttachmentError("chat attachment payload is invalid")
+        if len(raw_payload) > MAX_CHAT_ATTACHMENT_BYTES:
+            raise AttachmentError("a chat attachment is too large")
+        total += len(raw_payload)
+        if total > MAX_CHAT_ATTACHMENT_TOTAL_BYTES:
+            raise AttachmentError("chat attachments exceed the total size limit")
+        if not _payload_is_valid(suffix, raw_payload):
+            raise AttachmentError("chat attachment content does not match its safe type")
+        if suffix in _TEXT_SUFFIXES and contains_secret_bytes(raw_payload):
+            raise AttachmentError(
+                "text attachment appears to contain a credential; use private feedback encryption"
+            )
+        digest = hashlib.sha256(raw_payload).hexdigest()
+        identity = (digest, suffix)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        prepared.append((digest, suffix, raw_payload, _MEDIA_TYPES[suffix]))
+
+    return _persist_prepared_attachments(project_root, prepared)
+
+
 def stage_chat_attachments(
     project_root: Path, paths: Iterable[Path]
 ) -> tuple[StagedAttachment, ...]:
@@ -211,18 +323,4 @@ def stage_chat_attachments(
         seen.add(identity)
         prepared.append((digest, suffix, payload, _MEDIA_TYPES[suffix]))
 
-    output_root = _safe_output_root(project_root)
-    results: list[StagedAttachment] = []
-    for digest, suffix, payload, media_type in prepared:
-        target = output_root / f"{digest}{suffix}"
-        _atomic_create_or_verify(target, payload, digest)
-        relative_path = target.resolve(strict=True).relative_to(project).as_posix()
-        results.append(
-            StagedAttachment(
-                relative_path=relative_path,
-                sha256=digest,
-                bytes=len(payload),
-                media_type=media_type,
-            )
-        )
-    return tuple(results)
+    return _persist_prepared_attachments(project, prepared)

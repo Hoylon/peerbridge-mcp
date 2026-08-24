@@ -8,12 +8,31 @@ import json
 import subprocess
 import sys
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 
 SCHEMA = "peerbridge.windows-portable-provenance.v1"
 SHA256 = frozenset("0123456789abcdef")
+MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024
+MAX_ARCHIVE_MEMBERS = 4096
+MAX_ARCHIVE_MEMBER_BYTES = 512 * 1024 * 1024
+MAX_ARCHIVE_EXPANDED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ARCHIVE_COMPRESSION_RATIO = 250
+MAX_METADATA_MEMBER_BYTES = 16 * 1024 * 1024
+SUPPORT_CONFIG_FIELDS = frozenset(
+    {
+        "endpoint",
+        "endpoint_transport",
+        "privacy_url",
+        "public_key_path",
+        "public_key_sha256",
+        "recipient_label",
+        "schema",
+        "support_email",
+    }
+)
 
 
 class ProvenanceError(ValueError):
@@ -32,6 +51,65 @@ def _one(paths: list[Path], label: str) -> Path:
     if len(paths) != 1:
         raise ProvenanceError(f"expected exactly one {label}, found {len(paths)}")
     return paths[0]
+
+
+def _inspect_archive(package: zipfile.ZipFile) -> dict[str, zipfile.ZipInfo]:
+    infos = package.infolist()
+    if len(infos) > MAX_ARCHIVE_MEMBERS:
+        raise ProvenanceError("portable archive contains too many members")
+    expanded = 0
+    by_name: dict[str, zipfile.ZipInfo] = {}
+    for info in infos:
+        name = info.filename
+        relative = PurePosixPath(name)
+        if (
+            not name
+            or "\\" in name
+            or relative.is_absolute()
+            or any(part in {"", ".", ".."} for part in relative.parts)
+            or name in by_name
+        ):
+            raise ProvenanceError("portable archive contains an unsafe or duplicate path")
+        by_name[name] = info
+        if info.is_dir():
+            continue
+        if info.file_size < 0 or info.file_size > MAX_ARCHIVE_MEMBER_BYTES:
+            raise ProvenanceError(f"portable archive member exceeds the size limit: {name}")
+        expanded += info.file_size
+        if expanded > MAX_ARCHIVE_EXPANDED_BYTES:
+            raise ProvenanceError("portable archive exceeds the expanded byte limit")
+        if info.file_size and (
+            info.compress_size <= 0
+            or info.file_size > info.compress_size * MAX_ARCHIVE_COMPRESSION_RATIO
+        ):
+            raise ProvenanceError(
+                f"portable archive member exceeds the compression-ratio limit: {name}"
+            )
+    return by_name
+
+
+def _hash_zip_member(
+    package: zipfile.ZipFile, info: zipfile.ZipInfo, byte_limit: int
+) -> tuple[int, str]:
+    if info.file_size > byte_limit:
+        raise ProvenanceError(
+            f"portable archive member exceeds its content limit: {info.filename}"
+        )
+    digest = hashlib.sha256()
+    observed = 0
+    with package.open(info, "r") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            observed += len(block)
+            if observed > byte_limit or observed > info.file_size:
+                raise ProvenanceError(
+                    f"portable archive member changed while reading: {info.filename}"
+                )
+            digest.update(block)
+    if observed != info.file_size:
+        raise ProvenanceError(
+            f"portable archive member byte count is invalid: {info.filename}"
+        )
+    return observed, digest.hexdigest()
 
 
 def _git(project_root: Path, revision: str) -> str:
@@ -85,6 +163,7 @@ def verify(
 
     archive_name = str(receipt.get("archive_name") or "")
     sbom_name = str(receipt.get("sbom_name") or "")
+    runtime_name = str(receipt.get("runtime_name") or "")
     license_manifest_name = str(receipt.get("runtime_license_manifest_name") or "")
     if Path(archive_name).name != archive_name or not archive_name.endswith(".zip"):
         raise ProvenanceError("portable archive name is invalid")
@@ -102,6 +181,26 @@ def verify(
             )
     if Path(sbom_name).name != sbom_name or sbom_name != "SBOM.spdx.json":
         raise ProvenanceError("portable SBOM name is invalid")
+    if runtime_name != "PeerBridgeControlRoom.exe":
+        raise ProvenanceError("portable runtime name is invalid")
+    runtime_sha256 = str(receipt.get("runtime_sha256") or "")
+    if len(runtime_sha256) != 64 or any(
+        character not in SHA256 for character in runtime_sha256
+    ):
+        raise ProvenanceError("portable runtime SHA-256 is invalid")
+    runtime_bytes = int(receipt.get("runtime_bytes") or -1)
+    if runtime_bytes < 1:
+        raise ProvenanceError("portable runtime byte count is invalid")
+    support_config_sha256 = str(receipt.get("support_config_sha256") or "")
+    support_public_key_sha256 = str(
+        receipt.get("support_public_key_sha256") or ""
+    )
+    for value, label in (
+        (support_config_sha256, "portable support configuration SHA-256"),
+        (support_public_key_sha256, "portable support public-key SHA-256"),
+    ):
+        if len(value) != 64 or any(character not in SHA256 for character in value):
+            raise ProvenanceError(f"{label} is invalid")
     if (
         Path(license_manifest_name).name != license_manifest_name
         or license_manifest_name != "THIRD_PARTY_LICENSES_MANIFEST.json"
@@ -109,6 +208,8 @@ def verify(
         raise ProvenanceError("portable runtime-license manifest name is invalid")
     archive = _one(list(root.rglob(archive_name)), "portable archive")
     sbom = _one(list(root.rglob(sbom_name)), "portable SBOM")
+    if archive.stat().st_size > MAX_ARCHIVE_BYTES:
+        raise ProvenanceError("portable archive exceeds the compressed byte limit")
     if archive.stat().st_size != int(receipt.get("archive_bytes") or -1):
         raise ProvenanceError("portable archive byte count differs from its receipt")
     if _sha256(archive) != receipt.get("archive_sha256"):
@@ -118,17 +219,109 @@ def verify(
         raise ProvenanceError("portable SBOM SHA-256 differs from its receipt")
     try:
         with zipfile.ZipFile(archive) as package:
+            members = _inspect_archive(package)
             candidates = [
                 name
-                for name in package.namelist()
+                for name in members
                 if name == sbom_name or name.endswith(f"/{sbom_name}")
             ]
             member = _one([Path(name) for name in candidates], "packaged SBOM member")
-            packaged_sbom = package.read(member.as_posix())
-    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+            runtime_candidates = [
+                name
+                for name in members
+                if name == runtime_name or name.endswith(f"/{runtime_name}")
+            ]
+            runtime_member = _one(
+                [Path(name) for name in runtime_candidates],
+                "packaged runtime member",
+            )
+            support_config_member = _one(
+                [
+                    Path(name)
+                    for name in members
+                    if name.endswith(
+                        "/_internal/peerbridge_mcp/release_support/support.json"
+                    )
+                ],
+                "packaged support configuration member",
+            )
+            support_public_key_member = _one(
+                [
+                    Path(name)
+                    for name in members
+                    if name.endswith(
+                        "/_internal/peerbridge_mcp/release_support/"
+                        "peerbridge-support-public.pub"
+                    )
+                ],
+                "packaged support public-key member",
+            )
+            packaged_sbom_bytes, packaged_sbom_sha256 = _hash_zip_member(
+                package, members[member.as_posix()], MAX_METADATA_MEMBER_BYTES
+            )
+            packaged_runtime_bytes, packaged_runtime_sha256 = _hash_zip_member(
+                package, members[runtime_member.as_posix()], MAX_ARCHIVE_MEMBER_BYTES
+            )
+            _, packaged_support_config_sha256 = _hash_zip_member(
+                package,
+                members[support_config_member.as_posix()],
+                MAX_METADATA_MEMBER_BYTES,
+            )
+            _, packaged_support_public_key_sha256 = _hash_zip_member(
+                package,
+                members[support_public_key_member.as_posix()],
+                MAX_METADATA_MEMBER_BYTES,
+            )
+            support_config_bytes = package.read(
+                members[support_config_member.as_posix()]
+            )
+    except (OSError, KeyError, RuntimeError, zipfile.BadZipFile) as exc:
         raise ProvenanceError("portable archive cannot provide its bound SBOM") from exc
-    if hashlib.sha256(packaged_sbom).hexdigest() != sbom_sha256:
+    if packaged_sbom_bytes != sbom.stat().st_size or packaged_sbom_sha256 != sbom_sha256:
         raise ProvenanceError("packaged SBOM differs from the retained SBOM")
+    if packaged_runtime_bytes != runtime_bytes:
+        raise ProvenanceError("packaged runtime byte count differs from its receipt")
+    if packaged_runtime_sha256 != runtime_sha256:
+        raise ProvenanceError("packaged runtime differs from its receipt")
+    if packaged_support_config_sha256 != support_config_sha256:
+        raise ProvenanceError("packaged support configuration differs from its receipt")
+    if packaged_support_public_key_sha256 != support_public_key_sha256:
+        raise ProvenanceError("packaged support public key differs from its receipt")
+    try:
+        support_config = json.loads(support_config_bytes.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ProvenanceError(
+            "packaged support configuration is not valid UTF-8 JSON"
+        ) from exc
+    if (
+        not isinstance(support_config, dict)
+        or set(support_config) != SUPPORT_CONFIG_FIELDS
+        or support_config.get("schema") != "peerbridge.feedback-config.v1"
+        or support_config.get("endpoint_transport") != "json-base64-v1"
+        or support_config.get("public_key_path")
+        != "peerbridge-support-public.pub"
+        or support_config.get("public_key_sha256") != support_public_key_sha256
+        or support_config.get("support_email") is not None
+    ):
+        raise ProvenanceError(
+            "packaged support configuration does not bind its public key"
+        )
+    try:
+        support_endpoint = urlsplit(str(support_config.get("endpoint") or ""))
+        endpoint_port = support_endpoint.port
+    except ValueError as exc:
+        raise ProvenanceError("packaged support endpoint is invalid") from exc
+    if (
+        support_endpoint.scheme != "https"
+        or not support_endpoint.hostname
+        or endpoint_port is not None
+        or support_endpoint.username
+        or support_endpoint.password
+        or support_endpoint.query
+        or support_endpoint.fragment
+        or support_endpoint.path != "/v1/feedback"
+    ):
+        raise ProvenanceError("packaged support endpoint is invalid")
 
     license_manifest = _one(
         list(root.rglob(license_manifest_name)), "runtime-license manifest"
@@ -138,21 +331,26 @@ def verify(
         raise ProvenanceError("runtime-license manifest differs from its receipt")
     try:
         with zipfile.ZipFile(archive) as package:
+            members = _inspect_archive(package)
             license_candidates = [
                 name
-                for name in package.namelist()
+                for name in members
                 if name.endswith("/THIRD_PARTY_LICENSES/LICENSES_MANIFEST.json")
             ]
             license_member = _one(
                 [Path(name) for name in license_candidates],
                 "packaged runtime-license manifest member",
             )
-            packaged_license_manifest = package.read(license_member.as_posix())
-    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+            _, packaged_license_manifest_sha256 = _hash_zip_member(
+                package,
+                members[license_member.as_posix()],
+                MAX_METADATA_MEMBER_BYTES,
+            )
+    except (OSError, KeyError, RuntimeError, zipfile.BadZipFile) as exc:
         raise ProvenanceError(
             "portable archive cannot provide its runtime-license manifest"
         ) from exc
-    if hashlib.sha256(packaged_license_manifest).hexdigest() != license_manifest_sha256:
+    if packaged_license_manifest_sha256 != license_manifest_sha256:
         raise ProvenanceError(
             "packaged runtime-license manifest differs from the retained manifest"
         )
@@ -166,6 +364,9 @@ def verify(
         "archive_bytes": archive.stat().st_size,
         "archive_sha256": receipt["archive_sha256"],
         "sbom_sha256": sbom_sha256,
+        "runtime_sha256": runtime_sha256,
+        "support_config_sha256": support_config_sha256,
+        "support_public_key_sha256": support_public_key_sha256,
         "runtime_license_manifest_sha256": license_manifest_sha256,
         "receipt": receipt_path.name,
     }

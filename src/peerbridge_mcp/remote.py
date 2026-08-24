@@ -16,18 +16,21 @@ import os
 import re
 import secrets
 import socket
+import stat
 import subprocess
 import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 from .secret_scan import redact_secrets
+from .child_environment import build_local_child_environment
+from .http_limits import BoundedThreadingHTTPServer
 from .monitor import BridgeReader, McpHumanClient
 from .remote_evidence import EvidenceError, MobileEvidenceCapture
 
@@ -76,15 +79,41 @@ def identity_agent_id(login: str) -> str:
     return f"human-remote-{digest[:16]}"
 
 
+def _tailscale_executable() -> Path:
+    candidates = []
+    for key in ("PROGRAMFILES", "PROGRAMFILES(X86)"):
+        root = str(os.environ.get(key) or "").strip()
+        if root:
+            candidates.append(Path(root) / "Tailscale" / "tailscale.exe")
+    reparse_flag = int(getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x0400))
+    for candidate in candidates:
+        try:
+            info = candidate.lstat()
+        except OSError:
+            continue
+        attributes = int(getattr(info, "st_file_attributes", 0))
+        if (
+            stat.S_ISREG(info.st_mode)
+            and not stat.S_ISLNK(info.st_mode)
+            and not attributes & reparse_flag
+        ):
+            return candidate.resolve()
+    raise RemoteControlError("trusted Tailscale executable is unavailable")
+
+
 def tailscale_self_login() -> str:
     """Return the local tailnet owner without persisting or printing it."""
+    executable = _tailscale_executable()
     completed = subprocess.run(
-        ["tailscale", "status", "--json"],
+        [str(executable), "status", "--json"],
         capture_output=True,
+        cwd=executable.parent,
+        env=build_local_child_environment(),
         text=True,
         encoding="utf-8",
         errors="replace",
         timeout=15,
+        creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
         check=False,
     )
     if completed.returncode:
@@ -259,7 +288,7 @@ class RemoteConfig:
     evidence_capture: MobileEvidenceCapture | None = None
 
 
-class RemoteControlServer(ThreadingHTTPServer):
+class RemoteControlServer(BoundedThreadingHTTPServer):
     daemon_threads = True
     # Windows must keep exclusive ownership because SO_REUSEADDR can let two
     # processes bind the same loopback port. POSIX needs SO_REUSEADDR to permit
@@ -274,11 +303,6 @@ class RemoteControlServer(ThreadingHTTPServer):
         self._write_lock = threading.Lock()
         self._write_times: dict[str, collections.deque[float]] = {}
         super().__init__(address, RemoteHandler)
-
-    def get_request(self) -> tuple[socket.socket, Any]:
-        request, client_address = super().get_request()
-        request.settimeout(10.0)
-        return request, client_address
 
     def allow_write(self, login: str) -> bool:
         now = time.monotonic()
@@ -598,6 +622,10 @@ def make_server(
     if not normalized:
         raise RemoteControlError("at least one Tailscale login must be authorized")
     parsed_origin = urlsplit(str(public_origin or ""))
+    try:
+        parsed_port = parsed_origin.port
+    except ValueError as exc:
+        raise RemoteControlError("public origin has an invalid port") from exc
     if (
         parsed_origin.scheme.lower() != "https"
         or not parsed_origin.netloc
@@ -606,8 +634,13 @@ def make_server(
         or parsed_origin.path not in {"", "/"}
         or parsed_origin.query
         or parsed_origin.fragment
+        or parsed_origin.hostname is None
+        or not parsed_origin.hostname.lower().endswith(".ts.net")
+        or parsed_port is not None
     ):
-        raise RemoteControlError("public origin must be an HTTPS authority")
+        raise RemoteControlError(
+            "public origin must be a no-port HTTPS Tailscale .ts.net authority"
+        )
     normalized_origin = f"https://{parsed_origin.netloc.lower()}"
     runtime_id = instance_id or f"remote-{secrets.token_hex(16)}"
     if not SAFE_TASK.fullmatch(runtime_id):

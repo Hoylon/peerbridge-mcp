@@ -10,12 +10,13 @@ Bring Codex, Claude Code, Grok, Kimi, DeepSeek, Gemini, local models, and other 
 OpenAI-compatible Agents into one auditable AI team.
 
 PeerBridge connects official clients, relay services, compatible APIs, and local models
-without locking the team to one provider. It gives every Agent an equal seat, shared
-approved memory, bounded parallel discussion, task ownership, mutual scoring,
-cross-agent audits, and a human-controlled room where work remains visible. A live Token
-dashboard shows usage by provider and model. PeerBridge runs locally on SQLite, keeps
+without locking the team to one provider. Its Agent Cockpit can run several reviewed Codex
+and Claude Code sessions on one page while keeping each terminal, activity stream, answer,
+and evidence view bound to one stable session identity. PeerBridge also provides equal room
+seats, approved memory, bounded parallel discussion, task ownership, mutual scoring,
+cross-agent audits, and human-controlled workflows. It runs locally on SQLite, keeps
 provider credentials out of chat and project history, and preserves a SHA-linked record
-of messages, decisions, evidence, scores, reviews, and handoffs.
+of messages, decisions, evidence, scores, reviews, permissions, and handoffs.
 
 Human or Agent messages can wake the room, collaboration stops on consensus, blockers,
 stagnation, or explicit limits, and the operator can intervene at any time.
@@ -45,7 +46,7 @@ One task has one writer lease, peers can review each other, and a human can inte
 
 ```mermaid
 flowchart LR
-    H["Human operator"] --> M["Pixel control room"]
+    H["Human operator"] --> M["Local control room"]
     C["Codex / Claude Code"] --> S1["PeerBridge stdio process"]
     A["Grok / Kimi / DeepSeek / Gemini / local Agents"] --> S2["PeerBridge stdio process"]
     M --> S3["PeerBridge stdio process"]
@@ -65,6 +66,28 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 
 ## Features
 
+- In-app Agent Cockpit with Grid, Focus, and Timeline views plus stable per-session
+  Terminal, Activity, Answer, and Evidence tabs.
+- Persistent official runtime profiles for Codex app-server, Claude Code stream-json, and
+  installed Kimi Code or Grok through ACPX. Observe and Review remain read-only; Edit and
+  Full development require an active human-approved governed Git worktree. Edit keeps normal
+  networking while using each official client's standard policy: Codex workspace-write with
+  escalation denied, Claude accept-edits without pre-authorized shell access, and ACPX
+  read/search/edit/fetch grants with execute/delete/move denied. Full access records one
+  session-scoped operator authorization and enables the provider's complete tool set only
+  until that managed session stops.
+- Explicit Agent-history import: Codex uses official app-server thread list/read, Grok uses
+  `grok sessions list`, and Claude/Kimi use their documented local session records. The UI
+  lists bounded metadata first, selects nothing by default, and reads only conversations the
+  operator checks; JSON/JSONL file import remains available for every provider.
+- Observable output only: PeerBridge never labels hidden chain-of-thought or uncaptured
+  external terminal history as visible.
+- Implement + Review, Investigate + Debate, Read-only Audit, and Release Gate templates on a
+  durable local operation queue with cancellation, timeout, retry, scheduling, and recovery.
+- Human-approved isolated Git worktrees, versioned Skill/MCP capability grants, typed
+  decisions, task briefings, conflict findings, and exact source-state verification.
+- Trust Timeline with immediate stale-evidence detection and create-only portable Proof
+  Bundles that require a separately installed trusted verifier.
 - Per-agent presence with expiry, not a permanent online flag.
 - Audited runtime identity labels for client, provider route, and selected model.
 - SHA-bound direct and broadcast messages.
@@ -87,19 +110,28 @@ database. SQLite WAL mode and `BEGIN IMMEDIATE` transactions serialize state cha
 - Live file rehash before task completion.
 - Isolated plan and patch drafts that are never applied automatically.
 - Append-only per-scope SHA-256 event chain with a verifier.
-- Pixel-style local control room with human MCP message composition.
+- Native WebView2 Modern Workbench is the default Windows desktop, with all twelve Control
+  Room pages and human MCP message composition. The Pixel Control Room remains available as
+  the explicit `--legacy-pixel` compatibility surface.
 - The coordination core has no runtime dependencies beyond Python's standard library;
   optional encrypted feedback uses the `feedback` extra (`cryptography`).
 - Dual-era MCP support: legacy initialization and the `2026-07-28` discovery model.
 - Optional zero-rental private mobile control through loopback plus Tailscale Serve.
 - Bounded room-history paging, active-tab rendering, and a singleton low-memory mailbox
   supervisor for optional provider runners.
+- A versioned local event envelope for future encrypted continuity; cloud collaboration is
+  disabled in Alpha 5.2 and does not reuse announcement or feedback infrastructure.
+- Every write-capable launch starts from an exact governed-worktree binding. Codex additionally
+  enforces its native workspace-write sandbox. Claude, Grok, and Kimi use their official
+  permission protocols; Full access is therefore explicitly warned as trusted-session
+  authority under the local OS account. Optional WSL2 and macOS sandbox contracts remain
+  defense-in-depth gates rather than prerequisites for ordinary Edit.
 
 ## Quickstart
 
 ### Windows portable app
 
-Download `PeerBridgeControlRoom-0.1.0a5.post1-windows-x64-portable.zip` from the GitHub
+Download `PeerBridgeControlRoom-0.1.0a5.post2-windows-x64-portable.zip` from the GitHub
 Alpha release, extract the complete ZIP to a writable folder, and double-click
 `Launch PeerBridge.cmd`. The portable app creates its local workspace under
 `%LOCALAPPDATA%\PeerBridge\workspace`; it does not include provider credentials or
@@ -121,19 +153,44 @@ python -m venv .venv
 python -m pip install -e ".[dev]"
 peerbridge init --project-root . --scope demo
 peerbridge doctor --project-root . --scope demo
+peerbridge monitor --project-root . --scope demo
 ```
+
+Open **01 Multi-Agent Console** to view current room Agents and explicitly authorized desktop
+or terminal work without choosing a folder. To launch a new managed CLI, choose an installed
+Codex, Claude Code, Kimi Code, or Grok CLI and its working directory there. Kimi and Grok use
+the reviewed deny-all ACPX profile. Set every participant role on **02
+Chat**, where Equal participant is the default. Managed input is sent through stdin and is not
+persisted by the Console. The page shows only output and events PeerBridge captured; an
+unrelated terminal opened elsewhere is not retroactively readable. Use **09 Trust & Task
+Verification** for templates, durable operations, schedules, permission decisions, isolated
+worktrees, the Trust Timeline, and Proof Bundle export or verification.
 
 Run a server manually:
 
 ```powershell
-peerbridge serve --project-root . --agent-id codex-main --scope demo
+# In Workbench > Connect, authorize codex-main once and copy the decision ID.
+$decision = "<permission-decision-id>"
+$identity = peerbridge identity --project-root . --scope demo issue --agent-id codex-main `
+  --profile collaborator --permission-decision-id $decision | ConvertFrom-Json
+peerbridge serve --project-root . --agent-id codex-main --scope demo `
+  --identity-capability $identity.identity_capability
 ```
+
+The capability is bound to the exact project, scope, Agent ID, and fixed collaborator tool
+profile. Its secret contents are never printed. Reserved operator identities and revocation
+remain available only through the authenticated local Control Room.
 
 When one client can select several official or relay-backed models, record the route
 without exposing credentials:
 
 ```powershell
+$grokDecision = "<permission-decision-id-from-workbench>"
+$grokIdentity = peerbridge identity --project-root . --scope demo issue `
+  --agent-id grok-relay-reviewer --profile collaborator `
+  --permission-decision-id $grokDecision | ConvertFrom-Json
 peerbridge serve --project-root . --agent-id grok-relay-reviewer --scope demo `
+  --identity-capability $grokIdentity.identity_capability `
   --client-name relay-coding-client `
   --provider-id relay:grok-official-channel `
   --model-id grok
@@ -377,13 +434,17 @@ For a provider with a verified response alias, add the separate binding:
   "provider_id": "relay-grok-sui-xiang",
   "model_id": "grok-4.6",
   "response_model_id": "grok-4.6-build",
+  "inference_timeout_seconds": 180,
   "route_class": "relay"
 }
 ```
 
 `model_id` is the outbound request identity. `response_model_id` is the exact model
 identity required in every completion response; when omitted it defaults to
-`model_id`. Both are SHA-bound in the route profile and inference receipt.
+`model_id`. `inference_timeout_seconds` is an explicit per-route request timeout
+from 1 to 300 seconds; when omitted, relay/local routes use 60 seconds and native
+ACP routes use 180 seconds. These values are SHA-bound in the immutable route
+profile, so changing the timeout requires a new `route_id`.
 
 Call `upsert_route_profile` with that payload, then select the profile in the monitor
 or pass `route_profile_id` to `send_message`. Profiles and user-entered labels are

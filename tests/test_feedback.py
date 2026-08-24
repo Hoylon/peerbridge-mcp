@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+import peerbridge_mcp.feedback as feedback_module
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -27,6 +28,47 @@ from peerbridge_mcp.feedback import (
     run_feedback_encryption_self_test,
 )
 from tests._image_fixtures import PNG
+
+
+def test_default_feedback_outbox_rejects_filesystem_links(tmp_path: Path) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    external = tmp_path / "external"
+    external.mkdir()
+    try:
+        (project / ".peerbridge").symlink_to(external, target_is_directory=True)
+    except OSError:
+        pytest.skip("filesystem did not permit a temporary directory symlink")
+
+    with pytest.raises(FeedbackError, match="filesystem link"):
+        create_feedback_bundle(
+            project,
+            summary="Link regression",
+            message="The default outbox must remain inside local state.",
+        )
+
+
+def test_feedback_outbox_has_a_lifetime_quota(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outbox = tmp_path / "outbox"
+    monkeypatch.setattr(feedback_module, "MAX_OUTBOX_BUNDLES", 1)
+    create_feedback_bundle(
+        tmp_path,
+        summary="First report",
+        message="The first bounded report.",
+        config=FeedbackConfig(),
+        output_root=outbox,
+    )
+
+    with pytest.raises(FeedbackError, match="outbox quota"):
+        create_feedback_bundle(
+            tmp_path,
+            summary="Second report",
+            message="The second report must be rejected.",
+            config=FeedbackConfig(),
+            output_root=outbox,
+        )
 
 
 def _support_key_pair(tmp_path: Path) -> tuple[Path, rsa.RSAPrivateKey]:
@@ -263,6 +305,40 @@ def test_packaged_release_support_is_pinned_and_provider_independent(tmp_path: P
     assert config.public_key_path is not None
     assert config.public_key_path.name == "peerbridge-support-public.pub"
     assert config.encrypted_secret_available is True
+
+
+def test_packaged_release_support_rejects_config_or_public_key_tampering(
+    tmp_path: Path, monkeypatch
+) -> None:
+    import peerbridge_mcp.feedback as feedback_module
+
+    root = Path(__file__).resolve().parents[1]
+    source_support = root / "src" / "peerbridge_mcp" / "release_support"
+    fake_package = tmp_path / "peerbridge_mcp"
+    fake_support = fake_package / "release_support"
+    fake_support.mkdir(parents=True)
+    config_path = fake_support / "support.json"
+    public_key_path = fake_support / "peerbridge-support-public.pub"
+    pristine_config = (source_support / "support.json").read_bytes()
+    pristine_public_key = (
+        source_support / "peerbridge-support-public.pub"
+    ).read_bytes()
+    config_path.write_bytes(pristine_config)
+    public_key_path.write_bytes(pristine_public_key)
+    monkeypatch.setattr(feedback_module, "__file__", str(fake_package / "feedback.py"))
+
+    assert FeedbackConfig.load().endpoint.endswith("/v1/feedback")
+
+    tampered_config = json.loads(pristine_config.decode("utf-8"))
+    tampered_config["endpoint"] = "https://attacker.example/v1/feedback"
+    config_path.write_text(json.dumps(tampered_config), encoding="utf-8")
+    with pytest.raises(FeedbackError, match="configuration trust anchor mismatch"):
+        FeedbackConfig.load()
+
+    config_path.write_bytes(pristine_config)
+    public_key_path.write_bytes(pristine_public_key + b"\n")
+    with pytest.raises(FeedbackError, match="public key trust anchor mismatch"):
+        FeedbackConfig.load()
 
 
 def test_packaged_support_key_is_git_byte_stable() -> None:
@@ -593,6 +669,56 @@ def test_json_base64_delivery_binds_case_and_bundle_without_mutable_metadata(
         "bundle_base64",
     }
     assert base64.b64decode(payload["bundle_base64"]) == bundle.path.read_bytes()
+
+
+def test_json_delivery_reads_sealed_bundle_only_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = create_feedback_bundle(
+        tmp_path,
+        summary="Single-read delivery",
+        message="The uploaded payload must be the bytes that were verified.",
+        output_root=tmp_path / "outbox-single-read",
+    )
+    expected_payload = bundle.path.read_bytes()
+    reads = 0
+    original_read_bytes = Path.read_bytes
+
+    def counted_read_bytes(path: Path) -> bytes:
+        nonlocal reads
+        if path == bundle.path:
+            reads += 1
+            if reads > 1:
+                raise AssertionError("sealed feedback bundle was reopened")
+        return original_read_bytes(path)
+
+    opener = _CapturingDeliveryOpener(
+        {
+            "case_id": bundle.case_id,
+            "bundle_sha256": bundle.sha256,
+            "receipt": "stored",
+        }
+    )
+    monkeypatch.setattr(Path, "read_bytes", counted_read_bytes)
+    monkeypatch.setattr(
+        "peerbridge_mcp.feedback.urllib.request.build_opener",
+        lambda *_args: opener,
+    )
+
+    result = deliver_feedback_bundle(
+        bundle,
+        FeedbackConfig(
+            endpoint="https://feedback.example.invalid/v1/feedback",
+            endpoint_transport=JSON_BASE64_TRANSPORT,
+            recipient_label="PeerBridge test support",
+        ),
+    )
+
+    assert result["delivered"] is True
+    assert reads == 1
+    assert opener.request is not None
+    payload = json.loads(opener.request.data.decode("utf-8"))
+    assert base64.b64decode(payload["bundle_base64"]) == expected_payload
 
 
 def test_delivery_preserves_unconfirmed_or_failed_notification_state(

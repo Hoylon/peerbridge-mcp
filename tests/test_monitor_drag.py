@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import queue
 import threading
@@ -8,30 +9,195 @@ from types import SimpleNamespace
 
 import pytest
 
+from peerbridge_mcp.localization import save_preferences
 from peerbridge_mcp.monitor import (
+    AGENT_LIBRARY_CANVAS_HEIGHT,
+    AGENT_LIBRARY_CANVAS_WIDTH,
+    AGENT_LIBRARY_COLUMNS,
+    AGENT_LIBRARY_CARD_STRIDE,
+    AGENT_LIBRARY_TOP_MARGIN,
+    AGENT_LIBRARY_VISIBLE_CAPACITY,
     CHAT_HISTORY_MIN_HEIGHT,
     CHAT_PAGE_MIN_CONTENT_HEIGHT,
     INFERENCE_ONLY,
     MCP_NATIVE,
     MCP_TOOL_LOOP,
     MCP_UNVERIFIED,
+    MODERN_CHAT_MAX_WIDTH,
+    MODERN_CHAT_MIN_GUTTER,
+    MODERN_INSPECTOR_KEYS,
+    MODERN_FONT_FAMILY,
+    MODERN_NAV_GROUPS,
+    PIXEL_FONT_FAMILY,
+    SIDEBAR_SCROLLBAR_WIDTH,
+    SIDEBAR_SCROLLBAR_STYLE,
+    SIDEBAR_TEXT_SIZE,
+    SIDEBAR_WIDTH,
+    TUTORIAL_BODY_TEXT_SIZE,
+    TUTORIAL_PAGE_KEYS,
+    WINDOWS_UI_SCALE_FACTORS,
+    COLOR_PALETTES,
+    COLORS,
     McpHumanClient,
     PixelMonitor,
+    apply_color_palette,
     agent_mcp_access_mode,
     chat_bubble_metrics,
     chat_split_sash_position,
+    centered_transient_geometry,
     compact_sidebar_stats,
     incremental_render_mode,
+    modern_navigation_is_complete,
+    modern_navigation_pages,
+    modern_chat_content_geometry,
     provider_display_label,
     room_agent_card_groups,
+    room_agent_visible_limit,
+    resolved_runtime_theme,
+    runtime_build_identity,
     safe_chat_artifact_labels,
+    tk_scaling_for_windows_factor,
+    tutorial_diagram_spec,
     ui_content_signature,
+    vertical_scroll_fraction_to_reveal,
 )
 
 
 def test_compact_window_keeps_a_useful_history_and_scrollable_page() -> None:
     assert CHAT_HISTORY_MIN_HEIGHT >= 240
     assert CHAT_PAGE_MIN_CONTENT_HEIGHT >= 840
+
+
+def test_built_in_themes_are_bounded_and_switch_without_shared_state_leaks() -> None:
+    required = {
+        "bg",
+        "panel",
+        "panel_2",
+        "line",
+        "text",
+        "muted",
+        "cyan",
+        "amber",
+        "green",
+        "red",
+        "purple",
+        "blue",
+        "black",
+    }
+    try:
+        assert set(COLOR_PALETTES) == {"pixel", "modern"}
+        assert all(set(palette) == required for palette in COLOR_PALETTES.values())
+        modern = apply_color_palette("modern")
+        assert modern == COLOR_PALETTES["modern"]
+        assert COLORS == COLOR_PALETTES["modern"]
+        modern["bg"] = "#ffffff"
+        assert COLORS["bg"] != "#ffffff"
+        with pytest.raises(ValueError, match="unsupported UI theme"):
+            apply_color_palette("untrusted")
+    finally:
+        apply_color_palette("pixel")
+
+
+def test_pixel_theme_contract_is_unchanged_and_modern_theme_is_genuinely_light() -> None:
+    assert COLOR_PALETTES["pixel"] == {
+        "bg": "#101419",
+        "panel": "#171d24",
+        "panel_2": "#202832",
+        "line": "#36414f",
+        "text": "#e8edf2",
+        "muted": "#91a0ad",
+        "cyan": "#5dd9e8",
+        "amber": "#ffc857",
+        "green": "#67d391",
+        "red": "#ff6b6b",
+        "purple": "#b8a1ff",
+        "blue": "#68a7ff",
+        "black": "#080b0f",
+    }
+    modern = COLOR_PALETTES["modern"]
+    assert modern["bg"].lower() == "#f6f7f9"
+    assert modern["panel"].lower() == "#ffffff"
+    assert modern["text"].lower() == "#151922"
+    assert MODERN_FONT_FAMILY == "Segoe UI Variable Text"
+    assert PIXEL_FONT_FAMILY == "Cascadia Mono"
+
+
+def test_modern_chat_content_geometry_centers_wide_and_preserves_gutters() -> None:
+    content_width, offset = modern_chat_content_geometry(1600)
+    assert content_width == MODERN_CHAT_MAX_WIDTH
+    assert offset == 280
+
+    narrow_width, narrow_offset = modern_chat_content_geometry(800)
+    assert narrow_width == 800 - (MODERN_CHAT_MIN_GUTTER * 2)
+    assert narrow_offset == MODERN_CHAT_MIN_GUTTER
+
+
+def test_modern_shell_groups_every_peerbridge_page_once() -> None:
+    grouped_pages = modern_navigation_pages()
+    assert MODERN_INSPECTOR_KEYS == ("agents", "workflow", "evidence")
+    assert tuple(group for group, _pages in MODERN_NAV_GROUPS) == (
+        "workspace",
+        "governance",
+        "system",
+    )
+    assert grouped_pages == (
+        "cockpit",
+        "chat",
+        "work",
+        "review",
+        "change",
+        "audit",
+        "trust",
+        "connect",
+        "memory",
+        "feedback",
+        "usage",
+        "announcement",
+    )
+    assert modern_navigation_is_complete()
+    assert set(grouped_pages) == set(TUTORIAL_PAGE_KEYS)
+
+
+def test_monitor_cli_accepts_release_locales_and_themes() -> None:
+    from peerbridge_mcp.monitor import parse_args
+
+    for locale in ("zh-Hant", "zh-Hans", "en"):
+        for theme in ("pixel", "modern"):
+            args = parse_args(["--ui-self-test", "--locale", locale, "--theme", theme])
+            assert args.locale == locale
+            assert args.theme == theme
+
+
+def test_normal_launch_resolves_explicit_saved_and_invalid_themes(tmp_path: Path) -> None:
+    save_preferences(
+        tmp_path,
+        locale="zh-Hant",
+        tutorial_completed=True,
+        theme="modern",
+    )
+    assert resolved_runtime_theme(tmp_path, None) == "modern"
+    assert resolved_runtime_theme(tmp_path, "pixel") == "pixel"
+
+    preference_path = tmp_path / ".peerbridge" / "ui-preferences.json"
+    preference_path.write_text('{"schema":"invalid"}', encoding="utf-8")
+    assert resolved_runtime_theme(tmp_path, None) == "pixel"
+
+
+def test_sidebar_and_tutorial_keep_readable_minimum_dimensions() -> None:
+    assert SIDEBAR_WIDTH >= 300
+    assert SIDEBAR_SCROLLBAR_WIDTH <= 16
+    assert SIDEBAR_SCROLLBAR_STYLE == "Sidebar.Vertical.TScrollbar"
+    assert SIDEBAR_TEXT_SIZE >= 9
+    assert TUTORIAL_BODY_TEXT_SIZE >= 11
+
+
+def test_runtime_build_identity_distinguishes_same_version_binaries(
+    tmp_path: Path,
+) -> None:
+    binary = tmp_path / "PeerBridgeControlRoom.exe"
+    binary.write_bytes(b"peerbridge-alpha-5.2-candidate")
+
+    assert runtime_build_identity(binary) == hashlib.sha256(binary.read_bytes()).hexdigest()[:12]
 
 
 def test_mcp_human_client_surfaces_tool_error(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -63,17 +229,89 @@ def test_mcp_human_client_surfaces_tool_error(monkeypatch: pytest.MonkeyPatch, t
         client.call_tool("post_room_message", {})
 
 
+def test_native_route_registration_sends_explicit_bounded_timeout() -> None:
+    monitor = object.__new__(PixelMonitor)
+    monitor.connection_in_progress = False
+    monitor.connection_id = _Value("grok-build")
+    monitor.connection_class = _Value("relay")
+    monitor.connection_agent = _Value("grok-relay")
+    monitor.connection_route_id = _Value("grok-build-timeout-180")
+    monitor.connection_model = _Value("grok-4.6")
+    monitor.connection_response_model = _Value("grok-4.6")
+    monitor.connection_timeout_seconds = _Value("180")
+    monitor.connection_client = _Value("openai-compatible")
+    monitor.connection_reasoning = _Value("high")
+    monitor.connection_model_combo = _OptionWidget(values=("grok-4.6",))
+    monitor.connection_status = _Value()
+    monitor.connection_status_label = _Configurable()
+    monitor.refresh = lambda *, force=False: None
+
+    def translated(key: str) -> str:
+        if key == "connect.route_registered":
+            return "{route} {model} {sha}"
+        if key == "connect.route_failed":
+            return "failed: {error}"
+        return key
+
+    monitor._t = translated
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def call_tool(tool: str, arguments: dict[str, object]) -> dict[str, object]:
+        calls.append((tool, dict(arguments)))
+        if tool == "list_provider_connections":
+            return {
+                "connections": [
+                    {
+                        "connection_id": "grok-build",
+                        "provider_id": "grok-build",
+                        "route_class": "relay",
+                        "secret_backend": "windows-credential-manager",
+                    }
+                ]
+            }
+        assert tool == "upsert_route_profile"
+        return {
+            **arguments,
+            "profile_sha256": "a" * 64,
+        }
+
+    monitor.human_client = SimpleNamespace(call_tool=call_tool)
+    monitor.register_native_route()
+
+    assert calls[1] == (
+        "upsert_route_profile",
+        {
+            "route_id": "grok-build-timeout-180",
+            "agent_id": "grok-relay",
+            "provider_id": "grok-build",
+            "model_id": "grok-4.6",
+            "inference_timeout_seconds": 180,
+            "route_class": "relay",
+            "enabled": True,
+            "client_name": "openai-compatible",
+            "response_model_id": "grok-4.6",
+            "reasoning_mode": "high",
+        },
+    )
+
+    monitor.connection_timeout_seconds.set("301")
+    monitor.register_native_route()
+    assert len(calls) == 2
+    assert monitor.connection_status.get() == "failed: connect.timeout_invalid"
+
+
 class _StableInner:
     def winfo_children(self) -> list[object]:
         raise AssertionError("stable refresh must not inspect or destroy chat widgets")
 
 
 class _Viewport:
-    def __init__(self) -> None:
+    def __init__(self, view: tuple[float, float] = (0.5, 1.0)) -> None:
+        self.view = view
         self.moves: list[float] = []
 
     def yview(self) -> tuple[float, float]:
-        return (0.5, 1.0)
+        return self.view
 
     def yview_moveto(self, position: float) -> None:
         self.moves.append(position)
@@ -83,6 +321,30 @@ class _IdleRoot:
     @staticmethod
     def after_idle(callback: object) -> None:
         callback()
+
+
+class _QueuedIdleRoot:
+    def __init__(self) -> None:
+        self.callbacks: list[object] = []
+
+    def after_idle(self, callback: object) -> None:
+        self.callbacks.append(callback)
+
+
+class _DestroyableChild:
+    def __init__(self) -> None:
+        self.destroyed = False
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
+class _RebuildInner:
+    def __init__(self, child: _DestroyableChild) -> None:
+        self.child = child
+
+    def winfo_children(self) -> list[_DestroyableChild]:
+        return [self.child]
 
 
 class _Value:
@@ -139,6 +401,24 @@ class _Canvas(_Configurable):
         return value
 
 
+class _PackableScrollbar:
+    def __init__(self) -> None:
+        self.manager = "pack"
+        self.pack_calls = 0
+        self.forget_calls = 0
+
+    def winfo_manager(self) -> str:
+        return self.manager
+
+    def pack(self, **_kwargs: object) -> None:
+        self.manager = "pack"
+        self.pack_calls += 1
+
+    def pack_forget(self) -> None:
+        self.manager = ""
+        self.forget_calls += 1
+
+
 class _Body:
     def __init__(self, value: str) -> None:
         self.value = value
@@ -150,6 +430,121 @@ class _Body:
     def delete(self, _start: str, _end: str) -> None:
         self.value = ""
         self.deletes += 1
+
+
+class _ClipboardRoot:
+    def __init__(self, value: str = "") -> None:
+        self.clipboard = value
+        self.bindings: dict[tuple[str, str], object] = {}
+
+    def clipboard_clear(self) -> None:
+        self.clipboard = ""
+
+    def clipboard_append(self, value: str) -> None:
+        self.clipboard += value
+
+    def clipboard_get(self) -> str:
+        return self.clipboard
+
+    def bind_class(self, widget_class: str, sequence: str, handler: object) -> None:
+        self.bindings[(widget_class, sequence)] = handler
+
+
+class _EditableEntry:
+    def __init__(
+        self,
+        value: str,
+        *,
+        selection: tuple[int, int] | None = None,
+        state: str = "normal",
+    ) -> None:
+        self.value = value
+        self.selection = selection
+        self.cursor = selection[1] if selection else len(value)
+        self.widget_state = state
+
+    @staticmethod
+    def winfo_class() -> str:
+        return "Entry"
+
+    def cget(self, key: str) -> str:
+        assert key == "state"
+        return self.widget_state
+
+    def index(self, index: str) -> int:
+        if index == "sel.first" and self.selection is not None:
+            return self.selection[0]
+        if index == "sel.last" and self.selection is not None:
+            return self.selection[1]
+        raise ValueError(index)
+
+    def get(self) -> str:
+        return self.value
+
+    def delete(self, first: int, last: int) -> None:
+        self.value = self.value[: int(first)] + self.value[int(last) :]
+        self.cursor = int(first)
+        self.selection = None
+
+    def insert(self, index: str, value: str) -> None:
+        assert index == "insert"
+        self.value = self.value[: self.cursor] + value + self.value[self.cursor :]
+        self.cursor += len(value)
+
+    def selection_range(self, first: int, last: str) -> None:
+        assert last == "end"
+        self.selection = (int(first), len(self.value))
+
+    def icursor(self, index: str) -> None:
+        assert index == "end"
+        self.cursor = len(self.value)
+
+
+def test_text_editing_shortcuts_cover_every_desktop_input_class() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.root = _ClipboardRoot()
+
+    monitor._install_text_editing_bindings()
+
+    for widget_class in ("Entry", "TEntry", "Text", "TCombobox"):
+        for sequence in (
+            "<Control-a>",
+            "<Control-c>",
+            "<Control-v>",
+            "<Control-x>",
+            "<Button-3>",
+        ):
+            assert (widget_class, sequence) in monitor.root.bindings
+
+
+def test_text_editing_copy_cut_paste_and_select_all() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.root = _ClipboardRoot()
+    entry = _EditableEntry("alpha beta", selection=(0, 5))
+
+    assert monitor._copy_text_widget_selection(entry) is True
+    assert monitor.root.clipboard == "alpha"
+    assert monitor._cut_text_widget_selection(entry) is True
+    assert entry.value == " beta"
+
+    monitor.root.clipboard = "new"
+    assert monitor._paste_into_text_widget(entry) is True
+    assert entry.value == "new beta"
+    assert monitor._select_all_text_widget(entry) is True
+    assert entry.selection == (0, len("new beta"))
+
+
+def test_read_only_text_fields_allow_copy_but_reject_mutation() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.root = _ClipboardRoot("replacement")
+    entry = _EditableEntry("audit receipt", selection=(0, 5), state="readonly")
+
+    assert monitor._copy_text_widget_selection(entry) is True
+    assert monitor.root.clipboard == "audit"
+    assert monitor._cut_text_widget_selection(entry) is False
+    monitor.root.clipboard = "replacement"
+    assert monitor._paste_into_text_widget(entry) is False
+    assert entry.value == "audit receipt"
 
 
 def test_send_worker_uses_priority_captured_on_ui_thread() -> None:
@@ -278,6 +673,115 @@ def test_chat_split_gives_resized_space_to_history_not_composer() -> None:
     assert chat_split_sash_position(950, 220) == 722
     assert chat_split_sash_position(600, 220) == 372
     assert chat_split_sash_position(300, 220) == 90
+
+
+def test_sidebar_scroll_reveals_widgets_without_overshooting_content() -> None:
+    assert vertical_scroll_fraction_to_reveal(
+        widget_top=350,
+        widget_bottom=390,
+        viewport_top=0,
+        viewport_height=300,
+        content_height=800,
+    ) == pytest.approx(90 / 800)
+    assert vertical_scroll_fraction_to_reveal(
+        widget_top=150,
+        widget_bottom=190,
+        viewport_top=400,
+        viewport_height=300,
+        content_height=800,
+    ) == pytest.approx(150 / 800)
+    assert vertical_scroll_fraction_to_reveal(
+        widget_top=760,
+        widget_bottom=800,
+        viewport_top=0,
+        viewport_height=300,
+        content_height=800,
+    ) == pytest.approx(500 / 800)
+
+
+def test_panel_tutorial_schematics_cover_every_page_with_three_callouts() -> None:
+    assert len(TUTORIAL_PAGE_KEYS) == 12
+    for page_key in TUTORIAL_PAGE_KEYS:
+        layout, markers = tutorial_diagram_spec(page_key)
+        assert layout in {
+            "cockpit",
+            "chat",
+            "table",
+            "connect",
+            "trust",
+            "feedback",
+            "usage",
+            "announcement",
+        }
+        assert len(markers) == 3
+        assert all(0.0 < x < 1.0 and 0.0 < y < 1.0 for x, y in markers)
+
+    with pytest.raises(ValueError, match="unsupported tutorial page"):
+        tutorial_diagram_spec("missing")
+
+
+def test_windows_ui_scale_factors_map_to_tk_points_per_inch() -> None:
+    assert WINDOWS_UI_SCALE_FACTORS == (1.0, 1.25, 1.5)
+    assert tk_scaling_for_windows_factor(1.0) == pytest.approx(4 / 3)
+    assert tk_scaling_for_windows_factor(1.25) == pytest.approx(5 / 3)
+    assert tk_scaling_for_windows_factor(1.5) == pytest.approx(2.0)
+    with pytest.raises(ValueError, match="unsupported Windows UI scale factor"):
+        tk_scaling_for_windows_factor(2.0)
+
+
+def test_transient_geometry_stays_inside_parent_on_negative_coordinate_monitor() -> None:
+    assert centered_transient_geometry(
+        parent_x=-1920,
+        parent_y=120,
+        parent_width=1320,
+        parent_height=820,
+        width=1000,
+        height=640,
+    ) == "1000x640-1760+210"
+
+
+class _ExistingWindow:
+    def __init__(self) -> None:
+        self.destroyed = False
+
+    def winfo_exists(self) -> bool:
+        return not self.destroyed
+
+    def destroy(self) -> None:
+        self.destroyed = True
+
+
+def test_announcement_popup_waits_for_first_run_tutorial() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor._tutorial_window = _ExistingWindow()
+    monitor._announcement_window = None
+    monitor._pending_announcement_popup_rows = ()
+    announcements = [SimpleNamespace(announcement_id="first-run")]
+
+    monitor._show_announcement_popup(announcements)
+
+    assert monitor._pending_announcement_popup_rows == tuple(announcements)
+    assert monitor._announcement_window is None
+
+
+def test_closing_tutorial_releases_one_deferred_announcement_popup() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    tutorial = _ExistingWindow()
+    pending = (SimpleNamespace(announcement_id="after-tutorial"),)
+    shown: list[object] = []
+    monitor.tutorial_completed = False
+    monitor._tutorial_window = tutorial
+    monitor._pending_announcement_popup_rows = pending
+    monitor._closing = False
+    monitor.root = _IdleRoot()
+    monitor._show_announcement_popup = lambda rows: shown.extend(rows)
+
+    monitor._close_tutorial(False)
+
+    assert tutorial.destroyed is True
+    assert monitor._tutorial_window is None
+    assert monitor._pending_announcement_popup_rows == ()
+    assert shown == list(pending)
 
 
 def test_chat_bubbles_expand_responsively_without_filling_the_screen() -> None:
@@ -411,6 +915,110 @@ def test_chat_refresh_with_identical_rows_touches_no_widgets() -> None:
     monitor._render_chat("")
 
 
+def test_reopening_chat_follows_latest_without_rebuilding_widgets() -> None:
+    row = {"time": "2026-08-15T00:00:00Z", "sha": "a" * 64, "body": "same"}
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.selected_room_id = "room-a"
+    monitor._chat_render_room_id = "room-a"
+    monitor._chat_render_query = ""
+    monitor._chat_render_row_signatures = (ui_content_signature(row),)
+    monitor._chat_follow_latest_on_open = True
+    monitor._chat_records = lambda: [row]
+    monitor.chat_inner = _StableInner()
+    monitor.chat_canvas = _Viewport((0.0, 0.5))
+    monitor.root = _IdleRoot()
+
+    monitor._render_chat("")
+
+    assert monitor.chat_canvas.moves == [1.0]
+    assert monitor._chat_follow_latest_on_open is False
+
+
+def test_open_chat_unchanged_refresh_preserves_reader_position() -> None:
+    row = {"time": "2026-08-15T00:00:00Z", "sha": "a" * 64, "body": "same"}
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.selected_room_id = "room-a"
+    monitor._chat_render_room_id = "room-a"
+    monitor._chat_render_query = ""
+    monitor._chat_render_row_signatures = (ui_content_signature(row),)
+    monitor._chat_follow_latest_on_open = False
+    monitor._chat_records = lambda: [row]
+    monitor.chat_inner = _StableInner()
+    monitor.chat_canvas = _Viewport((0.0, 0.5))
+    monitor.root = _IdleRoot()
+
+    monitor._render_chat("")
+
+    assert monitor.chat_canvas.moves == []
+
+
+def test_chat_layout_rebuilds_only_when_history_width_changes() -> None:
+    class Root:
+        @staticmethod
+        def update_idletasks() -> None:
+            return None
+
+    class Composer:
+        @staticmethod
+        def winfo_reqheight() -> int:
+            return 220
+
+    class Split:
+        @staticmethod
+        def paneconfigure(*_args: object, **_kwargs: object) -> None:
+            return None
+
+        @staticmethod
+        def winfo_height() -> int:
+            return 800
+
+        @staticmethod
+        def sash_place(*_args: object) -> None:
+            return None
+
+    class Canvas:
+        width = 900
+
+        @staticmethod
+        def configure(**_kwargs: object) -> None:
+            return None
+
+        @staticmethod
+        def bbox(_value: str) -> tuple[int, int, int, int]:
+            return (0, 0, 900, 600)
+
+        @classmethod
+        def winfo_width(cls) -> int:
+            return cls.width
+
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.root = Root()
+    monitor.chat_composer = Composer()
+    monitor.chat_split = Split()
+    monitor.chat_canvas = Canvas()
+    monitor._reflow_chat_composer = lambda **_kwargs: False
+    monitor._resize_chat_page_viewport = lambda: None
+    monitor.snapshot = object()
+    monitor.active_page = "chat"
+    monitor.search = SimpleNamespace(get=lambda: "")
+    monitor._chat_layout_history_width = 0
+    rendered: list[str] = []
+    monitor._render_chat = rendered.append
+
+    monitor._layout_chat_after_resize()
+    assert rendered == [""]
+
+    monitor._chat_render_row_signatures = ("stable",)
+    monitor._layout_chat_after_resize()
+    assert rendered == [""]
+    assert monitor._chat_render_row_signatures == ("stable",)
+
+    Canvas.width = 910
+    monitor._layout_chat_after_resize()
+    assert rendered == ["", ""]
+    assert monitor._chat_render_row_signatures is None
+
+
 def test_chat_refresh_appends_only_new_suffix() -> None:
     old = {"time": "2026-08-15T00:00:00Z", "sha": "a" * 64, "body": "old"}
     new = {"time": "2026-08-15T00:00:01Z", "sha": "b" * 64, "body": "new"}
@@ -427,6 +1035,79 @@ def test_chat_refresh_appends_only_new_suffix() -> None:
     monitor._render_chat("")
 
     assert appended == [new]
+    assert monitor.chat_canvas.moves == [1.0]
+
+
+def test_chat_refresh_rebuilds_identical_rows_after_room_switch() -> None:
+    row = {"time": "2026-08-15T00:00:00Z", "sha": "a" * 64, "body": "same"}
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.selected_room_id = "new-room"
+    monitor._chat_render_room_id = "old-room"
+    monitor._chat_render_query = ""
+    monitor._chat_render_row_signatures = (ui_content_signature(row),)
+    monitor._chat_records = lambda: [row]
+    child = _DestroyableChild()
+    monitor.chat_inner = _RebuildInner(child)
+    monitor.chat_canvas = _Viewport((0.25, 0.75))
+    monitor.root = _IdleRoot()
+    rendered: list[dict[str, str]] = []
+    monitor._add_bubble = rendered.append
+
+    monitor._render_chat("")
+
+    assert child.destroyed is True
+    assert rendered == [row]
+    assert monitor._chat_render_room_id == "new-room"
+    assert monitor.chat_canvas.moves == [1.0]
+
+
+def test_delayed_chat_scroll_from_previous_room_is_ignored() -> None:
+    old = {"time": "2026-08-15T00:00:00Z", "sha": "a" * 64, "body": "old"}
+    new = {"time": "2026-08-15T00:00:01Z", "sha": "b" * 64, "body": "new"}
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.selected_room_id = "old-room"
+    monitor._chat_render_room_id = ""
+    monitor._chat_render_query = ""
+    monitor._chat_render_row_signatures = None
+    current_rows = [old]
+    monitor._chat_records = lambda: current_rows
+    monitor.chat_canvas = _Viewport((0.25, 0.75))
+    monitor.root = _QueuedIdleRoot()
+    child = _DestroyableChild()
+    monitor.chat_inner = _RebuildInner(child)
+    monitor._add_bubble = lambda _row: None
+
+    monitor._render_chat("")
+    monitor.selected_room_id = "new-room"
+    current_rows[:] = [new]
+    monitor._render_chat("")
+
+    old_scroll, new_scroll = monitor.root.callbacks
+    old_scroll()
+    assert monitor.chat_canvas.moves == []
+    new_scroll()
+    assert monitor.chat_canvas.moves == [1.0]
+
+
+def test_async_room_rows_follow_latest_after_empty_room_placeholder() -> None:
+    row = {"time": "2026-08-15T00:00:00Z", "sha": "a" * 64, "body": "loaded"}
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.selected_room_id = "room-a"
+    monitor._chat_render_room_id = "room-a"
+    monitor._chat_render_query = ""
+    monitor._chat_render_row_signatures = ()
+    monitor._chat_records = lambda: [row]
+    child = _DestroyableChild()
+    monitor.chat_inner = _RebuildInner(child)
+    monitor.chat_canvas = _Viewport((0.0, 0.5))
+    monitor.root = _IdleRoot()
+    rendered: list[dict[str, str]] = []
+    monitor._add_bubble = rendered.append
+
+    monitor._render_chat("")
+
+    assert child.destroyed is True
+    assert rendered == [row]
     assert monitor.chat_canvas.moves == [1.0]
 
 
@@ -456,6 +1137,228 @@ def test_chat_records_never_hide_room_messages_also_present_as_peer_calls() -> N
     assert rows[0]["body"] == '{"request_id":"req-1","result":"keep me"}'
 
 
+def test_cockpit_sessions_include_room_and_conversation_names() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.scope = "project"
+    monitor.selected_room_id = "review-room"
+    monitor._rooms = {
+        "review-room": {"room_id": "review-room", "name": "Release Review"}
+    }
+    monitor._room_members = (
+        {
+            "agent_id": "codex-main",
+            "room_session_id": "room-session-one",
+            "status": "active",
+        },
+    )
+    monitor._room_messages = ()
+    monitor.authorized_sessions = SimpleNamespace(
+        list_for_control_room=lambda **_kwargs: (
+            {
+                "source_type": "authorized-terminal",
+                "source_session_id": "terminal-one",
+                "source_conversation_id": "conversation-one",
+                "display_name": "PowerShell release check",
+                "room_id": "review-room",
+            },
+            {
+                "source_type": "authorized-terminal",
+                "source_session_id": "terminal-other-room",
+                "source_conversation_id": "conversation-other",
+                "display_name": "Other room terminal",
+                "room_id": "other-room",
+            },
+        )
+    )
+
+    sessions = monitor._cockpit_external_sessions({})
+    native = next(row for row in sessions if row["source_type"] == "peerbridge-room")
+    external = next(
+        row for row in sessions if row["source_type"] == "authorized-terminal"
+    )
+
+    assert native["room_name"] == "Release Review"
+    assert native["source_conversation_name"] == "Release Review"
+    assert external["room_name"] == "Release Review"
+    assert external["source_conversation_name"] == "PowerShell release check"
+    assert all(
+        row.get("source_session_id") != "terminal-other-room" for row in sessions
+    )
+
+
+def test_cockpit_lobby_uses_implicit_human_operator_for_room_input() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.scope = "project"
+    monitor.selected_room_id = "lobby"
+    monitor._rooms = {"lobby": {"room_id": "lobby", "name": "Lobby"}}
+    monitor._room_members = (
+        {
+            "agent_id": "grok-relay",
+            "room_session_id": "grok-session",
+            "route_profile_id": "grok-route",
+            "status": "active",
+        },
+    )
+    monitor._room_messages = ()
+    monitor.snapshot = SimpleNamespace(message_dispatches=())
+    monitor.authorized_sessions = SimpleNamespace(
+        list_for_control_room=lambda **_kwargs: ()
+    )
+
+    sessions = monitor._cockpit_external_sessions({})
+
+    assert len(sessions) == 1
+    assert sessions[0]["capabilities"]["input_capable"] is True
+
+
+def test_cockpit_lobby_send_accepts_implicit_human_operator() -> None:
+    sent: dict[str, object] = {}
+
+    class HumanClient:
+        @staticmethod
+        def room_members(**_kwargs: object) -> dict[str, object]:
+            return {
+                "members": (
+                    {
+                        "agent_id": "grok-relay",
+                        "status": "active",
+                        "room_session_id": "grok-session",
+                        "route_profile_id": "grok-route",
+                    },
+                )
+            }
+
+        @staticmethod
+        def send_message(**kwargs: object) -> dict[str, object]:
+            sent.update(kwargs)
+            return {"room_id": kwargs["room_id"], "message_id": "message-one"}
+
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.human_client = HumanClient()
+
+    receipt = monitor._send_cockpit_room_message(
+        {
+            "source_type": "peerbridge-room",
+            "source_session_id": "grok-session",
+            "room_id": "lobby",
+            "agent_id": "grok-relay",
+            "requested_route": "grok-route",
+        },
+        "Continue independently.",
+        (".peerbridge-artifacts/chat/evidence.txt",),
+    )
+
+    assert receipt["message_id"] == "message-one"
+    assert sent["recipient"] == "grok-relay"
+    assert sent["body"] == "Continue independently."
+    assert sent["artifact_paths"] == (
+        ".peerbridge-artifacts/chat/evidence.txt",
+    )
+
+
+def test_cockpit_room_input_revalidates_exact_member_and_route_before_sending() -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    class HumanClient:
+        @staticmethod
+        def room_members(**kwargs: object) -> dict[str, object]:
+            calls.append(("room_members", kwargs))
+            return {
+                "members": (
+                    {
+                        "agent_id": "human-operator",
+                        "status": "active",
+                        "room_session_id": "human-session",
+                    },
+                    {
+                        "agent_id": "grok-relay",
+                        "status": "active",
+                        "room_session_id": "grok-session",
+                        "route_profile_id": "grok-route",
+                    },
+                )
+            }
+
+        @staticmethod
+        def send_message(**kwargs: object) -> dict[str, object]:
+            calls.append(("send_message", kwargs))
+            return {"room_id": kwargs["room_id"], "message_id": "message-one"}
+
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.human_client = HumanClient()
+    receipt = monitor._send_cockpit_room_message(
+        {
+            "source_type": "peerbridge-room",
+            "source_session_id": "grok-session",
+            "room_id": "review-room",
+            "agent_id": "grok-relay",
+            "requested_route": "grok-route",
+        },
+        "Review this exact change.",
+    )
+
+    assert receipt["message_id"] == "message-one"
+    assert calls[0] == (
+        "room_members",
+        {"room_id": "review-room", "include_inactive": False},
+    )
+    sent = calls[1][1]
+    assert sent["room_id"] == "review-room"
+    assert sent["recipient"] == "grok-relay"
+    assert sent["route_profile_id"] == "grok-route"
+    assert sent["body"] == "Review this exact change."
+    assert str(sent["task_id"]).startswith("cockpit-")
+
+
+@pytest.mark.parametrize("drift", ["operator-left", "route-changed", "session-rotated"])
+def test_cockpit_room_input_fails_closed_when_live_binding_drifts(
+    drift: str,
+) -> None:
+    members: list[dict[str, object]] = [
+        {
+            "agent_id": "human-operator",
+            "status": "active",
+            "room_session_id": "human-session",
+        },
+        {
+            "agent_id": "grok-relay",
+            "status": "active",
+            "room_session_id": "grok-session",
+            "route_profile_id": "grok-route",
+        },
+    ]
+    if drift == "operator-left":
+        members[0]["status"] = "left"
+    elif drift == "route-changed":
+        members[1]["route_profile_id"] = "different-route"
+    else:
+        members[1]["room_session_id"] = "rotated-session"
+
+    class HumanClient:
+        @staticmethod
+        def room_members(**_kwargs: object) -> dict[str, object]:
+            return {"members": members}
+
+        @staticmethod
+        def send_message(**_kwargs: object) -> dict[str, object]:
+            pytest.fail("drifted target was sent")
+
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.human_client = HumanClient()
+
+    with pytest.raises(RuntimeError, match="changed|not joined"):
+        monitor._send_cockpit_room_message(
+            {
+                "source_type": "peerbridge-room",
+                "source_session_id": "grok-session",
+                "room_id": "review-room",
+                "agent_id": "grok-relay",
+                "requested_route": "grok-route",
+            },
+            "Review this exact change.",
+        )
+
+
 def test_chat_records_expose_terminal_dispatch_failure() -> None:
     monitor = PixelMonitor.__new__(PixelMonitor)
     monitor.snapshot = SimpleNamespace(
@@ -471,6 +1374,7 @@ def test_chat_records_expose_terminal_dispatch_failure() -> None:
         )
     )
     monitor.selected_room_id = "lobby"
+    monitor._t = lambda key: key
     monitor._room_messages = (
         {
             "message_id": "msg-1",
@@ -495,6 +1399,38 @@ def test_chat_records_expose_terminal_dispatch_failure() -> None:
     assert "DELIVERY: FAILED" in metadata
     assert "ERROR: tool_policy_failed" in metadata
     assert "ATTEMPTS: 2" in metadata
+    assert monitor._dispatch_status_text(row) == "chat.delivery.tool_failed"
+
+
+@pytest.mark.parametrize("status", ("retryable", "failed"))
+@pytest.mark.parametrize(
+    ("error_code", "expected_key"),
+    (
+        (
+            "runner_hard_deadline_exceeded",
+            "chat.delivery.runner_hard_deadline_exceeded",
+        ),
+        ("discussion_timed_out", "chat.delivery.discussion_timed_out"),
+        ("provider_http_retryable", "chat.delivery.provider_unavailable"),
+        ("provider_rate_limited", "chat.delivery.rate_limited"),
+    ),
+)
+def test_chat_delivery_uses_exact_timeout_and_provider_states(
+    status: str, error_code: str, expected_key: str
+) -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor._t = lambda key: key
+
+    text = monitor._dispatch_status_text(
+        {
+            "dispatch_status": status,
+            "dispatch_error": error_code,
+            "dispatch_attempts": 5,
+            "recipient": "grok-relay",
+        }
+    )
+
+    assert text == expected_key
 
 
 def test_unseated_send_explains_how_to_join_instead_of_failing_silently() -> None:
@@ -699,6 +1635,60 @@ def test_send_completion_preserves_draft_edited_while_request_was_running() -> N
     assert calls == ["sync", "refresh", "full-refresh"]
 
 
+def test_send_completion_replays_forced_refresh_after_an_inflight_poll() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.send_in_progress = True
+    monitor._active_send_token = 11
+    monitor.selected_room_id = "room-a"
+    monitor.send_button = _Configurable()
+    monitor._t = lambda key: key
+    monitor.message_body = _Body("sent body")
+    monitor.message_task = _Value("task")
+    monitor.message_subject = _Value("subject")
+    monitor.message_priority = _Value("normal")
+    monitor.message_status = _Value()
+    monitor.message_status_label = _Configurable()
+    monitor._chat_attachment_paths = ()
+    monitor._clear_chat_attachments = lambda: None
+    monitor._sync_room_control_states = lambda: None
+    monitor.room_refresh_in_progress = True
+    monitor._room_refresh_pending = False
+    monitor.refresh = lambda **_kwargs: None
+    snapshot = monitor._send_draft_snapshot()
+    monitor.message_body.value = "next draft"
+
+    monitor._finish_human_send(
+        {"room_id": "room-a", "content_sha256": "c" * 64},
+        None,
+        "room-a",
+        11,
+        snapshot,
+    )
+
+    assert monitor._room_refresh_pending is True
+
+    replayed: list[dict[str, object]] = []
+    monitor._request_room_refresh = lambda **kwargs: replayed.append(kwargs)
+    monitor.root = _IdleRoot()
+    monitor._closing = False
+    monitor._last_room_refresh = 0.0
+    monitor.room_status = _Value()
+    monitor.room_status_label = _Configurable()
+    monitor._finish_room_refresh(
+        None,
+        "room-a",
+        (),
+        (),
+        (),
+        {},
+        {},
+        RuntimeError("old poll failed"),
+    )
+
+    assert monitor._room_refresh_pending is False
+    assert replayed == [{"force": True}]
+
+
 def test_model_and_reasoning_transitions_clear_stale_or_ambiguous_route() -> None:
     monitor = PixelMonitor.__new__(PixelMonitor)
     monitor.message_route_profile = _Value("stale-route")
@@ -851,6 +1841,14 @@ def test_room_agent_overflow_retains_every_hidden_seat_for_menu_actions() -> Non
     ]
 
 
+def test_room_agent_capacity_uses_real_strip_width_before_showing_overflow() -> None:
+    assert room_agent_visible_limit(1500, 7) == 7
+    assert room_agent_visible_limit(1416, 7) == 7
+    assert room_agent_visible_limit(980, 7) < 7
+    assert room_agent_visible_limit(1, 7) == 5
+    assert room_agent_visible_limit(1500, 0) == 0
+
+
 def test_global_agent_canvas_keeps_more_than_eight_agents_operable() -> None:
     monitor = PixelMonitor.__new__(PixelMonitor)
     monitor.agent_canvas = _Canvas()
@@ -868,12 +1866,54 @@ def test_global_agent_canvas_keeps_more_than_eight_agents_operable() -> None:
     monitor._draw_agents(rows)
 
     assert len(monitor._library_hitboxes) == 12
+    assert AGENT_LIBRARY_VISIBLE_CAPACITY == 6
+    first_screen = monitor._library_hitboxes[:AGENT_LIBRARY_VISIBLE_CAPACITY]
+    overflow = monitor._library_hitboxes[AGENT_LIBRARY_VISIBLE_CAPACITY:]
+    assert len({left for left, _top, _right, _bottom, _name in first_screen}) == 2
+    assert len({top for _left, top, _right, _bottom, _name in first_screen}) == 3
+    assert all(bottom <= AGENT_LIBRARY_CANVAS_HEIGHT for _left, _top, _right, bottom, _name in first_screen)
+    assert all(top >= AGENT_LIBRARY_CANVAS_HEIGHT for _left, top, _right, _bottom, _name in overflow)
     assert monitor.agent_canvas.configurations[-1]["scrollregion"] == (
         0,
         0,
-        184,
-        271,
+        AGENT_LIBRARY_CANVAS_WIDTH,
+        max(
+            AGENT_LIBRARY_CANVAS_HEIGHT,
+            AGENT_LIBRARY_TOP_MARGIN
+            + ((12 + AGENT_LIBRARY_COLUMNS - 1) // AGENT_LIBRARY_COLUMNS)
+            * AGENT_LIBRARY_CARD_STRIDE,
+        ),
     )
+
+
+def test_global_agent_scrollbar_only_appears_after_six_agents() -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.agent_canvas = _Canvas()
+    monitor.agent_scrollbar = _PackableScrollbar()
+    monitor.seat_agent = _Value("")
+    monitor._last_agent_canvas_signature = ""
+
+    six_rows = [
+        {"agent_id": f"agent-{index:02d}", "last_seen_epoch": float(index)}
+        for index in range(AGENT_LIBRARY_VISIBLE_CAPACITY)
+    ]
+    monitor._draw_agents(six_rows)
+
+    assert monitor.agent_scrollbar.winfo_manager() == ""
+    assert monitor.agent_scrollbar.forget_calls == 1
+
+    monitor._draw_agents(
+        six_rows
+        + [
+            {
+                "agent_id": "agent-06",
+                "last_seen_epoch": float(AGENT_LIBRARY_VISIBLE_CAPACITY),
+            }
+        ]
+    )
+
+    assert monitor.agent_scrollbar.winfo_manager() == "pack"
+    assert monitor.agent_scrollbar.pack_calls == 1
 
 
 def test_local_provider_save_uses_loopback_descriptor_without_api_key(
@@ -1074,6 +2114,9 @@ def test_close_invalidates_queued_callbacks_and_is_idempotent() -> None:
     monitor._ui_pump_after_id = "pump-token"
     monitor._refresh_after_id = "refresh-token"
     monitor._ui_callbacks = queue.SimpleQueue()
+    cockpit = SimpleNamespace(close_count=0)
+    cockpit.close = lambda: setattr(cockpit, "close_count", cockpit.close_count + 1)
+    monitor.cockpit = cockpit
     calls: list[str] = []
     assert monitor._post_to_ui(lambda: calls.append("late"))
 
@@ -1085,4 +2128,190 @@ def test_close_invalidates_queued_callbacks_and_is_idempotent() -> None:
     assert monitor.root.cancelled == ["refresh-token", "pump-token"]
     assert monitor.root.destroy_count == 1
     assert monitor.reader.close_count == 1
+    assert cockpit.close_count == 1
     assert calls == []
+
+
+def test_guided_room_workflow_applies_bounds_before_posting_one_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monitor = PixelMonitor.__new__(PixelMonitor)
+    monitor.room_action_in_progress = False
+    monitor._active_discussion = None
+    monitor.selected_room_id = "room-one"
+    raw_members = [
+        {
+            "agent_id": agent_id,
+            "status": "active",
+            "room_session_id": f"session-{agent_id}",
+            "membership_sha256": hashlib.sha256(
+                f"membership:{agent_id}".encode("utf-8")
+            ).hexdigest(),
+            "route_profile_id": route_id,
+            "route_profile_sha256": hashlib.sha256(
+                f"route:{route_id}".encode("utf-8")
+            ).hexdigest(),
+            "role_id": "equal-participant",
+            "role_label": None,
+        }
+        for agent_id, route_id in (("agent-a", "route-a"), ("agent-b", "route-b"))
+    ]
+    participants = tuple(
+        {
+            "agent_id": member["agent_id"],
+            "room_session_id": member["room_session_id"],
+            "membership_sha256": member["membership_sha256"],
+            "route_profile_id": member["route_profile_id"],
+            "route_profile_sha256": member["route_profile_sha256"],
+            "role_id": member["role_id"],
+            "role_label": member["role_label"],
+            "role_binding_sha256": hashlib.sha256(
+                b'{"role_id":"equal-participant","role_label":null}'
+            ).hexdigest(),
+        }
+        for member in raw_members
+    )
+    monitor._room_members = raw_members
+    monitor.message_body = _Body("Compare the current user flow.")
+    monitor.guided_workflow_status = _Value()
+    monitor.guided_workflow_status_label = _Configurable()
+    monitor.room_automation_choice = _Value()
+    monitor.room_round_limit = _Value()
+    monitor.room_message_limit = _Value()
+    monitor.room_stagnation_limit = _Value()
+    monitor._t = lambda key: f"<{key}>"
+    calls: list[tuple[str, dict[str, object]]] = []
+    captured_plan_input: dict[str, object] = {}
+
+    class HumanClient:
+        @staticmethod
+        def enqueue_workflow(**kwargs: object) -> dict[str, object]:
+            calls.append(("enqueue_workflow", kwargs))
+            return {"operation_id": kwargs["operation_id"], "status": "queued"}
+
+        @staticmethod
+        def set_room_automation(**kwargs: object) -> dict[str, object]:
+            calls.append(("set_room_automation", kwargs))
+            return {"automation_mode": kwargs["mode"]}
+
+        @staticmethod
+        def post_room_message(**kwargs: object) -> dict[str, object]:
+            calls.append(("post_room_message", kwargs))
+            return {
+                "message_id": "message-one",
+                "automation_mode": "discussion",
+                "room_id": "room-one",
+                "task_id": "guided-task-one",
+                "discussion_id": "discussion-one",
+                "discussion_sha256": "a" * 64,
+                "fanout_count": 2,
+                "recipients": [
+                    {
+                        "agent_id": participant["agent_id"],
+                        "route_profile_id": participant["route_profile_id"],
+                        "route_profile_sha256": participant[
+                            "route_profile_sha256"
+                        ],
+                    }
+                    for participant in participants
+                ],
+            }
+
+        @staticmethod
+        def room_members(**kwargs: object) -> dict[str, object]:
+            calls.append(("room_members", kwargs))
+            return {"members": raw_members}
+
+        @staticmethod
+        def bind_guided_discussion(**kwargs: object) -> dict[str, object]:
+            calls.append(("bind_guided_discussion", kwargs))
+            return {
+                "operation_id": kwargs["operation_id"],
+                "bound_discussion_id": kwargs["discussion_id"],
+                "status": "queued",
+            }
+
+        @staticmethod
+        def cancel_operation(**kwargs: object) -> dict[str, object]:
+            calls.append(("cancel_operation", kwargs))
+            return {"status": "cancelled"}
+
+    plan = {
+        "room_id": "room-one",
+        "task_id": "guided-task-one",
+        "subject": "Investigate + Debate",
+        "body": "Bounded read-only comparison",
+        "priority": "normal",
+        "automation_mode": "discussion",
+        "max_rounds": 2,
+        "max_messages": 8,
+        "stagnation_rounds": 1,
+        "participant_count": 2,
+        "participants": participants,
+        "source_binding_sha256": hashlib.sha256(
+            json.dumps(
+                {
+                    "participants": participants,
+                    "room_id": "room-one",
+                    "workflow_id": "investigate-debate",
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest(),
+        "workflow_id": "investigate-debate",
+        "operation_id": "guided-room:operation-one",
+        "operation_task_text": "durable guided operation",
+        "operation_working_directory": ".",
+        "operation_resource_key": "room-discussion:" + "b" * 64,
+        "operation_max_attempts": 2,
+        "operation_timeout_seconds": 600,
+    }
+
+    def make_plan(**kwargs: object) -> dict[str, object]:
+        captured_plan_input.update(kwargs)
+        return dict(plan)
+
+    def run_action(operation: object, **kwargs: object) -> None:
+        receipt = operation()
+        kwargs["after_success"](receipt)
+        assert kwargs["success"](receipt) == "<chat.guided.started>"
+
+    monitor.human_client = HumanClient()
+    monitor._run_room_action = run_action
+    monkeypatch.setattr(
+        "peerbridge_mcp.monitor.guided_room_workflow_plan", make_plan
+    )
+
+    monitor.start_guided_room_workflow()
+
+    assert captured_plan_input["room_id"] == "room-one"
+    assert captured_plan_input["task_text"] == "Compare the current user flow."
+    assert [name for name, _payload in calls] == [
+        "enqueue_workflow",
+        "set_room_automation",
+        "post_room_message",
+        "room_members",
+        "bind_guided_discussion",
+    ]
+    assert calls[0][1]["operation_id"] == "guided-room:operation-one"
+    assert calls[1][1] == {
+        "room_id": "room-one",
+        "mode": "discussion",
+        "max_rounds": 2,
+        "max_messages": 8,
+        "stagnation_rounds": 1,
+    }
+    assert calls[2][1]["task_id"] == "guided-task-one"
+    assert calls[4] == (
+        "bind_guided_discussion",
+        {
+            "operation_id": "guided-room:operation-one",
+            "discussion_id": "discussion-one",
+        },
+    )
+    assert monitor.room_automation_choice.get() == "<chat.mode.discussion>"
+    assert monitor.room_round_limit.get() == "2"
+    assert monitor.room_message_limit.get() == "8"
+    assert monitor.room_stagnation_limit.get() == "1"

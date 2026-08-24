@@ -55,7 +55,7 @@ def _draw_pixel_preview(canvas: Any) -> None:
     canvas.create_rectangle(100, 14, 344, 46, fill="#171d24", outline="#36414f")
     canvas.create_text(112, 30, anchor="w", text="ROOM // AGENTS 4 // LIVE", fill="#ffc857", font=("Cascadia Mono", 7, "bold"))
     canvas.create_rectangle(100, 58, 344, 172, fill="#171d24", outline="#36414f")
-    canvas.create_text(112, 70, anchor="nw", text="codex-main > reviewing diff\nclaude-code > tests passed\ngrok > searching sources\nkimi > waiting", fill="#e8edf2", font=("Cascadia Mono", 7), spacing1=7)
+    canvas.create_text(112, 70, anchor="nw", text="codex-main > reviewing diff\nclaude-code > tests passed\ngrok > searching sources\nkimi > waiting", fill="#e8edf2", font=("Cascadia Mono", 7))
     canvas.create_rectangle(100, 184, 344, 218, fill="#080b0f", outline="#36414f")
     canvas.create_text(112, 201, anchor="w", text="> send message to room", fill="#91a0ad", font=("Cascadia Mono", 7))
 
@@ -75,7 +75,7 @@ def _draw_modern_preview(canvas: Any) -> None:
     canvas.create_rectangle(190, 64, 325, 96, fill="#eef1f5", outline="")
     canvas.create_text(201, 80, anchor="w", text="Review the release diff", fill="#151922", font=("Segoe UI", 7))
     canvas.create_text(108, 111, anchor="nw", text="PeerBridge", fill="#151922", font=("Segoe UI", 7, "bold"))
-    canvas.create_text(108, 132, anchor="nw", text="3 Agents responded\nTests and audit passed", fill="#667085", font=("Segoe UI", 7), spacing1=4)
+    canvas.create_text(108, 132, anchor="nw", text="3 Agents responded\nTests and audit passed", fill="#667085", font=("Segoe UI", 7))
     canvas.create_rectangle(94, 194, 338, 220, fill="#ffffff", outline="#d8dde6")
     canvas.create_text(106, 207, anchor="w", text="Message the room...", fill="#667085", font=("Segoe UI", 7))
 

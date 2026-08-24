@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 
 from peerbridge_mcp.appearance import (
+    _draw_modern_preview,
+    _draw_pixel_preview,
     appearance_preference_path,
     save_desktop_surface,
     saved_desktop_surface,
@@ -33,3 +35,20 @@ def test_desktop_surface_selection_is_persisted(
 def test_desktop_surface_rejects_unknown_values(tmp_path: Path) -> None:
     with pytest.raises(LocalizationError, match="unsupported desktop surface"):
         save_desktop_surface(tmp_path, "downloaded-theme")
+
+
+def test_both_first_run_previews_render_with_tk() -> None:
+    import tkinter as tk
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        pixel = tk.Canvas(root, width=350, height=230)
+        modern = tk.Canvas(root, width=350, height=230)
+        _draw_pixel_preview(pixel)
+        _draw_modern_preview(modern)
+        root.update_idletasks()
+        assert pixel.find_all()
+        assert modern.find_all()
+    finally:
+        root.destroy()

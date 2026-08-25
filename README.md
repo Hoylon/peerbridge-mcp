@@ -4,11 +4,11 @@
 
 <h1 align="center">PeerBridge MCP</h1>
 
-<p align="center"><strong>A local-first control room for governed multi-Agent coding, review, and evidence.</strong></p>
+<p align="center"><strong>A provider-native adapter, collaboration, and governance layer for multi-Agent engineering.</strong></p>
 
 <p align="center">
   Run Codex, Claude Code, Grok, Kimi, provider APIs, OpenAI-compatible endpoints, and local
-  models as one auditable engineering team.
+  models as one auditable engineering team without flattening their native capabilities.
 </p>
 
 <p align="center">
@@ -27,6 +27,7 @@
   <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>Download Windows Alpha</strong></a>
   · <a href="#quickstart">Quickstart</a>
   · <a href="#features">Features</a>
+  · <a href="docs/technical-showcase.md">Technical showcase</a>
   · <a href="docs/client-config.md">Client setup</a>
 </p>
 
@@ -45,10 +46,10 @@
 <p align="center"><sub>The same local coordination core in the original dense Pixel interface.</sub></p>
 </details>
 
-PeerBridge is more than a collection of chat tabs. Every Agent is bound to a stable identity,
-selected model, permission policy, room context, task, and evidence trail. The Agent Cockpit
-can run several reviewed coding sessions on one page while keeping each terminal, activity
-stream, answer, and evidence view separate.
+PeerBridge is more than a collection of chat tabs. Its provider-native adapter layer keeps
+Codex JSON-RPC, Claude Code stream-json, Grok/Kimi ACP, provider APIs, and local runtimes as
+separate capability contracts. Every Agent is bound to a stable identity, selected model,
+permission policy, room context, task, and evidence trail.
 
 Use it for parallel implementation and review, bounded technical debate, task ownership,
 approved shared memory, mutual scoring, cross-agent audits, and human-controlled release
@@ -61,12 +62,36 @@ stagnation, or explicit limits, and the operator can intervene at any time.
 
 | What maintainers get | PeerBridge behavior |
 | --- | --- |
-| One workspace for many Agents | Official coding clients, provider APIs, compatible endpoints, and local runtimes keep separate audited identities. |
+| Provider-native adapter layer | Codex, Claude Code, Grok, Kimi, provider APIs, compatible endpoints, and local runtimes keep separate audited identities and capability boundaries. |
 | Work instead of reply cascades | Parallel implementation, review, discussion, and release workflows stop on consensus, blockers, stagnation, or explicit limits. |
 | Governed write access | Permission cards, approved isolated Git worktrees, source-state checks, diffs, and proof records stay human-controlled. |
 | Durable project context | Selected history imports, room memory, task briefings, and handoffs are source-bound instead of silently merged. |
 | Reviewable decisions | Agent activity, answers, evidence, mutual scores, audits, token usage, and stale-proof warnings remain visible. |
 | Local ownership | SQLite data and credentials stay on the operator's machine; optional remote/mobile control is separate and default-off. |
+
+## Technical differentiators
+
+```mermaid
+flowchart LR
+    A["Provider-native adapters"] --> C["Per-Agent capability union"]
+    C --> P["Capability-aware approval broker"]
+    P --> W["Governed worktree and writer lease"]
+    W --> R["Parallel review and bounded collaboration"]
+    R --> E["SHA-linked evidence and Proof Bundle"]
+    H["Human operator"] --> P
+    H --> R
+```
+
+Run the provider-free maintainer showcase with one command:
+
+```powershell
+python examples\demo_workflow.py --workspace demo-workspace --scope demo
+```
+
+Its public receipt proves that an overlapping second writer was rejected, two independent
+reviewers satisfied quorum, completion rehashed the synthetic artifact, and the audit chain
+verified with zero writes. It contains no provider credential or lease capability. See the
+[claim-to-test evidence map](docs/technical-showcase.md).
 
 > Status: alpha. The coordination and audit core is tested, but the public API and
 > database schema may change before 1.0.

@@ -4,11 +4,11 @@
 
 <h1 align="center">PeerBridge MCP</h1>
 
-<p align="center"><strong>本地优先、受治理的多 Agent 开发、审查与证据控制室。</strong></p>
+<p align="center"><strong>多厂商 Agent 的原生适配、协作与可信治理层。</strong></p>
 
 <p align="center">
   让 Codex、Claude Code、Grok、Kimi、供应商 API、OpenAI-compatible endpoint 与本地模型
-  组成一个可审计的工程团队。
+  组成一个可审计的工程团队，同时保留各自的原生能力。
 </p>
 
 <p align="center">
@@ -27,6 +27,7 @@
   <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>下载 Windows Alpha</strong></a>
   · <a href="#windows-便携版">快速开始</a>
   · <a href="#主要功能">主要功能</a>
+  · <a href="docs/technical-showcase.md">技术展示</a>
   · <a href="docs/alpha-quickstart.zh-Hans.md">使用教程</a>
 </p>
 
@@ -45,9 +46,9 @@
 <p align="center"><sub>同一套本地协作核心，保留原有高密度 Pixel 界面。</sub></p>
 </details>
 
-PeerBridge 不只是把多个聊天窗口放在一起。每个 Agent 都绑定稳定身份、模型、权限、
-房间上下文、工作与证据。Agent Cockpit 可在同一页并列多个已审核的 coding session，
-同时保持每个终端、活动、答案和证据视图独立。
+PeerBridge 不只是把多个聊天窗口放在一起。它的多厂商原生适配层把 Codex JSON-RPC、
+Claude Code stream-json、Grok／Kimi ACP、供应商 API 和本地 runtime 保持为各自独立的
+能力契约。每个 Agent 都绑定稳定身份、模型、权限、房间上下文、工作与证据。
 
 它支持并行实现与审查、有限技术讨论、任务认领、经核准的共享记忆、互相评分、交叉
 审计及人工控制的发布流程。PeerBridge 在本地 SQLite 运行，供应商凭据不会进入对话或
@@ -58,12 +59,35 @@ PeerBridge 不只是把多个聊天窗口放在一起。每个 Agent 都绑定�
 
 | 维护者得到什么 | PeerBridge 的做法 |
 | --- | --- |
-| 多 Agent 共用一个工作区 | 官方 coding client、供应商 API、兼容 endpoint 及本地 runtime 保持各自可审计身份。 |
+| 多厂商原生适配层 | Codex、Claude Code、Grok、Kimi、供应商 API、兼容 endpoint 及本地 runtime 保持各自可审计身份与能力边界。 |
 | 真正协作而非无限回复 | 并行实现、审查、讨论及发布流程会按共识、阻塞、停滞或明确上限停止。 |
 | 受治理的写入权限 | 权限卡、核准的隔离 Git worktree、来源状态、代码差异与证据由人工控制。 |
 | 可延续的项目上下文 | 只导入用户勾选的历史，房间记忆、任务简报与交接都绑定来源。 |
 | 可复核的结论 | Agent 活动、答案、证据、互评、审计、Token 用量及过期证据警告保持可见。 |
 | 本地数据主权 | SQLite 与凭据留在操作者电脑；远程／手机控制独立且默认关闭。 |
+
+## 技术差异
+
+```mermaid
+flowchart LR
+    A["多厂商原生适配器"] --> C["逐 Agent 能力并集"]
+    C --> P["能力感知权限批准层"]
+    P --> W["受治理 worktree 与 writer lease"]
+    W --> R["并行审查与有限协作"]
+    R --> E["SHA 证据链与 Proof Bundle"]
+    H["人工操作者"] --> P
+    H --> R
+```
+
+一条命令即可运行不需要供应商账号的维护者技术展示：
+
+```powershell
+python examples\demo_workflow.py --workspace demo-workspace --scope demo
+```
+
+公开 receipt 会证明第二个重叠 writer 被拒、两位独立 reviewer 达成 quorum、完成前已
+重新 hash 合成工件，而且 audit chain 以零写入验证。输出不包含供应商凭据或 lease
+capability。完整对照见[技术声明与测试证据](docs/technical-showcase.md)。
 
 > 状态：Alpha，不是 Stable。公开 API 与数据库 schema 在 1.0 前仍可能调整。
 
@@ -168,6 +192,7 @@ API base URL 和 Key；秘密只存入当前 Windows 用户的 Credential Manage
 ## 文档
 
 - [Alpha 快速开始](docs/alpha-quickstart.zh-Hans.md)
+- [技术展示与声明／测试对照](docs/technical-showcase.md)
 - [客户端配置](docs/client-config.md)
 - [安全边界](SECURITY.md)
 - [记忆和长任务](docs/operations-memory.md)

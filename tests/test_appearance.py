@@ -59,7 +59,10 @@ def test_desktop_surface_rejects_unknown_values(tmp_path: Path) -> None:
 def test_both_first_run_previews_render_with_tk() -> None:
     import tkinter as tk
 
-    root = tk.Tk()
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("Tk display is unavailable on this headless runner")
     root.withdraw()
     try:
         pixel = tk.Canvas(root, width=350, height=230)

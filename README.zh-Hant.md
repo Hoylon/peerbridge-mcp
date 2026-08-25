@@ -4,11 +4,11 @@
 
 <h1 align="center">PeerBridge MCP</h1>
 
-<p align="center"><strong>本機優先、受治理的多 Agent 開發、審查與證據控制室。</strong></p>
+<p align="center"><strong>多廠商 Agent 的原生適配、協作與可信治理層。</strong></p>
 
 <p align="center">
   讓 Codex、Claude Code、Grok、Kimi、供應商 API、OpenAI-compatible endpoint 與本機模型
-  組成一個可稽核的工程團隊。
+  組成一個可稽核的工程團隊，同時保留各自的原生能力。
 </p>
 
 <p align="center">
@@ -27,6 +27,7 @@
   <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>下載 Windows Alpha</strong></a>
   · <a href="#windows-可攜版">快速開始</a>
   · <a href="#主要功能">主要功能</a>
+  · <a href="docs/technical-showcase.md">技術展示</a>
   · <a href="docs/alpha-quickstart.zh-Hant.md">使用教學</a>
 </p>
 
@@ -45,9 +46,9 @@
 <p align="center"><sub>同一套本機協作核心，保留原有高密度 Pixel 介面。</sub></p>
 </details>
 
-PeerBridge 不只是把多個聊天視窗放在一起。每個 Agent 都綁定穩定身分、模型、權限、
-房間上下文、工作與證據。Agent Cockpit 可在同一頁並列多個已審核的 coding session，
-同時保持每個終端、活動、答案及證據檢視獨立。
+PeerBridge 不只是把多個聊天視窗放在一起。它的多廠商原生適配層把 Codex JSON-RPC、
+Claude Code stream-json、Grok／Kimi ACP、供應商 API 及本機 runtime 保持為各自獨立的
+能力契約。每個 Agent 都綁定穩定身分、模型、權限、房間上下文、工作與證據。
 
 它支援平行實作與審查、有限技術討論、工作認領、經核准的共享記憶、互相評分、交叉
 審計及人類控制的發布流程。PeerBridge 在本機 SQLite 執行，供應商憑證不會進入對話或
@@ -58,12 +59,35 @@ PeerBridge 不只是把多個聊天視窗放在一起。每個 Agent 都綁定�
 
 | 維護者得到什麼 | PeerBridge 的做法 |
 | --- | --- |
-| 多 Agent 共用一個工作區 | 官方 coding client、供應商 API、相容 endpoint 及本機 runtime 保持各自可稽核身分。 |
+| 多廠商原生適配層 | Codex、Claude Code、Grok、Kimi、供應商 API、相容 endpoint 及本機 runtime 保持各自可稽核身分與能力邊界。 |
 | 真正協作而非無限回覆 | 平行實作、審查、討論及發布流程會按共識、阻塞、停滯或明確上限停止。 |
 | 受治理的寫入權限 | 權限卡、核准的隔離 Git worktree、來源狀態、程式碼差異與證據由人類控制。 |
 | 可延續的專案上下文 | 只匯入使用者勾選的歷史，房間記憶、任務簡報與交接均綁定來源。 |
 | 可覆核的結論 | Agent 活動、答案、證據、互評、審計、Token 用量及過期證據警告保持可見。 |
 | 本機資料主權 | SQLite 與憑證留在操作者電腦；遠端／手機控制獨立且預設關閉。 |
+
+## 技術差異
+
+```mermaid
+flowchart LR
+    A["多廠商原生適配器"] --> C["逐 Agent 能力聯集"]
+    C --> P["能力感知權限核准層"]
+    P --> W["受治理 worktree 與 writer lease"]
+    W --> R["平行審查與有限協作"]
+    R --> E["SHA 證據鏈與 Proof Bundle"]
+    H["人類操作者"] --> P
+    H --> R
+```
+
+一條命令即可執行不需供應商帳號的維護者技術展示：
+
+```powershell
+python examples\demo_workflow.py --workspace demo-workspace --scope demo
+```
+
+公開 receipt 會證明第二個重疊 writer 被拒、兩位獨立 reviewer 達成 quorum、完成前已
+重新 hash 合成工件，且 audit chain 以零寫入驗證。輸出不包含供應商憑證或 lease
+capability。完整對照見[技術聲明與測試證據](docs/technical-showcase.md)。
 
 > 狀態：Alpha，不是 Stable。公開 API 與資料庫 schema 在 1.0 前仍可能調整。
 
@@ -168,6 +192,7 @@ API base URL 與 Key；秘密只存入目前 Windows 使用者的 Credential Man
 ## 文件
 
 - [Alpha 快速開始](docs/alpha-quickstart.zh-Hant.md)
+- [技術展示與聲明／測試對照](docs/technical-showcase.md)
 - [客戶端設定](docs/client-config.md)
 - [安全界線](SECURITY.md)
 - [記憶及長任務](docs/operations-memory.md)

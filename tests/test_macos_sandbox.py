@@ -69,18 +69,25 @@ def test_live_seatbelt_denies_write_outside_worktree(tmp_path: Path) -> None:
     outside.mkdir()
     inside_file = worktree / "inside.txt"
     outside_file = outside / "outside.txt"
-    shell = (
-        f"printf pass > {shlex.quote(str(inside_file))}; "
-        f"printf blocked > {shlex.quote(str(outside_file))}"
+    inside_command = build_macos_seatbelt_command(
+        ("/bin/sh", "-c", f"printf pass > {shlex.quote(str(inside_file))}"),
+        worktree=worktree,
+        scratch=scratch,
     )
-    command = build_macos_seatbelt_command(
-        ("/bin/sh", "-c", shell),
+    outside_command = build_macos_seatbelt_command(
+        ("/bin/sh", "-c", f"printf blocked > {shlex.quote(str(outside_file))}"),
         worktree=worktree,
         scratch=scratch,
     )
 
-    completed = subprocess.run(command, capture_output=True, timeout=20, check=False)
+    inside = subprocess.run(
+        inside_command, capture_output=True, timeout=20, check=False
+    )
+    outside = subprocess.run(
+        outside_command, capture_output=True, timeout=20, check=False
+    )
 
-    assert completed.returncode != 0
+    assert inside.returncode == 0, inside.stderr.decode(errors="replace")
     assert inside_file.read_text(encoding="utf-8") == "pass"
+    assert outside.returncode != 0
     assert not outside_file.exists()

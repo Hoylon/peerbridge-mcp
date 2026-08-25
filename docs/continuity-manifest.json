@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-25T10:04:17Z",
+  "generated_at_utc": "2026-08-25T10:21:06Z",
   "claims": {
     "automatic_provider_reply_ready": false,
     "local_alpha_acceptance_ready": false,
@@ -17,8 +17,8 @@
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <dedicated> --junitxml <receipt>",
-      "created_at_utc": "2026-08-25T10:04:17Z",
-      "tracked_payload_root_sha256": "f07984392b02fa384467ec8325e1174753fca0b23ce1cd8598466bce398d7502",
+      "created_at_utc": "2026-08-25T10:21:06Z",
+      "tracked_payload_root_sha256": "ab3ef6705a5fc287d7dc33249f9e7ce6468f7d54bc4f48c1050adfacadd04c4d",
       "tests_collected": 1224,
       "tests_failed": 0,
       "tests_passed": 1218,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "f07984392b02fa384467ec8325e1174753fca0b23ce1cd8598466bce398d7502",
+    "tracked_payload_root_sha256": "ab3ef6705a5fc287d7dc33249f9e7ce6468f7d54bc4f48c1050adfacadd04c4d",
     "tracked_payload_file_count": 279,
     "source_files": [
       {
@@ -441,9 +441,9 @@
         "sha256": "1caaf172780bd43627c50c844f6a1921200e1cd4c1b81a9f11061476cdd9a87f"
       },
       {
-        "bytes": 2024,
+        "bytes": 3297,
         "path": "src/peerbridge_mcp/http_limits.py",
-        "sha256": "fdb172e860b953735cd8488aa9b8b33c37e50f9c5a5ccd4f181b4c27ab667686"
+        "sha256": "9380102b1d6d5af7739a8fe2f86c4886e4000a9ccaa3f7506370aece53b98b07"
       },
       {
         "bytes": 9441,

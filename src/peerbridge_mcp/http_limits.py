@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import socket
 import threading
 from http.server import ThreadingHTTPServer
@@ -10,6 +11,8 @@ from typing import Any
 
 DEFAULT_MAX_REQUEST_WORKERS = 24
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 10.0
+OVERLOAD_HEADER_DRAIN_SECONDS = 0.25
+MAX_OVERLOAD_HEADER_BYTES = 64 * 1024
 _OVERLOADED_RESPONSE = (
     b"HTTP/1.1 503 Service Unavailable\r\n"
     b"Content-Length: 0\r\n"
@@ -17,6 +20,29 @@ _OVERLOADED_RESPONSE = (
     b"Connection: close\r\n"
     b"\r\n"
 )
+
+
+def _drain_overloaded_request_head(request: socket.socket) -> None:
+    """Consume one bounded HTTP head so Windows can close without a TCP reset."""
+
+    previous_timeout = request.gettimeout()
+    received = bytearray()
+    try:
+        request.settimeout(OVERLOAD_HEADER_DRAIN_SECONDS)
+        while len(received) < MAX_OVERLOAD_HEADER_BYTES:
+            chunk = request.recv(
+                min(4096, MAX_OVERLOAD_HEADER_BYTES - len(received))
+            )
+            if not chunk:
+                break
+            received.extend(chunk)
+            if b"\r\n\r\n" in received:
+                break
+    except (OSError, TimeoutError):
+        return
+    finally:
+        with contextlib.suppress(OSError):
+            request.settimeout(previous_timeout)
 
 
 class BoundedThreadingHTTPServer(ThreadingHTTPServer):
@@ -41,7 +67,13 @@ class BoundedThreadingHTTPServer(ThreadingHTTPServer):
     def process_request(self, request: socket.socket, client_address: Any) -> None:
         if not self._request_slots.acquire(blocking=False):
             try:
+                _drain_overloaded_request_head(request)
                 request.sendall(_OVERLOADED_RESPONSE)
+                # On Windows, closing a socket with unread request bytes can
+                # reset the connection and discard the already-sent 503 from
+                # the client's point of view. Stop receiving first, then let
+                # socketserver.shutdown_request() flush and close the writer.
+                request.shutdown(socket.SHUT_RD)
             except OSError:
                 pass
             finally:

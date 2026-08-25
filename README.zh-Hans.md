@@ -37,6 +37,17 @@
 
 <p align="center"><sub>Modern Workbench 使用合成演示数据，不包含私人对话或凭据。</sub></p>
 
+## 30 秒开始
+
+1. 从 [Alpha 5.3 Release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3)
+   下载 `PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip`。
+2. 将 ZIP 的 SHA-256 与 Release 页面的 `SHA256SUMS.txt` 对照。
+3. 将**完整 ZIP**解压到可写入文件夹，然后双击 `Launch PeerBridge.cmd`。
+
+便携版不会安装服务、不会修改现有 Python 环境，也不包含供应商凭据。本地数据保留在
+`%LOCALAPPDATA%\PeerBridge\workspace`。如需自行安装，可继续阅读
+[从源代码开始](#从源代码开始)。
+
 <details>
 <summary><strong>查看 Pixel Control Room</strong></summary>
 <br>

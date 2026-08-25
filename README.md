@@ -37,6 +37,19 @@
 
 <p align="center"><sub>Modern Workbench with synthetic preview data. No private conversation or credential is included.</sub></p>
 
+## Start in 30 seconds
+
+1. Download `PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip` from the
+   [Alpha 5.3 release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3).
+2. Compare the ZIP's SHA-256 with `SHA256SUMS.txt` on the release page.
+3. Extract the **complete ZIP** to a writable folder and double-click
+   `Launch PeerBridge.cmd`.
+
+The portable build does not install a service, modify an existing Python environment, or
+include provider credentials. Local workspace data stays under
+`%LOCALAPPDATA%\PeerBridge\workspace`. Prefer source installation? Continue to
+[Install from source](#install-from-source).
+
 <details>
 <summary><strong>See the Pixel Control Room</strong></summary>
 <br>

@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-25T08:31:53Z",
+  "generated_at_utc": "2026-08-25T09:01:16Z",
   "claims": {
     "automatic_provider_reply_ready": false,
     "local_alpha_acceptance_ready": false,
@@ -17,8 +17,8 @@
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <dedicated> --junitxml <receipt>",
-      "created_at_utc": "2026-08-25T08:31:52Z",
-      "tracked_payload_root_sha256": "fde1ec0671d524b7c08ccfb93c80b2260fa797c37cc703dc8c4d5ae19af48154",
+      "created_at_utc": "2026-08-25T09:01:16Z",
+      "tracked_payload_root_sha256": "833c284aa2f546fee64bb2e2d082080effac0c9be25ffa8973779768cc5eb707",
       "tests_collected": 1215,
       "tests_failed": 0,
       "tests_passed": 1209,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "fde1ec0671d524b7c08ccfb93c80b2260fa797c37cc703dc8c4d5ae19af48154",
+    "tracked_payload_root_sha256": "833c284aa2f546fee64bb2e2d082080effac0c9be25ffa8973779768cc5eb707",
     "tracked_payload_file_count": 273,
     "source_files": [
       {
@@ -1208,19 +1208,19 @@
         "sha256": "0e97d8cf417f4757052e831e42c8d599653d11157773264aa201a641e8afc2a0"
       },
       {
-        "bytes": 33628,
+        "bytes": 34280,
         "path": "README.md",
-        "sha256": "c63eb2e8aca2e6de4eec221337e0e1359df36e76e20af7eb23973948760828af"
+        "sha256": "23d0da86b2290e93f092c8891052f84c49c04084f32053046ba2be71c5964d3e"
       },
       {
-        "bytes": 10759,
+        "bytes": 11354,
         "path": "README.zh-Hans.md",
-        "sha256": "497fc04eb6055fb42f11e61ae55dce7a3060d08a3e3cf99641905440a80f3c3d"
+        "sha256": "d378dcbb050aef423b9787110d1ac82ab76899fb644008025429b982e9838498"
       },
       {
-        "bytes": 10753,
+        "bytes": 11345,
         "path": "README.zh-Hant.md",
-        "sha256": "020038c82e14f4d9a6f200a8394dea9955c496c73ccfc088347b9d35f1056154"
+        "sha256": "199d30f06b2653eda84804db4120af582f160147780d42a82fae4e66a0810f6e"
       },
       {
         "bytes": 6737,

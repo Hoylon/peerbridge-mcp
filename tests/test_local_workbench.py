@@ -794,8 +794,8 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'id="history-dialog"' in body
         assert b'id="import-history"' in body
         assert b'id="identity-authorize-form"' in body
-        assert b'/assets/app.css?v=alpha52-20260825-15' in body
-        assert b'/assets/app.js?v=alpha52-20260825-15' in body
+        assert b'/assets/app.css?v=alpha52-20260825-18' in body
+        assert b'/assets/app.js?v=alpha52-20260825-18' in body
         assert b'id="chat-focus-button"' in body
         assert b'id="room-search-button"' in body
         assert b'id="announcement-button"' in body
@@ -957,6 +957,32 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     assert 'all_session_timeline' in javascript
     assert 'const body = typedBody || (state.attachments.length ? t("attachment_only_message")' in javascript
     assert 'byId("provider-api-key").value = ""' in javascript
+    assert 'workflow_implement_review: "實作與審查"' in javascript
+    assert 'workflow_investigate_debate: "调查与讨论"' in javascript
+    assert 'workflow_release_gate: "Release gate"' in javascript
+    assert "workflowLabel(entry)" in javascript
+    assert javascript.count("workflowLabel({ workflow_id: entry.workflow_id })") == 2
+    assert 'node("pre", "session-terminal session-terminal-preview", t("terminal_not_started"))' not in javascript
+
+
+def test_modern_workbench_readable_layout_does_not_shrink_sections_into_each_other() -> None:
+    stylesheet = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "peerbridge_mcp"
+        / "workbench"
+        / "app.css"
+    ).read_text(encoding="utf-8")
+
+    assert "#cockpit-view.active-view { display: grid;" in stylesheet
+    assert "grid-auto-rows: max-content" in stylesheet
+    assert "repeat(auto-fit, minmax(min(100%, 340px), 1fr))" in stylesheet
+    assert ".capability-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));" in stylesheet
+    assert ".capability-row:nth-child(-n + 2) { border-top: 0; }" in stylesheet
+    assert ".session-workspace.mode-grid { min-height: 0;" in stylesheet
+    assert ".dormant-terminal-state" in stylesheet
+    assert ".field { min-width: 0; display: grid; gap: 7px; color: var(--muted); font-size: 13px; }" in stylesheet
+    assert "@media (max-width: 1360px)" in stylesheet
 
 
 def test_worktree_diff_reports_real_additions_and_deletions(tmp_path: Path) -> None:

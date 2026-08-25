@@ -121,12 +121,14 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     ):
         assert f"--hidden-import {module}" in build_script
     assert "--icon $icon" in build_script
+    assert "--windowed" in build_script
     assert 'args[:1] == ["--workspace-launch"]' in entry
     assert "--version-file $versionFile" in build_script
     assert "PeerBridgeControlRoom.exe" in build_script
     assert "[string]$ArtifactRoot" in build_script
     assert "--source-launch" in launcher
     assert "--launcher-ready-path" in launcher
+    assert "-WindowStyle Hidden" in launcher
     assert "__PYVENV_LAUNCHER__" in launcher
     assert "sys._base_executable" in launcher
     assert "-f $entryScript, $projectRoot, $database, $scope, $readyPath" in launcher
@@ -170,6 +172,7 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert 'args[:2] == ["-m", "peerbridge_mcp"]' in entry
     assert "return cli_main(args[2:])" in entry
     assert "_start_managed_supervisor" in entry
+    assert "subprocess.CREATE_NO_WINDOW" in entry
     assert "def _activate_existing_control_room" in entry
     assert '"status": "existing-instance"' in entry
     assert "OpenMutexW" in entry
@@ -589,17 +592,18 @@ def test_windows_ci_runs_the_headless_portable_lifecycle_contract() -> None:
     )
 
 
-def test_alpha_five_is_published_as_a_normal_non_latest_release() -> None:
+def test_alpha_five_is_published_as_a_normal_latest_release() -> None:
     workflow = (PROJECT_ROOT / ".github" / "workflows" / "ci.yml").read_text(
         encoding="utf-8"
     )
 
     assert "Publish GitHub Alpha release" in workflow
-    assert "--latest=false" in workflow
+    assert "--latest" in workflow
+    assert "--latest=false" not in workflow
     assert "--prerelease" not in workflow
     assert (
         "--notes-file release-publication/docs/"
-        "GITHUB_ALPHA_5_2_RELEASE_DRAFT_20260819.md"
+        "GITHUB_ALPHA_5_4_RELEASE_DRAFT_20260825.md"
     ) in workflow
     assert "--notes-file docs/GITHUB_ALPHA_RELEASE_DRAFT_20260818.md" not in workflow
 

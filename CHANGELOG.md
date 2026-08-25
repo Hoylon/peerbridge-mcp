@@ -7,6 +7,24 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5.4] - 2026-08-25
+
+### Fixed
+
+- Replaced inactive Agent terminal placeholders with compact status rows, so opening the
+  multi-Agent console no longer produces a wall of black pseudo-terminal panels.
+- Prevented the session grid and Agent capability section from shrinking into each other,
+  and added responsive layout guards for narrow and wide desktop workspaces.
+- Increased the readable type scale for Agent capability, permission, workflow, and managed
+  launch controls while retaining the conversation-first desktop density.
+- Localized all four workflow names in Traditional Chinese, Simplified Chinese, and English
+  while preserving stable workflow IDs for the backend contract.
+
+### Release
+
+- Publishes Alpha 5.4 as a normal GitHub Release and marks it Latest. The product remains
+  explicitly Alpha; this changes the GitHub distribution flag, not the stability claim.
+
 ## [0.1.0-alpha.5.3] - 2026-08-25
 
 ### Added
@@ -294,7 +312,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.3...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.4...HEAD
+[0.1.0-alpha.5.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4
 [0.1.0-alpha.5.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3
 [0.1.0-alpha.5.2]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.2
 [0.1.0-alpha.5.1]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.1

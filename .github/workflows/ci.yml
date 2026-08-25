@@ -270,7 +270,7 @@ jobs:
           name: peerbridge-release-publication-${{ github.sha }}
           path: |
             release-assets
-            docs/GITHUB_ALPHA_5_2_RELEASE_DRAFT_20260819.md
+            docs/GITHUB_ALPHA_5_4_RELEASE_DRAFT_20260825.md
           if-no-files-found: error
           retention-days: 7
 
@@ -299,7 +299,7 @@ jobs:
         run: >-
           gh release create "${GITHUB_REF_NAME}"
           --verify-tag
-          --latest=false
+          --latest
           --title "PeerBridge MCP ${GITHUB_REF_NAME}"
-          --notes-file release-publication/docs/GITHUB_ALPHA_5_2_RELEASE_DRAFT_20260819.md
+          --notes-file release-publication/docs/GITHUB_ALPHA_5_4_RELEASE_DRAFT_20260825.md
           release-publication/release-assets/*

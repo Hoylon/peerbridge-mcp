@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.3-2563eb" alt="PeerBridge Alpha 5.3 发布"></a>
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.4-2563eb" alt="PeerBridge Alpha 5.4 发布"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/source-Apache--2.0-475569" alt="Apache 2.0 源代码许可证"></a>
   <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-0f766e" alt="安全策略"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>下载 Windows Alpha</strong></a>
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4"><strong>下载 Windows Alpha</strong></a>
   · <a href="#windows-便携版">快速开始</a>
   · <a href="#主要功能">主要功能</a>
   · <a href="docs/technical-showcase.md">技术展示</a>
@@ -39,8 +39,8 @@
 
 ## 30 秒开始
 
-1. 从 [Alpha 5.3 Release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3)
-   下载 `PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip`。
+1. 从 [Alpha 5.4 Release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4)
+   下载 `PeerBridgeControlRoom-0.1.0a5.post4-windows-x64-portable.zip`。
 2. 将 ZIP 的 SHA-256 与 Release 页面的 `SHA256SUMS.txt` 对照。
 3. 将**完整 ZIP**解压到可写入文件夹，然后双击 `Launch PeerBridge.cmd`。
 
@@ -131,7 +131,7 @@ capability。完整对照见[技术声明与测试证据](docs/technical-showcas
 ## Windows 便携版
 
 从 GitHub Release 下载
-`PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip`，核对同页 SHA-256，
+`PeerBridgeControlRoom-0.1.0a5.post4-windows-x64-portable.zip`，核对同页 SHA-256，
 完整解压后运行 `Launch PeerBridge.cmd`。本地数据位于
 `%LOCALAPPDATA%\PeerBridge\workspace`，发布包不包含供应商凭据。
 

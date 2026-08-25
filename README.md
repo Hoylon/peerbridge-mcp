@@ -18,13 +18,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.3-2563eb" alt="PeerBridge Alpha 5.3 release"></a>
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.4-2563eb" alt="PeerBridge Alpha 5.4 release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/source-Apache--2.0-475569" alt="Apache 2.0 source license"></a>
   <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-0f766e" alt="Security policy"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>Download Windows Alpha</strong></a>
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4"><strong>Download Windows Alpha</strong></a>
   · <a href="#quickstart">Quickstart</a>
   · <a href="#features">Features</a>
   · <a href="docs/technical-showcase.md">Technical showcase</a>
@@ -39,8 +39,8 @@
 
 ## Start in 30 seconds
 
-1. Download `PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip` from the
-   [Alpha 5.3 release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3).
+1. Download `PeerBridgeControlRoom-0.1.0a5.post4-windows-x64-portable.zip` from the
+   [Alpha 5.4 release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4).
 2. Compare the ZIP's SHA-256 with `SHA256SUMS.txt` on the release page.
 3. Extract the **complete ZIP** to a writable folder and double-click
    `Launch PeerBridge.cmd`.
@@ -243,7 +243,7 @@ directly until the operator changes Appearance and restarts.
 
 ### Windows portable app
 
-Download `PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip` from the GitHub
+Download `PeerBridgeControlRoom-0.1.0a5.post4-windows-x64-portable.zip` from the GitHub
 Alpha release, extract the complete ZIP to a writable folder, and double-click
 `Launch PeerBridge.cmd`. The portable app creates its local workspace under
 `%LOCALAPPDATA%\PeerBridge\workspace`; it does not include provider credentials or

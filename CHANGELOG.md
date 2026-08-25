@@ -7,6 +7,22 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5.6] - 2026-08-25
+
+### Fixed
+
+- Re-issued the loopback Workbench URL once the native WebView2 UI loop is ready, preventing
+  a blank first launch with a newly-created private WebView2 profile.
+- Added a native-shell contract test that requires the ready-time navigation to use the exact
+  same token-bearing loopback URL.
+- Carries forward the Alpha 5.4 desktop and localization fixes and the Alpha 5.5 provenance
+  workflow correction; neither earlier candidate created a GitHub Release.
+
+### Release
+
+- Publishes Alpha 5.6 as a normal GitHub Release and marks it Latest. The product remains
+  explicitly Alpha; this changes the GitHub distribution flag, not the stability claim.
+
 ## [0.1.0-alpha.5.5] - 2026-08-25
 
 ### Fixed
@@ -20,8 +36,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ### Release
 
-- Publishes Alpha 5.5 as a normal GitHub Release and marks it Latest. The product remains
-  explicitly Alpha; this changes the GitHub distribution flag, not the stability claim.
+- Prepared Alpha 5.5 with the corrected attestation workflow; publication was cancelled
+  before creating a Release after first-launch visual QA found a native WebView2 blank screen.
 
 ## [0.1.0-alpha.5.4] - 2026-08-25
 
@@ -328,7 +344,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.5...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.6...HEAD
+[0.1.0-alpha.5.6]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.6
 [0.1.0-alpha.5.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.5
 [0.1.0-alpha.5.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4
 [0.1.0-alpha.5.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3

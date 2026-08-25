@@ -5142,9 +5142,10 @@ def run_native_workbench(
         stopped.set()
         server.shutdown()
 
+    initial_url = workbench_url(server)
     window = webview.create_window(
         "PeerBridge MCP Control Room // LIVE",
-        workbench_url(server),
+        initial_url,
         width=1440,
         height=900,
         min_size=(980, 650),
@@ -5169,7 +5170,15 @@ def run_native_workbench(
         icon = _workbench_icon()
         if icon is not None:
             start_options["icon"] = str(icon)
-        webview.start(**start_options)
+
+        def load_when_webview_ready() -> None:
+            # A newly-created WebView2 private profile can expose its native
+            # window before the first navigation is committed. Re-issuing the
+            # same loopback URL once the UI loop is ready prevents a blank
+            # first launch without widening the local capability boundary.
+            window.load_url(initial_url)
+
+        webview.start(load_when_webview_ready, **start_options)
     finally:
         platform.system = original_platform_system
         stop_server()

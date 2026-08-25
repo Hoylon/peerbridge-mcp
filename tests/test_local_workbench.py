@@ -610,15 +610,21 @@ class FakeWebview:
         self.settings: dict[str, object] = {"WEBVIEW2_RUNTIME_PATH": None}
         self.window_options: dict[str, object] = {}
         self.start_options: dict[str, object] = {}
+        self.loaded_urls: list[str] = []
         self.platform_seen = ""
 
     def create_window(self, title: str, url: str, **options: object) -> object:
         self.window_options = {"title": title, "url": url, **options}
-        return SimpleNamespace(events=SimpleNamespace(closed=self.closed))
+        return SimpleNamespace(
+            events=SimpleNamespace(closed=self.closed),
+            load_url=self.loaded_urls.append,
+        )
 
-    def start(self, **options: object) -> None:
+    def start(self, ready: object | None = None, **options: object) -> None:
         self.start_options = dict(options)
         self.platform_seen = workbench_module.platform.system()
+        if callable(ready):
+            ready()
         parsed = urllib.parse.urlsplit(str(self.window_options["url"]))
         connection = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
         try:
@@ -660,6 +666,7 @@ def test_native_workbench_uses_webview2_and_stops_server(
     assert fake.window_options["text_select"] is True
     assert fake.start_options["gui"] == "edgechromium"
     assert fake.start_options["private_mode"] is True
+    assert fake.loaded_urls == [fake.window_options["url"]]
     assert fake.settings["WEBVIEW2_RUNTIME_PATH"] == str(runtime)
     assert fake.platform_seen == "Windows"
     assert workbench_module.platform.system() == "WMI-BLOCKED"

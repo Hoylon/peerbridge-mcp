@@ -7,6 +7,22 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5.5] - 2026-08-25
+
+### Fixed
+
+- Upgraded the pinned GitHub artifact attestation action to `actions/attest` v4.2.2,
+  which generates SLSA build provenance from `subject-path` without a custom predicate.
+- Disabled organization-only artifact storage records while retaining signed public
+  repository attestations for every release asset.
+- Carries forward the Alpha 5.4 desktop readability, responsive layout, and three-language
+  workflow fixes after the 5.4 publication job stopped before creating a Release.
+
+### Release
+
+- Publishes Alpha 5.5 as a normal GitHub Release and marks it Latest. The product remains
+  explicitly Alpha; this changes the GitHub distribution flag, not the stability claim.
+
 ## [0.1.0-alpha.5.4] - 2026-08-25
 
 ### Fixed
@@ -22,8 +38,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ### Release
 
-- Publishes Alpha 5.4 as a normal GitHub Release and marks it Latest. The product remains
-  explicitly Alpha; this changes the GitHub distribution flag, not the stability claim.
+- Prepared Alpha 5.4 as a normal GitHub Release candidate; its publication job stopped at
+  artifact attestation and did not create a Release.
 
 ## [0.1.0-alpha.5.3] - 2026-08-25
 
@@ -312,7 +328,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.4...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.5...HEAD
+[0.1.0-alpha.5.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.5
 [0.1.0-alpha.5.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4
 [0.1.0-alpha.5.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3
 [0.1.0-alpha.5.2]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.2

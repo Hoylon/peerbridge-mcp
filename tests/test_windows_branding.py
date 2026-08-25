@@ -603,7 +603,7 @@ def test_alpha_five_is_published_as_a_normal_latest_release() -> None:
     assert "--prerelease" not in workflow
     assert (
         "--notes-file release-publication/docs/"
-        "GITHUB_ALPHA_5_4_RELEASE_DRAFT_20260825.md"
+        "GITHUB_ALPHA_5_5_RELEASE_DRAFT_20260825.md"
     ) in workflow
     assert "--notes-file docs/GITHUB_ALPHA_RELEASE_DRAFT_20260818.md" not in workflow
 

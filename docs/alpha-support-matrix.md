@@ -1,6 +1,6 @@
 # PeerBridge Local Alpha Support Matrix
 
-This matrix describes the `0.1.0-alpha.5.4` local Alpha. A test or implementation entry
+This matrix describes the `0.1.0-alpha.5.5` local Alpha. A test or implementation entry
 does not upgrade a provider route to verified official identity.
 
 ## Platforms and distribution

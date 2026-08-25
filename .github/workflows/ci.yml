@@ -270,7 +270,7 @@ jobs:
           name: peerbridge-release-publication-${{ github.sha }}
           path: |
             release-assets
-            docs/GITHUB_ALPHA_5_4_RELEASE_DRAFT_20260825.md
+            docs/GITHUB_ALPHA_5_5_RELEASE_DRAFT_20260825.md
           if-no-files-found: error
           retention-days: 7
 
@@ -290,9 +290,10 @@ jobs:
           name: peerbridge-release-publication-${{ github.sha }}
           path: release-publication
       - name: Attest verified release assets
-        uses: actions/attest@025375512d7691d20fa59fad9e64a6399960847c # v3.2.0
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release-publication/release-assets/*
+          create-storage-record: false
       - name: Publish GitHub Alpha release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -301,5 +302,5 @@ jobs:
           --verify-tag
           --latest
           --title "PeerBridge MCP ${GITHUB_REF_NAME}"
-          --notes-file release-publication/docs/GITHUB_ALPHA_5_4_RELEASE_DRAFT_20260825.md
+          --notes-file release-publication/docs/GITHUB_ALPHA_5_5_RELEASE_DRAFT_20260825.md
           release-publication/release-assets/*

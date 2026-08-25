@@ -81,10 +81,18 @@ def test_live_seatbelt_denies_write_outside_worktree(tmp_path: Path) -> None:
     )
 
     inside = subprocess.run(
-        inside_command, capture_output=True, timeout=20, check=False
+        inside_command,
+        cwd=worktree,
+        capture_output=True,
+        timeout=20,
+        check=False,
     )
     outside = subprocess.run(
-        outside_command, capture_output=True, timeout=20, check=False
+        outside_command,
+        cwd=worktree,
+        capture_output=True,
+        timeout=20,
+        check=False,
     )
 
     assert inside.returncode == 0, inside.stderr.decode(errors="replace")

@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <img src="src/peerbridge_mcp/release_support/peerbridge-modern-preview.png" width="1100" alt="PeerBridge Modern Workbench 多 Agent 房間">
+  <img src="docs/images/peerbridge-modern-zh-Hant.png" width="1100" alt="PeerBridge Modern Workbench 多 Agent 房間">
 </p>
 
 <p align="center"><sub>Modern Workbench 使用合成示範資料，不包含私人對話或憑證。</sub></p>
@@ -52,7 +52,7 @@
 <summary><strong>查看 Pixel Control Room</strong></summary>
 <br>
 <p align="center">
-  <img src="src/peerbridge_mcp/release_support/peerbridge-pixel-preview.png" width="1100" alt="PeerBridge Pixel Control Room 受管 Agent sessions">
+  <img src="docs/images/peerbridge-pixel-zh-Hant.png" width="1100" alt="PeerBridge Pixel Control Room 受管 Agent sessions">
 </p>
 <p align="center"><sub>同一套本機協作核心，保留原有高密度 Pixel 介面。</sub></p>
 </details>

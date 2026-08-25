@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-25T09:01:16Z",
+  "generated_at_utc": "2026-08-25T09:47:58Z",
   "claims": {
     "automatic_provider_reply_ready": false,
     "local_alpha_acceptance_ready": false,
@@ -8,20 +8,20 @@
     "strict_package_gate_ready": false,
     "operator_physical_acceptance_ready": false,
     "remote_mobile_e2e_ready": false,
-    "tests_collected": 1215,
+    "tests_collected": 1224,
     "tests_failed": 0,
-    "tests_passed": 1209,
+    "tests_passed": 1218,
     "tests_skipped": 6,
     "release_certified_payload_root_sha256": null,
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <dedicated> --junitxml <receipt>",
-      "created_at_utc": "2026-08-25T09:01:16Z",
-      "tracked_payload_root_sha256": "833c284aa2f546fee64bb2e2d082080effac0c9be25ffa8973779768cc5eb707",
-      "tests_collected": 1215,
+      "created_at_utc": "2026-08-25T09:47:57Z",
+      "tracked_payload_root_sha256": "9fafeba1fe8b65daee8cb1047a56a1d838ec37f4292a1a6f9f3ad4d413cceceb",
+      "tests_collected": 1224,
       "tests_failed": 0,
-      "tests_passed": 1209,
+      "tests_passed": 1218,
       "tests_skipped": 6
     }
   },
@@ -32,8 +32,8 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "833c284aa2f546fee64bb2e2d082080effac0c9be25ffa8973779768cc5eb707",
-    "tracked_payload_file_count": 273,
+    "tracked_payload_root_sha256": "9fafeba1fe8b65daee8cb1047a56a1d838ec37f4292a1a6f9f3ad4d413cceceb",
+    "tracked_payload_file_count": 279,
     "source_files": [
       {
         "bytes": 186,
@@ -79,6 +79,36 @@
         "bytes": 93,
         "path": "MANIFEST.in",
         "sha256": "e0f32dcc32508684c2563ba994989f73a87f4e9ac01e38a4b15a8e5086b7306f"
+      },
+      {
+        "bytes": 128951,
+        "path": "docs/images/peerbridge-modern-en.png",
+        "sha256": "2e4d253dd4728d13163344016220fe36a1b7cd3038830f5692ebb8c67218aeba"
+      },
+      {
+        "bytes": 100160,
+        "path": "docs/images/peerbridge-modern-zh-Hans.png",
+        "sha256": "cedcdf5aee21a14780bb82950a0599b2c856509b668986d60d917083e229beb8"
+      },
+      {
+        "bytes": 102648,
+        "path": "docs/images/peerbridge-modern-zh-Hant.png",
+        "sha256": "89b408f02ab14456875b36e719cd084c0257195df2dca23da364cdb857d24fd9"
+      },
+      {
+        "bytes": 497712,
+        "path": "docs/images/peerbridge-pixel-en.png",
+        "sha256": "fb61a47976c34c9ea727ddf56509068ac8d8767dc9a2143dd3edfd3e717f0c8b"
+      },
+      {
+        "bytes": 475600,
+        "path": "docs/images/peerbridge-pixel-zh-Hans.png",
+        "sha256": "d43d0bf2556ca9e6684b81401aa2aa603d3f34adf48b0e531346f64308d482ea"
+      },
+      {
+        "bytes": 480473,
+        "path": "docs/images/peerbridge-pixel-zh-Hant.png",
+        "sha256": "667ba73cee2f2fe433477b6ee14ecaa53aad9d3d4ac155244fdae23d587a62c4"
       },
       {
         "bytes": 502,
@@ -826,9 +856,9 @@
         "sha256": "f938e05819211b3ead04c29adc1c5fa1449205cf9211533a566ed8bd7e505ebd"
       },
       {
-        "bytes": 4064,
+        "bytes": 5389,
         "path": "tests/test_appearance.py",
-        "sha256": "5368b69ca06f93de1f22b599c0cd1d39602e72726ad573ab10d56730d57c18d8"
+        "sha256": "a5ed065f5e347d7f983f83d217f4db7e3cc269193762d3335462610c80a01414"
       },
       {
         "bytes": 7167,
@@ -1208,19 +1238,19 @@
         "sha256": "0e97d8cf417f4757052e831e42c8d599653d11157773264aa201a641e8afc2a0"
       },
       {
-        "bytes": 34280,
+        "bytes": 34224,
         "path": "README.md",
-        "sha256": "23d0da86b2290e93f092c8891052f84c49c04084f32053046ba2be71c5964d3e"
+        "sha256": "b89a8ccf539b89d66f21e515ca614086bdfdb7c099060851b3e2a848bfa81637"
       },
       {
-        "bytes": 11354,
+        "bytes": 11308,
         "path": "README.zh-Hans.md",
-        "sha256": "d378dcbb050aef423b9787110d1ac82ab76899fb644008025429b982e9838498"
+        "sha256": "f1b3fc1a7ab6ed9d0dc3c34ccfe6424f5d3f86297ee9f8f319ea383d5e04f864"
       },
       {
-        "bytes": 11345,
+        "bytes": 11299,
         "path": "README.zh-Hant.md",
-        "sha256": "199d30f06b2653eda84804db4120af582f160147780d42a82fae4e66a0810f6e"
+        "sha256": "35c0ae756bdc1c54f92dc5f7bbae7eb2ccdc63fc396c5b44861ffedb4dfd279f"
       },
       {
         "bytes": 6737,

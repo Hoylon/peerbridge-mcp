@@ -32,7 +32,7 @@
 </p>
 
 <p align="center">
-  <img src="src/peerbridge_mcp/release_support/peerbridge-modern-preview.png" width="1100" alt="PeerBridge Modern Workbench showing a governed multi-Agent room">
+  <img src="docs/images/peerbridge-modern-en.png" width="1100" alt="PeerBridge Modern Workbench showing a governed multi-Agent room">
 </p>
 
 <p align="center"><sub>Modern Workbench with synthetic preview data. No private conversation or credential is included.</sub></p>
@@ -54,7 +54,7 @@ include provider credentials. Local workspace data stays under
 <summary><strong>See the Pixel Control Room</strong></summary>
 <br>
 <p align="center">
-  <img src="src/peerbridge_mcp/release_support/peerbridge-pixel-preview.png" width="1100" alt="PeerBridge Pixel Control Room showing managed Agent sessions">
+  <img src="docs/images/peerbridge-pixel-en.png" width="1100" alt="PeerBridge Pixel Control Room showing managed Agent sessions">
 </p>
 <p align="center"><sub>The same local coordination core in the original dense Pixel interface.</sub></p>
 </details>

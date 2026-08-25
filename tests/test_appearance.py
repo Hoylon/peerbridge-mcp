@@ -92,6 +92,48 @@ def test_first_run_uses_real_1400_by_900_interface_capture(surface: str) -> None
     assert len(payload) > 50_000
 
 
+@pytest.mark.parametrize(
+    ("readme_name", "locale"),
+    [
+        ("README.md", "en"),
+        ("README.zh-Hant.md", "zh-Hant"),
+        ("README.zh-Hans.md", "zh-Hans"),
+    ],
+)
+def test_readmes_use_locale_matched_modern_and_pixel_captures(
+    readme_name: str, locale: str
+) -> None:
+    root = Path(__file__).parents[1]
+    readme = (root / readme_name).read_text(encoding="utf-8")
+    expected = {
+        f"docs/images/peerbridge-modern-{locale}.png",
+        f"docs/images/peerbridge-pixel-{locale}.png",
+    }
+
+    assert all(path in readme for path in expected)
+    for other in {"en", "zh-Hant", "zh-Hans"} - {locale}:
+        assert f"docs/images/peerbridge-modern-{other}.png" not in readme
+        assert f"docs/images/peerbridge-pixel-{other}.png" not in readme
+
+
+@pytest.mark.parametrize("surface", ["modern", "pixel"])
+@pytest.mark.parametrize("locale", ["en", "zh-Hant", "zh-Hans"])
+def test_readme_localized_capture_is_real_1400_by_900_png(
+    surface: str, locale: str
+) -> None:
+    path = (
+        Path(__file__).parents[1]
+        / "docs"
+        / "images"
+        / f"peerbridge-{surface}-{locale}.png"
+    )
+    payload = path.read_bytes()
+
+    assert payload.startswith(b"\x89PNG\r\n\x1a\n")
+    assert struct.unpack(">II", payload[16:24]) == (1400, 900)
+    assert len(payload) > 50_000
+
+
 def test_first_run_chooser_default_geometry_keeps_actions_visible() -> None:
     width, height = (int(value) for value in CHOOSER_GEOMETRY.split("x", 1))
     assert width >= CHOOSER_MINIMUM_SIZE[0]

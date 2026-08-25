@@ -104,6 +104,35 @@
       observed_model: "已觀察模型",
       client_version: "客戶端版本",
       permission_tier: "權限層級",
+      permission_mode: "權限模式",
+      mode_approval_required: "要求核准",
+      mode_agent_delegated: "代理核准",
+      mode_full_access: "完整存取",
+      managed_permission_requires_agent: "一般編輯或完整存取只適用於一個已安裝的本機 Agent；請先選擇單一 Agent。",
+      managed_permission_prepared: "草稿已帶到受管 Agent 啟動區；選擇治理工作樹後，只需確認本工作階段一次。",
+      managed_permission_unavailable: "這個房間席位沒有可安全啟動的本機官方 Agent。",
+      tutorial_title: "快速教學",
+      tutorial_short: "開始",
+      tutorial_intro: "四步完成第一個可審計的多智能體工作。",
+      tutorial_room_title: "建立房間與選擇 Agent",
+      tutorial_room_body: "建立房間、加入人工席位，再為每個 Agent 選擇角色、供應商、模型與推理強度。",
+      tutorial_send_title: "選擇權限並送出",
+      tutorial_send_body: "在輸入框選擇收件者、權限模式、優先級與附件；貼上的圖片會先顯示再送出。",
+      tutorial_automation_title: "控制協作回合",
+      tutorial_automation_body: "選擇關閉、一輪或有限討論，並設定回合、訊息與停滯上限，避免無限循環。",
+      tutorial_evidence_title: "核對工作與證據",
+      tutorial_evidence_body: "在控制台查看 Agent 狀態、模型、活動和答案；在變更、互評與審計頁核對程式碼及證據。",
+      tutorial_later: "稍後",
+      tutorial_done: "知道了",
+      approval_waiting: "等待你的核准",
+      approval_allow_once: "批准一次",
+      approval_allow_session: "本工作階段允許",
+      approval_deny: "拒絕",
+      approval_risk: "風險",
+      adapter_capabilities: "適配器能力",
+      adapter_state_supported: "已支援",
+      adapter_state_conditional: "條件支援",
+      adapter_state_unsupported: "未支援",
       tier_observe: "聊天／只讀",
       tier_review: "審查／只讀",
       tier_edit: "Agent（一般）",
@@ -184,6 +213,35 @@
       observed_model: "已观察模型",
       client_version: "客户端版本",
       permission_tier: "权限层级",
+      permission_mode: "权限模式",
+      mode_approval_required: "要求批准",
+      mode_agent_delegated: "代理批准",
+      mode_full_access: "完整访问",
+      managed_permission_requires_agent: "普通编辑或完整访问只适用于一个已安装的本地 Agent；请先选择单个 Agent。",
+      managed_permission_prepared: "草稿已带到受管 Agent 启动区；选择治理工作树后，只需为本工作阶段确认一次。",
+      managed_permission_unavailable: "该房间席位没有可安全启动的本地官方 Agent。",
+      tutorial_title: "快速教程",
+      tutorial_short: "开始",
+      tutorial_intro: "四步完成第一个可审计的多智能体工作。",
+      tutorial_room_title: "创建房间并选择 Agent",
+      tutorial_room_body: "创建房间、加入人工席位，再为每个 Agent 选择角色、供应商、模型和推理强度。",
+      tutorial_send_title: "选择权限并发送",
+      tutorial_send_body: "在输入框选择收件人、权限模式、优先级和附件；粘贴的图片会先显示再发送。",
+      tutorial_automation_title: "控制协作轮次",
+      tutorial_automation_body: "选择关闭、一轮或有限讨论，并设置轮次、消息和停滞上限，避免无限循环。",
+      tutorial_evidence_title: "核对工作与证据",
+      tutorial_evidence_body: "在控制台查看 Agent 状态、模型、活动和回答；在变更、互评和审计页核对代码及证据。",
+      tutorial_later: "稍后",
+      tutorial_done: "知道了",
+      approval_waiting: "等待你的批准",
+      approval_allow_once: "批准一次",
+      approval_allow_session: "本工作阶段允许",
+      approval_deny: "拒绝",
+      approval_risk: "风险",
+      adapter_capabilities: "适配器能力",
+      adapter_state_supported: "已支持",
+      adapter_state_conditional: "条件支持",
+      adapter_state_unsupported: "未支持",
       tier_observe: "聊天／只读",
       tier_review: "审查／只读",
       tier_edit: "Agent（普通）",
@@ -264,6 +322,35 @@
       observed_model: "Observed model",
       client_version: "Client version",
       permission_tier: "Permission tier",
+      permission_mode: "Permission mode",
+      mode_approval_required: "Ask for approval",
+      mode_agent_delegated: "Delegate approval",
+      mode_full_access: "Full access",
+      managed_permission_requires_agent: "Standard or full access requires one installed local Agent. Select a single Agent first.",
+      managed_permission_prepared: "The draft is ready in Managed Agent. Choose a governed worktree and authorize this session once.",
+      managed_permission_unavailable: "This room seat has no local official Agent that can be started safely.",
+      tutorial_title: "Quick start",
+      tutorial_short: "Start",
+      tutorial_intro: "Complete your first auditable multi-agent task in four steps.",
+      tutorial_room_title: "Create a room and choose Agents",
+      tutorial_room_body: "Create a room, join as the human operator, then choose each Agent's role, provider, model, and reasoning effort.",
+      tutorial_send_title: "Choose permission and send",
+      tutorial_send_body: "Choose recipient, permission mode, priority, and attachments in the composer. Pasted images appear before sending.",
+      tutorial_automation_title: "Control collaboration rounds",
+      tutorial_automation_body: "Choose Off, One round, or bounded Discussion, then set round, message, and stagnation limits.",
+      tutorial_evidence_title: "Verify work and evidence",
+      tutorial_evidence_body: "Use Cockpit for Agent state, model, activity, and answers. Use Changes, Reviews, and Audit for code and evidence.",
+      tutorial_later: "Later",
+      tutorial_done: "Got it",
+      approval_waiting: "Waiting for your approval",
+      approval_allow_once: "Allow once",
+      approval_allow_session: "Allow for session",
+      approval_deny: "Deny",
+      approval_risk: "Risk",
+      adapter_capabilities: "Adapter capabilities",
+      adapter_state_supported: "Supported",
+      adapter_state_conditional: "Conditional",
+      adapter_state_unsupported: "Unsupported",
       tier_observe: "Chat / read only",
       tier_review: "Review / read only",
       tier_edit: "Agent (standard)",
@@ -331,6 +418,27 @@
       one_shot_input_used: "Initial work was submitted; this one-shot task cannot accept another input.",
       session_action_completed: "Session action completed",
       token_breakdown: "Token breakdown", token_trend: "Token trend", provider_usage: "Provider usage", model_usage: "Model usage"
+    }
+  };
+
+  const adapterCapabilityLabels = {
+    "zh-Hant": {
+      "model-selection": "模型選擇", "reasoning-selection": "推理強度", "persistent-session": "持續工作階段",
+      "session-resume": "恢復工作階段", "session-fork": "建立分支", "session-compact": "壓縮上下文",
+      "native-review": "原生審查", "image-input": "圖片輸入", "observable-events": "即時活動事件",
+      "token-usage": "Token 使用量", "interactive-approval": "互動核准", "history-import": "歷史匯入"
+    },
+    "zh-Hans": {
+      "model-selection": "模型选择", "reasoning-selection": "推理强度", "persistent-session": "持续工作阶段",
+      "session-resume": "恢复工作阶段", "session-fork": "创建分支", "session-compact": "压缩上下文",
+      "native-review": "原生审查", "image-input": "图片输入", "observable-events": "实时活动事件",
+      "token-usage": "Token 使用量", "interactive-approval": "互动批准", "history-import": "历史导入"
+    },
+    en: {
+      "model-selection": "Model selection", "reasoning-selection": "Reasoning effort", "persistent-session": "Persistent session",
+      "session-resume": "Resume session", "session-fork": "Fork session", "session-compact": "Compact context",
+      "native-review": "Native review", "image-input": "Image input", "observable-events": "Live activity events",
+      "token-usage": "Token usage", "interactive-approval": "Interactive approval", "history-import": "History import"
     }
   };
 
@@ -426,10 +534,10 @@
 
   const state = {
     token: "", locale: localStorage.getItem("peerbridge.locale") || "zh-Hant", data: null, roomId: "lobby",
-    view: "chat", signature: "", etag: "", timer: null, loading: false, older: [], firstRender: true,
+    view: "chat", signature: "", etag: "", timer: null, loading: false, older: [], firstRender: true, tutorialAutoChecked: false,
     attachments: [], managedAttachments: [], managedTurnAttachments: Object.create(null), feedbackAttachments: [],
     cockpitMode: "grid", selectedSessionId: "", sessionDetailTab: "terminal", usagePeriod: "30d", chatFocus: false, roomSearch: "", ccswitchProviders: [], ccswitchModels: [], providerModels: [], historyContinuationSourceRoom: "",
-    worktreeDiff: null, worktreeDiffLoading: false, agentLaunchSelections: Object.create(null),
+    worktreeDiff: null, worktreeDiffLoading: false, agentLaunchSelections: Object.create(null), preparedApprovalMode: "",
     renderSignatures: Object.create(null)
   };
   const MAX_DIFF_RENDER_LINES = 4000;
@@ -636,6 +744,33 @@
     return right.includes(left);
   };
 
+  const managedAgentForRoomAgent = (routeAgentId) => (
+    (state.data?.managed_agent_catalog || []).find(
+      (entry) => entry.primary && managedAgentMatches(entry.agent_id, routeAgentId)
+    ) || null
+  );
+
+  function updateComposerPermissionControls() {
+    const select = byId("composer-permission");
+    if (!select) return;
+    const recipient = byId("recipient")?.value || "*";
+    const managed = recipient === "*" ? null : managedAgentForRoomAgent(recipient);
+    const launchable = new Set(
+      (managed?.permission_tiers || [])
+        .filter((tier) => tier.launchable)
+        .map((tier) => tier.tier_id)
+    );
+    Array.from(select.options).forEach((option) => {
+      const requiredTier = option.value === "full-access" ? "full-development" : "edit";
+      option.disabled = option.value !== "approval-required"
+        && (!managed?.installed || !launchable.has(requiredTier));
+    });
+    if (select.selectedOptions[0]?.disabled) select.value = "approval-required";
+    select.title = recipient === "*" || !managed?.installed
+      ? t("managed_permission_requires_agent")
+      : t("permission_mode");
+  }
+
   function managedRouteOptions(agentId) {
     const routes = (state.data?.routes || []).filter((route) => route.enabled !== false && managedAgentMatches(agentId, route.agent_id));
     const entry = (state.data?.managed_agent_catalog || []).find((row) => row.agent_id === agentId);
@@ -740,6 +875,28 @@
   function toast(message) {
     const el = byId("toast"); el.textContent = message; el.hidden = false;
     window.clearTimeout(toast.timer); toast.timer = window.setTimeout(() => { el.hidden = true; }, 3200);
+  }
+
+  function openTutorial() {
+    const dialog = byId("tutorial-dialog");
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+  }
+
+  async function closeTutorial(completed) {
+    const dialog = byId("tutorial-dialog");
+    if (completed) {
+      try {
+        await postAction("/api/preferences/save", {
+          locale: state.locale,
+          tutorial_completed: true
+        });
+      } catch (error) {
+        toast(`${t("action_failed")}: ${error.message}`);
+        return;
+      }
+    }
+    dialog.close();
   }
 
   function setConnection(online) {
@@ -950,6 +1107,7 @@
     const all = node("option", "", t("all_agents")); all.value = "*"; select.append(all);
     members.filter((m) => m.agent_id !== "human-operator").forEach((member) => { const option = node("option", "", member.agent_id); option.value = member.agent_id; select.append(option); });
     select.value = Array.from(select.options).some((o) => o.value === selected) ? selected : "*";
+    updateComposerPermissionControls();
     renderSeatControls();
   }
 
@@ -1272,6 +1430,55 @@
       if (entry.managed) {
         const isTerminal = terminalStatus(statusValue);
         const contract = entry.session_contract || {};
+        const pendingApprovals = Array.isArray(entry.approval_broker?.pending)
+          ? entry.approval_broker.pending
+          : [];
+        pendingApprovals.forEach((approval) => {
+          const card = node("section", `approval-request-card risk-${approval.risk || "elevated"}`);
+          const heading = node("div", "approval-request-heading");
+          heading.append(
+            node("strong", "", approval.title || t("approval_waiting")),
+            node("span", "status-badge warning", t("approval_waiting"))
+          );
+          card.append(heading);
+          if (approval.detail) card.append(node("pre", "approval-request-detail", approval.detail));
+          card.append(node("small", "", `${t("approval_risk")}: ${approval.risk || "--"}`));
+          const actions = node("div", "approval-request-actions");
+          const available = new Set(approval.available_decisions || []);
+          const decide = async (decision) => {
+            Array.from(actions.querySelectorAll("button")).forEach((button) => { button.disabled = true; });
+            try {
+              await postAction("/api/session/action", {
+                session_id: entry.session_id,
+                action: "approval",
+                approval_id: approval.approval_id,
+                approval_decision: decision
+              });
+              renderCockpit();
+            } catch (error) {
+              toast(`${t("action_failed")}: ${error.message}`);
+              Array.from(actions.querySelectorAll("button")).forEach((button) => { button.disabled = false; });
+            }
+          };
+          if (available.has("allow-once")) {
+            const allowOnce = node("button", "primary-button", t("approval_allow_once"));
+            allowOnce.type = "button";
+            allowOnce.addEventListener("click", () => decide("allow-once"));
+            actions.append(allowOnce);
+          }
+          if (available.has("allow-session")) {
+            const allowSession = node("button", "secondary-button", t("approval_allow_session"));
+            allowSession.type = "button";
+            allowSession.addEventListener("click", () => decide("allow-session"));
+            actions.append(allowSession);
+          }
+          const deny = node("button", "danger-button", t("approval_deny"));
+          deny.type = "button";
+          deny.addEventListener("click", () => decide("deny"));
+          actions.append(deny);
+          card.append(actions);
+          row.append(card);
+        });
         const persistent = entry.input_mode === "persistent" || Boolean(entry.session_contract?.additional_input_supported);
         const contractNote = node("p", "session-contract-note", persistent
           ? t("persistent_session_notice")
@@ -1454,12 +1661,17 @@
   const permissionTierLabel = (tierId) => t(`tier_${String(tierId || "observe").replaceAll("-", "_")}`);
   const permissionTierHint = (tierId) => t(`permission_hint_${String(tierId || "observe").replaceAll("-", "_")}`);
   const capabilityLabel = (capabilityId) => t(`capability_${capabilityId}`);
+  const adapterCapabilityLabel = (capabilityId) => (
+    (adapterCapabilityLabels[state.locale] || adapterCapabilityLabels.en)[capabilityId]
+    || capabilityId
+  );
+  const adapterCapabilityStateLabel = (status) => t(`adapter_state_${status || "unsupported"}`);
   const capabilityStatusLabel = (status) => t(`status_${String(status || "not_verified")}`);
   const capabilityTone = (status) => {
-    if (status === "verified") return "success";
+    if (new Set(["verified", "supported"]).has(status)) return "success";
     if (status === "configured") return "active";
-    if (status === "gated") return "warning";
-    if (status === "unavailable") return "danger";
+    if (new Set(["gated", "conditional"]).has(status)) return "warning";
+    if (new Set(["unavailable", "unsupported"]).has(status)) return "danger";
     return "muted";
   };
 
@@ -1528,6 +1740,29 @@
       });
       nativeAxis.append(contractGrid);
       card.append(nativeAxis);
+
+      const adapterCapabilities = entry.adapter?.capabilities || [];
+      if (adapterCapabilities.length) {
+        const adapterAxis = node("section", "capability-axis adapter-capability-axis");
+        adapterAxis.append(node("h4", "capability-axis-title", t("adapter_capabilities")));
+        const adapterRows = node("div", "capability-list");
+        adapterCapabilities.forEach((capability) => {
+          const capabilityRow = node("div", "capability-row");
+          const label = node("span", "capability-name", adapterCapabilityLabel(capability.capability_id));
+          label.title = [capability.evidence, capability.limitation].filter(Boolean).join(" · ");
+          capabilityRow.append(
+            label,
+            node(
+              "span",
+              `status-badge ${capabilityTone(capability.state)}`,
+              adapterCapabilityStateLabel(capability.state)
+            )
+          );
+          adapterRows.append(capabilityRow);
+        });
+        adapterAxis.append(adapterRows);
+        card.append(adapterAxis);
+      }
 
       const tiers = node("div", "permission-tier-strip");
       (entry.permission_tiers || []).forEach((tier) => {
@@ -2069,7 +2304,8 @@
     byId("automation-label").textContent = automationText(automation.mode); byId("room-message-count").textContent = compact(room?.message_count || 0); byId("room-token-count").textContent = compact(state.data.usage?.totals?.total_tokens || 0);
     byId("automation-mode").value = automation.mode || "off"; byId("automation-rounds").value = automation.max_rounds || 4; byId("automation-messages").value = automation.max_messages || 40; byId("automation-stagnation").value = automation.stagnation_rounds || 2;
     byId("discussion-controls").hidden = !automation.active_discussion;
-    ["send-button", "message-body", "message-subject", "attachment-button", "recipient", "priority", "save-automation"].forEach((id) => { byId(id).disabled = !state.data.operator_active; });
+    ["send-button", "message-body", "message-subject", "attachment-button", "recipient", "composer-permission", "priority", "save-automation"].forEach((id) => { byId(id).disabled = !state.data.operator_active; });
+    if (state.data.operator_active) updateComposerPermissionControls();
     byId("message-body").placeholder = state.data.operator_active ? t("composer_placeholder") : historyRecord ? t("history_read_only") : t("no_operator");
     renderRooms(); renderMessages(); renderAgents(); renderTasks(); renderCockpit(); renderOperations(); renderReviews(); renderChanges(); renderAudit(); renderTrust(); renderConnections(); renderMemory(); renderUsage(); renderSupport(); renderRound(); renderActivity(); renderEvidence();
   }
@@ -2094,6 +2330,18 @@
       }
       if (!response.ok) throw new Error(String(response.status)); const payload = await response.json();
       state.etag = response.headers.get("ETag") || ""; state.roomId = payload.room_id; const changed = payload.signature !== state.signature; state.data = payload; state.signature = payload.signature;
+      if (!state.tutorialAutoChecked) {
+        state.tutorialAutoChecked = true;
+        const savedLocale = payload.appearance?.locale;
+        if (!localStorage.getItem("peerbridge.locale") && savedLocale in translations) {
+          state.locale = savedLocale;
+          localStorage.setItem("peerbridge.locale", state.locale);
+          applyLocale();
+        }
+        if (payload.appearance?.tutorial_completed === false) {
+          window.setTimeout(openTutorial, 120);
+        }
+      }
       if (changed || force) render(); setConnection(true); byId("connection-error").hidden = true;
     } catch (error) {
       setConnection(false);
@@ -2297,8 +2545,48 @@
     closeMobilePanels();
   }
 
+  function prepareManagedTaskFromComposer(body, approvalMode) {
+    const recipient = byId("recipient").value;
+    if (recipient === "*") {
+      toast(t("managed_permission_requires_agent"));
+      return false;
+    }
+    const managed = managedAgentForRoomAgent(recipient);
+    if (!managed?.installed) {
+      toast(t("managed_permission_unavailable"));
+      return false;
+    }
+    state.view = "cockpit";
+    state.preparedApprovalMode = approvalMode;
+    render();
+    byId("managed-agent").value = managed.agent_id;
+    const saved = state.agentLaunchSelections[managed.agent_id] || {};
+    updateManagedRouteOptions(managed.agent_id, saved.route || "");
+    const permissionTier = approvalMode === "full-access" ? "full-development" : "edit";
+    if (Array.from(byId("managed-permission").options).some(
+      (option) => option.value === permissionTier && !option.disabled
+    )) {
+      byId("managed-permission").value = permissionTier;
+    }
+    updateManagedPermissionControls();
+    byId("managed-input").value = body;
+    state.managedAttachments = state.attachments.map((entry) => ({ ...entry }));
+    renderManagedAttachments();
+    byId("managed-launch-heading").scrollIntoView({ behavior: "auto", block: "start" });
+    byId("managed-input").focus();
+    toast(t("managed_permission_prepared"));
+    return true;
+  }
+
   async function sendMessage(event) {
     event.preventDefault(); const typedBody = byId("message-body").value.trim(); const body = typedBody || (state.attachments.length ? t("attachment_only_message") : ""); if (!body || !state.data?.operator_active) return;
+    const approvalMode = byId("composer-permission").value;
+    const directManaged = byId("recipient").value !== "*"
+      && managedAgentForRoomAgent(byId("recipient").value)?.installed;
+    if (approvalMode !== "approval-required" || directManaged) {
+      prepareManagedTaskFromComposer(body, approvalMode);
+      return;
+    }
     const button = byId("send-button"); button.disabled = true; byId("send-status").textContent = "…";
     try {
       const fallbackSubject = state.locale === "en" ? "Human intervention" : state.locale === "zh-Hans" ? "人工介入" : "人工介入";
@@ -2534,6 +2822,11 @@
   async function startManagedSession(event) {
     event.preventDefault();
     const permissionTier = byId("managed-permission").value;
+    const approvalMode = state.preparedApprovalMode || (
+      permissionTier === "full-development" ? "full-access"
+        : permissionTier === "edit" ? "agent-delegated"
+          : "approval-required"
+    );
     const writeCapable = new Set(["edit", "full-development"]).has(permissionTier);
     const confirmationKey = permissionTier === "full-development" ? "full_access_session_confirm" : "write_session_confirm";
     if (writeCapable && !window.confirm(t(confirmationKey))) return;
@@ -2542,6 +2835,7 @@
       const result = await postAction("/api/session/start", {
         agent_id: byId("managed-agent").value, role: byId("managed-role").value,
         permission_tier: byId("managed-permission").value,
+        approval_mode: approvalMode,
         authorization_confirmed: writeCapable,
         governance_binding_id: byId("managed-binding-field").hidden ? "" : byId("managed-binding").value,
         requested_route: byId("managed-route").value.trim(), working_directory: byId("managed-directory").value.trim() || ".",
@@ -2549,7 +2843,7 @@
         attachments: state.managedAttachments.map(({ name, content_base64 }) => ({ name, content_base64 }))
       }, { timeoutMs: 120000 });
       const startedLabel = result.session_authorization?.mode === "once-per-session" ? t("session_authorized_once") : t("session_started");
-      byId("managed-input").value = ""; state.managedAttachments = []; renderManagedAttachments(); byId("managed-session-status").textContent = startedLabel; toast(startedLabel);
+      byId("managed-input").value = ""; state.managedAttachments = []; state.preparedApprovalMode = ""; renderManagedAttachments(); byId("managed-session-status").textContent = startedLabel; toast(startedLabel);
     } catch (error) { byId("managed-session-status").textContent = `${t("action_failed")}: ${error.message}`; toast(byId("managed-session-status").textContent); }
     finally { updateManagedPermissionControls(); }
   }
@@ -2850,6 +3144,7 @@
       renderCockpit();
     }));
     byId("composer").addEventListener("submit", sendMessage); byId("message-body").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); byId("composer").requestSubmit(); } });
+    byId("recipient").addEventListener("change", updateComposerPermissionControls);
     byId("message-body").addEventListener("paste", (event) => handleClipboardImages(event, addAttachments));
     byId("attachment-button").addEventListener("click", () => byId("attachment-input").click());
     byId("attachment-input").addEventListener("change", (event) => addAttachments(event.target.files));
@@ -2868,6 +3163,10 @@
     byId("history-form").addEventListener("submit", importHistory);
     ["history-close", "history-cancel"].forEach((id) => byId(id).addEventListener("click", () => byId("history-dialog").close()));
     byId("appearance-button").addEventListener("click", openAppearanceDialog);
+    byId("tutorial-button").addEventListener("click", openTutorial);
+    byId("tutorial-close").addEventListener("click", () => closeTutorial(false));
+    byId("tutorial-later").addEventListener("click", () => closeTutorial(false));
+    byId("tutorial-done").addEventListener("click", () => closeTutorial(true));
     byId("appearance-form").addEventListener("submit", saveAppearance);
     ["appearance-close", "appearance-cancel"].forEach((id) => byId(id).addEventListener("click", () => byId("appearance-dialog").close()));
     byId("history-provider").addEventListener("change", updateHistorySourceControls);
@@ -2930,7 +3229,19 @@
     byId("worktree-diff-refresh").addEventListener("click", () => fetchWorktreeDiff(true));
     byId("start-review-workflow").addEventListener("click", openReviewWorkflow);
     bindPanelResize("sidebar-resizer", "sidebar", "--sidebar", 190, 320, 1); bindPanelResize("inspector-resizer", "inspector", "--inspector", 260, 420, -1);
-    byId("locale-select").addEventListener("change", (event) => { state.locale = event.target.value; localStorage.setItem("peerbridge.locale", state.locale); applyLocale(); });
+    byId("locale-select").addEventListener("change", async (event) => {
+      state.locale = event.target.value;
+      localStorage.setItem("peerbridge.locale", state.locale);
+      applyLocale();
+      try {
+        await postAction("/api/preferences/save", {
+          locale: state.locale,
+          tutorial_completed: Boolean(state.data?.appearance?.tutorial_completed)
+        });
+      } catch (error) {
+        toast(`${t("action_failed")}: ${error.message}`);
+      }
+    });
     byId("load-older").addEventListener("click", async () => { const before = state.data?.page?.oldest_sequence; if (!before) return; try { const response = await fetch(`/api/bootstrap?room_id=${encodeURIComponent(state.roomId)}&before_sequence=${before}`, { headers: { Authorization: authorizationValue() }, cache: "no-store" }); if (!response.ok) throw new Error(String(response.status)); const payload = await response.json(); state.older = [...payload.messages, ...state.older]; state.data.page.has_older = payload.page.has_older; renderMessages(); } catch (error) { toast(error.message); } });
     document.addEventListener("keydown", (event) => { if (event.key !== "Escape") return; if (state.chatFocus) setChatFocus(false); const search = byId("room-search-popover"); if (!search.hidden) { search.hidden = true; byId("room-search-button").setAttribute("aria-expanded", "false"); } });
   }

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import locale as system_locale
 from pathlib import Path
 from typing import Any
 
 from .localization import (
+    LOCALE_LABELS,
     LocalizationError,
+    SUPPORTED_LOCALES,
     default_preferences,
     load_preferences,
     save_preferences,
@@ -15,8 +18,71 @@ from .localization import (
 
 
 DESKTOP_SURFACES = ("pixel", "modern")
-CHOOSER_GEOMETRY = "860x680"
-CHOOSER_MINIMUM_SIZE = (760, 620)
+CHOOSER_GEOMETRY = "1040x780"
+CHOOSER_MINIMUM_SIZE = (960, 720)
+CHOOSER_MAXIMUM_SIZE = (1100, 820)
+
+CHOOSER_COPY: dict[str, dict[str, str]] = {
+    "zh-Hant": {
+        "window_title": "PeerBridge · 選擇工作介面",
+        "language": "語言",
+        "title": "選擇你的 PeerBridge 工作介面",
+        "subtitle": "首次只需選擇一次，之後可在設定中更改。",
+        "pixel_title": "像素控制室",
+        "pixel_description": "深色像素風、高密度監控與完整控制面板。",
+        "modern_title": "現代對話式介面",
+        "modern_description": "以對話為中心，整合模型、權限、程式碼變更與證據。",
+        "continue": "繼續",
+    },
+    "zh-Hans": {
+        "window_title": "PeerBridge · 选择工作界面",
+        "language": "语言",
+        "title": "选择你的 PeerBridge 工作界面",
+        "subtitle": "首次只需选择一次，之后可在设置中更改。",
+        "pixel_title": "像素控制室",
+        "pixel_description": "深色像素风、高密度监控与完整控制面板。",
+        "modern_title": "现代对话式界面",
+        "modern_description": "以对话为中心，整合模型、权限、代码变更与证据。",
+        "continue": "继续",
+    },
+    "en": {
+        "window_title": "PeerBridge · Choose workspace",
+        "language": "Language",
+        "title": "Choose your PeerBridge workspace",
+        "subtitle": "Choose once now. You can change this later in Settings.",
+        "pixel_title": "Pixel Control Room",
+        "pixel_description": "Dark pixel styling with dense monitoring and complete controls.",
+        "modern_title": "Modern Conversation",
+        "modern_description": "Conversation-first work with models, permissions, code changes, and evidence.",
+        "continue": "Continue",
+    },
+}
+
+
+def chooser_locale_from_tag(language_tag: str | None) -> str:
+    normalized = str(language_tag or "").strip().replace("_", "-").lower()
+    if normalized.startswith(("zh-hant", "zh-tw", "zh-hk", "zh-mo")):
+        return "zh-Hant"
+    if normalized.startswith(("zh-hans", "zh-cn", "zh-sg")):
+        return "zh-Hans"
+    return "en"
+
+
+def preferred_chooser_locale() -> str:
+    try:
+        language_tag = system_locale.getlocale()[0]
+    except (ValueError, TypeError):
+        language_tag = None
+    return chooser_locale_from_tag(language_tag)
+
+
+def _chooser_font(locale: str, size: int, weight: str = "normal") -> tuple[str, int, str]:
+    family = {
+        "zh-Hant": "Microsoft JhengHei UI",
+        "zh-Hans": "Microsoft YaHei UI",
+        "en": "Segoe UI Variable Text",
+    }.get(locale, "Segoe UI")
+    return (family, size, weight)
 
 
 def appearance_preference_path(project_root: Path) -> Path:
@@ -31,7 +97,9 @@ def saved_desktop_surface(project_root: Path) -> str | None:
     return surface if surface in DESKTOP_SURFACES else None
 
 
-def save_desktop_surface(project_root: Path, surface: str) -> dict[str, Any]:
+def save_desktop_surface(
+    project_root: Path, surface: str, *, locale: str | None = None
+) -> dict[str, Any]:
     if surface not in DESKTOP_SURFACES:
         raise LocalizationError("unsupported desktop surface")
     try:
@@ -40,7 +108,7 @@ def save_desktop_surface(project_root: Path, surface: str) -> dict[str, Any]:
         current = default_preferences()
     return save_preferences(
         project_root,
-        locale=str(current["locale"]),
+        locale=str(locale or current["locale"]),
         tutorial_completed=bool(current["tutorial_completed"]),
         theme=surface,
     )
@@ -89,9 +157,9 @@ def choose_desktop_surface(project_root: Path) -> str | None:
 
     selected: list[str] = []
     root = tk.Tk()
-    root.title("PeerBridge · Choose appearance / 選擇外觀")
     root.geometry(CHOOSER_GEOMETRY)
     root.minsize(*CHOOSER_MINIMUM_SIZE)
+    root.maxsize(*CHOOSER_MAXIMUM_SIZE)
     root.configure(background="#f6f7f9")
     with contextlib.suppress(tk.TclError):
         icon = tk.PhotoImage(
@@ -100,21 +168,43 @@ def choose_desktop_surface(project_root: Path) -> str | None:
         root.iconphoto(True, icon)
         root._peerbridge_icon = icon  # type: ignore[attr-defined]
 
+    locale_selection = tk.StringVar(value=preferred_chooser_locale())
+    language_row = tk.Frame(root, background="#f6f7f9")
+    language_row.pack(fill="x", padx=34, pady=(22, 4))
+    language_label = tk.Label(
+        language_row,
+        background="#f6f7f9",
+        foreground="#667085",
+    )
+    language_label.pack(side="left", padx=(0, 12))
+    language_buttons: dict[str, tk.Radiobutton] = {}
+    for locale in SUPPORTED_LOCALES:
+        button = tk.Radiobutton(
+            language_row,
+            text=LOCALE_LABELS[locale],
+            variable=locale_selection,
+            value=locale,
+            indicatoron=False,
+            relief="flat",
+            borderwidth=0,
+            padx=12,
+            pady=5,
+            cursor="hand2",
+        )
+        button.pack(side="left", padx=(0, 5))
+        language_buttons[locale] = button
+
     title = tk.Label(
         root,
-        text="Choose your PeerBridge workspace\n選擇你的 PeerBridge 工作介面",
         background="#f6f7f9",
         foreground="#151922",
         justify="left",
-        font=("Segoe UI Variable Display", 20, "bold"),
     )
-    title.pack(anchor="w", padx=34, pady=(28, 5))
+    title.pack(anchor="w", padx=34, pady=(14, 5))
     subtitle = tk.Label(
         root,
-        text="You can change this later. 之後可以重新選擇。",
         background="#f6f7f9",
         foreground="#667085",
-        font=("Segoe UI", 10),
     )
     subtitle.pack(anchor="w", padx=36, pady=(0, 22))
 
@@ -125,6 +215,9 @@ def choose_desktop_surface(project_root: Path) -> str | None:
     cards.grid_columnconfigure(1, weight=1, uniform="surface")
 
     card_frames: dict[str, tk.Frame] = {}
+    card_headings: dict[str, tk.Radiobutton] = {}
+    card_descriptions: dict[str, tk.Label] = {}
+    preview_images: list[tk.PhotoImage] = []
 
     def refresh_cards() -> None:
         for key, frame in card_frames.items():
@@ -133,16 +226,23 @@ def choose_desktop_surface(project_root: Path) -> str | None:
                 highlightthickness=2 if selection.get() == key else 1,
             )
 
-    def make_card(column: int, surface: str, heading: str, description: str) -> None:
+    def make_card(column: int, surface: str) -> None:
         frame = tk.Frame(cards, background="#ffffff", highlightbackground="#d8dde6", highlightthickness=1)
         frame.grid(row=0, column=column, sticky="nsew", padx=8, pady=4)
         card_frames[surface] = frame
-        canvas = tk.Canvas(frame, width=350, height=230, background="#ffffff", highlightthickness=0)
+        canvas = tk.Canvas(frame, width=467, height=300, background="#ffffff", highlightthickness=0)
         canvas.pack(fill="x", padx=12, pady=(12, 9))
-        (_draw_pixel_preview if surface == "pixel" else _draw_modern_preview)(canvas)
-        tk.Radiobutton(
+        preview_path = Path(__file__).with_name("release_support") / f"peerbridge-{surface}-preview.png"
+        try:
+            source_image = tk.PhotoImage(file=str(preview_path))
+            preview_image = source_image.subsample(3, 3)
+            preview_images.extend((source_image, preview_image))
+            canvas.configure(background="#101419" if surface == "pixel" else "#ffffff")
+            canvas.create_image(234, 150, anchor="center", image=preview_image)
+        except tk.TclError:
+            (_draw_pixel_preview if surface == "pixel" else _draw_modern_preview)(canvas)
+        heading = tk.Radiobutton(
             frame,
-            text=heading,
             variable=selection,
             value=surface,
             command=refresh_cards,
@@ -151,22 +251,24 @@ def choose_desktop_surface(project_root: Path) -> str | None:
             foreground="#151922",
             selectcolor="#ffffff",
             anchor="w",
-            font=("Segoe UI", 12, "bold"),
-        ).pack(fill="x", padx=14)
-        tk.Label(
+        )
+        heading.pack(fill="x", padx=14)
+        description = tk.Label(
             frame,
-            text=description,
             background="#ffffff",
             foreground="#667085",
             justify="left",
-            wraplength=320,
-            font=("Segoe UI", 9),
-        ).pack(fill="x", padx=16, pady=(5, 14))
+            anchor="w",
+            wraplength=440,
+        )
+        description.pack(fill="x", padx=16, pady=(5, 14))
+        card_headings[surface] = heading
+        card_descriptions[surface] = description
         frame.bind("<Button-1>", lambda _event, value=surface: (selection.set(value), refresh_cards()))
         canvas.bind("<Button-1>", lambda _event, value=surface: (selection.set(value), refresh_cards()))
 
-    make_card(0, "pixel", "Pixel Control Room · 像素控制室", "Dense terminal-first monitoring with the original dark pixel style.\n保留原本深色像素風與高密度控制。")
-    make_card(1, "modern", "Modern Workbench · 現代工作台", "Conversation-first workspace with model, permission, diff, and evidence controls.\n以對話為中心，整合模型、權限、變更及證據。")
+    make_card(0, "pixel")
+    make_card(1, "modern")
     refresh_cards()
 
     actions = tk.Frame(root, background="#f6f7f9")
@@ -174,13 +276,14 @@ def choose_desktop_surface(project_root: Path) -> str | None:
 
     def confirm() -> None:
         surface = selection.get()
-        save_desktop_surface(project_root, surface)
+        save_desktop_surface(
+            project_root, surface, locale=locale_selection.get()
+        )
         selected.append(surface)
         root.destroy()
 
-    tk.Button(
+    continue_button = tk.Button(
         actions,
-        text="Continue / 繼續",
         command=confirm,
         background="#151922",
         foreground="#ffffff",
@@ -189,8 +292,48 @@ def choose_desktop_surface(project_root: Path) -> str | None:
         relief="flat",
         padx=24,
         pady=9,
-        font=("Segoe UI", 10, "bold"),
-    ).pack(side="right")
+    )
+    continue_button.pack(side="right")
+
+    def refresh_language(*_args: object) -> None:
+        locale = locale_selection.get()
+        copy = CHOOSER_COPY[locale]
+        root.title(copy["window_title"])
+        language_label.configure(
+            text=copy["language"], font=_chooser_font(locale, 10, "normal")
+        )
+        title.configure(text=copy["title"], font=_chooser_font(locale, 20, "bold"))
+        subtitle.configure(
+            text=copy["subtitle"], font=_chooser_font(locale, 10, "normal")
+        )
+        card_headings["pixel"].configure(
+            text=copy["pixel_title"], font=_chooser_font(locale, 12, "bold")
+        )
+        card_headings["modern"].configure(
+            text=copy["modern_title"], font=_chooser_font(locale, 12, "bold")
+        )
+        card_descriptions["pixel"].configure(
+            text=copy["pixel_description"], font=_chooser_font(locale, 10, "normal")
+        )
+        card_descriptions["modern"].configure(
+            text=copy["modern_description"], font=_chooser_font(locale, 10, "normal")
+        )
+        continue_button.configure(
+            text=copy["continue"], font=_chooser_font(locale, 10, "bold")
+        )
+        for button_locale, button in language_buttons.items():
+            active = button_locale == locale
+            button.configure(
+                background="#151922" if active else "#eef1f5",
+                foreground="#ffffff" if active else "#344054",
+                selectcolor="#151922" if active else "#eef1f5",
+                activebackground="#2b3445" if active else "#e4e7ec",
+                activeforeground="#ffffff" if active else "#151922",
+                font=_chooser_font(button_locale, 9, "bold" if active else "normal"),
+            )
+
+    locale_selection.trace_add("write", refresh_language)
+    refresh_language()
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     root.mainloop()
     return selected[0] if selected else None

@@ -3,6 +3,50 @@
 PeerBridge accepts any safe `--agent-id`; that does not automatically turn every model
 subscription or web application into an MCP coding agent.
 
+## Capability union, not a lowest-common-denominator profile
+
+PeerBridge evaluates capabilities per Agent, per adapter, and per room Seat. A missing
+feature in one vendor adapter must never hide or disable that feature for another adapter.
+For example, if one installed transport cannot prove interactive approval support, only
+that adapter is marked `conditional` or `unsupported`; every verified adapter keeps its
+own approval controls.
+
+The public adapter contract uses three states:
+
+- `supported`: implemented by this adapter and covered by an adapter-specific test;
+- `conditional`: available only when the installed runtime advertises or proves it;
+- `unsupported`: unavailable on this adapter only. PeerBridge fails closed for that
+  operation without downgrading other Agents in the room.
+
+The room capability view is therefore a union. Execution remains exact-route: PeerBridge
+does not silently replace an official route with a relay, another vendor, or a weaker
+transport.
+
+## Interactive runtime approval
+
+Runtime tool approval is separate from PeerBridge's peer-review quorum. The composer
+offers three modes for a managed Agent session:
+
+| Mode | Behavior |
+| --- | --- |
+| `approval-required` | Display each provider request and wait for allow once, allow for this session, or deny. |
+| `agent-delegated` | Allow routine operations supported by that adapter; escalate risky requests to the operator. |
+| `full-access` | Ask once when starting the governed session, then use the provider's full-access profile until that session stops. |
+
+Current adapter mapping:
+
+| Agent | Preferred transport | Interactive approval |
+| --- | --- | --- |
+| Codex | native app-server JSON-RPC | Supported through command, file-change, and permission approval requests. |
+| Claude Code | native stream-json control | Supported through `can_use_tool` stdio control requests and responses. |
+| Grok | native ACP | Supported through `session/request_permission`. |
+| Kimi Code | native ACP | Supported through `session/request_permission`. |
+
+If a selected adapter cannot perform the requested mode, the UI must identify that exact
+Agent and route and refuse the operation. It must not claim approval occurred, remove the
+same control from capable Agents, or reroute through a relay without an explicit operator
+choice.
+
 ## MCP-native client
 
 Use this route when the coding client can launch a stdio MCP server or connect to an

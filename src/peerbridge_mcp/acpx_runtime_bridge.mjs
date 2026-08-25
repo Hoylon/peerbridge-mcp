@@ -88,17 +88,37 @@ function sanitizePromptCapabilities(value) {
   };
 }
 
-function permissionDecision(permissionTier, request) {
+async function permissionDecision(permissionTier, approvalMode, request, approvalEndpoint, approvalToken) {
   const kind = typeof request?.inferredKind === "string" ? request.inferredKind : "other";
   if (permissionTier === "full-development") return { outcome: "allow_once" };
-  if (permissionTier === "edit") {
-    return new Set(["read", "search", "edit", "fetch", "think"]).has(kind)
-      ? { outcome: "allow_once" }
-      : { outcome: "reject_once" };
+  if (approvalMode === "agent-delegated" && new Set(["read", "search", "edit", "fetch", "think"]).has(kind)) {
+    return { outcome: "allow_once" };
   }
-  return new Set(["read", "search", "think"]).has(kind)
-    ? { outcome: "allow_once" }
-    : { outcome: "reject_once" };
+  if (typeof approvalEndpoint !== "string" || typeof approvalToken !== "string") {
+    return { outcome: "reject_once" };
+  }
+  const endpoint = new URL(approvalEndpoint);
+  if (endpoint.protocol !== "http:" || endpoint.hostname !== "127.0.0.1" || endpoint.pathname !== "/approval") {
+    return { outcome: "reject_once" };
+  }
+  try {
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        Authorization: ["Bearer", approvalToken].join(" "),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(600000),
+    });
+    if (!response.ok) return { outcome: "reject_once" };
+    const payload = await response.json();
+    return new Set(["allow_once", "allow_always", "reject_once"]).has(payload?.outcome)
+      ? { outcome: payload.outcome }
+      : { outcome: "reject_once" };
+  } catch {
+    return { outcome: "reject_once" };
+  }
 }
 
 function parseAttachments(value) {
@@ -162,6 +182,14 @@ try {
   if (!new Set(["observe", "review", "edit", "full-development"]).has(permissionTier)) {
     throw new Error("ACP permission tier is unsupported");
   }
+  const approvalMode = input.approvalMode === undefined
+    ? (permissionTier === "full-development" ? "full-access" : permissionTier === "edit" ? "agent-delegated" : "approval-required")
+    : requireString(input.approvalMode, "ACP approval mode", 32);
+  if (!new Set(["approval-required", "agent-delegated", "full-access"]).has(approvalMode)) {
+    throw new Error("ACP approval mode is unsupported");
+  }
+  const approvalEndpoint = typeof input.approvalEndpoint === "string" ? input.approvalEndpoint : undefined;
+  const approvalToken = typeof input.approvalToken === "string" ? input.approvalToken : undefined;
   const timeoutMs = Number.isInteger(input.timeoutMs) && input.timeoutMs >= 1000 && input.timeoutMs <= 600000
     ? input.timeoutMs
     : 180000;
@@ -180,7 +208,13 @@ try {
     agentRegistry: registry,
     permissionMode: permissionTier === "full-development" ? "approve-all" : "approve-reads",
     nonInteractivePermissions: "fail",
-    onPermissionRequest: async (request) => permissionDecision(permissionTier, request),
+    onPermissionRequest: async (request) => permissionDecision(
+      permissionTier,
+      approvalMode,
+      request,
+      approvalEndpoint,
+      approvalToken,
+    ),
     timeoutMs,
     probeAgent: agent,
     verbose: false,

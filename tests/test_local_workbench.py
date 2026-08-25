@@ -35,6 +35,46 @@ from peerbridge_mcp.monitor import MCP_HUMAN_CLIENT_TOOLS, McpHumanClient
 TOKEN = "test-admin-token-not-for-production"
 
 
+def test_managed_agent_catalog_coalesces_concurrent_discovery(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    calls = 0
+    results: list[list[dict[str, object]]] = []
+
+    def build(_project_root: Path) -> list[dict[str, object]]:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=5)
+        return [{"agent_id": "codex", "installed": True}]
+
+    monkeypatch.setattr(workbench_module, "_build_managed_agent_catalog", build)
+    workbench_module._AGENT_CATALOG_CACHE.clear()
+
+    def read_catalog() -> None:
+        results.append(workbench_module.managed_agent_catalog(tmp_path))
+
+    first = threading.Thread(target=read_catalog)
+    second = threading.Thread(target=read_catalog)
+    first.start()
+    assert entered.wait(timeout=5)
+    second.start()
+    release.set()
+    first.join(timeout=5)
+    second.join(timeout=5)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert calls == 1
+    assert results == [
+        [{"agent_id": "codex", "installed": True}],
+        [{"agent_id": "codex", "installed": True}],
+    ]
+    workbench_module._AGENT_CATALOG_CACHE.clear()
+
+
 def seed(root: Path, db: Path, scope: str = "scope-a") -> None:
     human = Bridge(root, db, "human-operator", scope)
     human.create_room({"room_id": "alpha", "name": "Alpha 5.2"})
@@ -754,8 +794,8 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'id="history-dialog"' in body
         assert b'id="import-history"' in body
         assert b'id="identity-authorize-form"' in body
-        assert b'/assets/app.css?v=alpha52-20260825-12' in body
-        assert b'/assets/app.js?v=alpha52-20260825-12' in body
+        assert b'/assets/app.css?v=alpha52-20260825-15' in body
+        assert b'/assets/app.js?v=alpha52-20260825-15' in body
         assert b'id="chat-focus-button"' in body
         assert b'id="room-search-button"' in body
         assert b'id="announcement-button"' in body
@@ -764,6 +804,11 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'id="worktree-diff-refresh"' in body
         assert b'id="appearance-button"' in body
         assert b'id="appearance-dialog"' in body
+        assert b'/assets/peerbridge-pixel-preview.png' in body
+        assert b'/assets/peerbridge-modern-preview.png' in body
+        assert b'id="composer-permission"' in body
+        assert b'id="tutorial-button"' in body
+        assert b'id="tutorial-dialog"' in body
         assert body.index(b'id="room-search-button"') < body.index(b'id="room-list"')
         assert b'/assets/peerbridge-icon.png' in body
         assert TOKEN.encode() not in body
@@ -779,6 +824,7 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b"/api/workflow/enqueue" in body
         assert b"/api/session/start" in body
         assert b"/api/session/action" in body
+        assert b"/api/preferences/save" in body
         assert b"/api/schedule/save" in body
         assert b"/api/capability/register" in body
         assert b"/api/capability/grant" in body
@@ -836,6 +882,16 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert status == 200
         assert headers["Content-Type"] == "image/png"
         assert body.startswith(b"\x89PNG\r\n\x1a\n")
+
+        for preview_name in (
+            "peerbridge-pixel-preview.png",
+            "peerbridge-modern-preview.png",
+        ):
+            status, headers, body = request(port, "GET", f"/assets/{preview_name}")
+            assert status == 200
+            assert headers["Content-Type"] == "image/png"
+            assert body.startswith(b"\x89PNG\r\n\x1a\n")
+            assert len(body) > 10_000
 
         status, headers, body = request(port, "GET", "/favicon.ico")
         assert status == 200
@@ -1405,6 +1461,114 @@ def test_workbench_saves_built_in_desktop_appearance(tmp_path: Path) -> None:
         )
         assert status == 200
         assert json.loads(body)["appearance"]["selected"] == "pixel"
+
+
+def test_workbench_persists_modern_locale_and_tutorial_completion(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    payload = {
+        "request_id": "preferences0123456789abcdef01234",
+        "locale": "en",
+        "tutorial_completed": True,
+    }
+
+    with running_server(tmp_path, db) as (port, _server):
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/preferences/save",
+            headers=auth_headers(port),
+            payload=payload,
+        )
+
+        assert status == 200
+        response = json.loads(body)
+        assert response == {
+            "status": "saved",
+            "locale": "en",
+            "tutorial_completed": True,
+        }
+        preferences = workbench_module.load_preferences(tmp_path)
+        assert preferences["locale"] == "en"
+        assert preferences["tutorial_completed"] is True
+
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/bootstrap?room_id=alpha",
+            headers=auth_headers(port),
+        )
+        assert status == 200
+        appearance = json.loads(body)["appearance"]
+        assert appearance["locale"] == "en"
+        assert appearance["tutorial_completed"] is True
+
+
+def test_workbench_resolves_one_exact_adapter_approval(tmp_path: Path) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    resolved: list[tuple[str, str]] = []
+
+    class Session:
+        working_directory = tmp_path
+
+        def snapshot(self) -> dict[str, object]:
+            return {
+                "session_id": "approval-session-one",
+                "agent_id": "codex",
+                "display_name": "Codex",
+                "role": "implementer",
+                "state": "running",
+                "input_mode": "persistent",
+                "can_submit_input": False,
+                "permission_tier": "review",
+                "approval_mode": "approval-required",
+                "approval_broker": {"pending": [], "history": []},
+                "session_contract": {},
+                "usage": {},
+                "events": [],
+            }
+
+        def resolve_approval(
+            self, approval_id: str, decision: str
+        ) -> dict[str, object]:
+            resolved.append((approval_id, decision))
+            return {"approval_id": approval_id, "decision": decision}
+
+    class Manager:
+        def get(self, session_id: str) -> Session:
+            assert session_id == "approval-session-one"
+            return Session()
+
+        def snapshots(self, **_kwargs: object) -> list[dict[str, object]]:
+            return []
+
+        def close(self) -> None:
+            return
+
+    with running_server(tmp_path, db, managed_agent_manager=Manager()) as (
+        port,
+        _server,
+    ):
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/session/action",
+            headers=auth_headers(port),
+            payload={
+                "request_id": "resolveapproval0123456789abcdef",
+                "session_id": "approval-session-one",
+                "action": "approval",
+                "approval_id": "approval-one",
+                "approval_decision": "allow-once",
+            },
+        )
+
+    assert status == 200
+    assert json.loads(body)["result"]["approval_mode"] == "approval-required"
+    assert resolved == [("approval-one", "allow-once")]
 
 
 def test_health_exposes_identity_hash_not_access_token(tmp_path: Path) -> None:

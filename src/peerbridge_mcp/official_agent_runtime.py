@@ -15,22 +15,39 @@ bounded event buffers contain only redacted observable output.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import json
 import os
+import secrets
 import subprocess
 import threading
 import uuid
 from collections import deque
 from dataclasses import asdict
 from datetime import datetime, timezone
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal, Mapping
 
+from .agent_adapter_contract import AgentAdapterRegistry, RegisteredAgentAdapter
+from .agent_adapters import (
+    CLAUDE_ADAPTER,
+    CODEX_ADAPTER,
+    GROK_ADAPTER,
+    KIMI_ADAPTER,
+)
 from .agent_install import ACPX_RUNTIME_SPEC, find_trusted_executable, official_agent_spec
 from .attachments import (
     AttachmentError,
     StagedAttachment,
     stage_chat_attachment_payloads,
+)
+from .approval_broker import (
+    APPROVAL_MODES,
+    MAX_PENDING_APPROVALS,
+    ApprovalBroker,
+    ApprovalRecord,
 )
 from .child_environment import build_agent_child_environment
 from .managed_agents import (
@@ -80,6 +97,114 @@ WRITE_PERMISSION_TIERS = frozenset({"edit", "full-development"})
 MAX_PROVIDER_FRAME_BYTES = 1024 * 1024
 MAX_PROVIDER_OUTPUT_BYTES = 8 * 1024 * 1024
 MAX_ACP_CAPTURE_BYTES = 4 * 1024 * 1024
+MAX_APPROVAL_CALLBACK_BYTES = 64 * 1024
+
+
+class _AcpApprovalCallbackServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, broker: ApprovalBroker, token: str) -> None:
+        self.broker = broker
+        self.token = token
+        self._request_slots = threading.BoundedSemaphore(MAX_PENDING_APPROVALS)
+        super().__init__(("127.0.0.1", 0), _AcpApprovalCallbackHandler)
+
+    def process_request(self, request: Any, client_address: Any) -> None:
+        if not self._request_slots.acquire(blocking=False):
+            with contextlib.suppress(OSError):
+                request.close()
+            return
+        try:
+            super().process_request(request, client_address)
+        except BaseException:
+            self._request_slots.release()
+            raise
+
+    def process_request_thread(self, request: Any, client_address: Any) -> None:
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._request_slots.release()
+
+
+class _AcpApprovalCallbackHandler(BaseHTTPRequestHandler):
+    server: _AcpApprovalCallbackServer
+
+    def log_message(self, _format: str, *_args: object) -> None:
+        return
+
+    def _reply(self, status: HTTPStatus, payload: Mapping[str, object]) -> None:
+        encoded = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(encoded)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(encoded)
+
+    def do_POST(self) -> None:  # noqa: N802
+        if self.path != "/approval":
+            self._reply(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            return
+        supplied = self.headers.get("Authorization", "")
+        expected = f"Bearer {self.server.token}"
+        if not secrets.compare_digest(supplied, expected):
+            self._reply(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            length = 0
+        if not 1 <= length <= MAX_APPROVAL_CALLBACK_BYTES:
+            self._reply(HTTPStatus.BAD_REQUEST, {"error": "invalid body"})
+            return
+        try:
+            request = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._reply(HTTPStatus.BAD_REQUEST, {"error": "invalid json"})
+            return
+        if not isinstance(request, Mapping):
+            self._reply(HTTPStatus.BAD_REQUEST, {"error": "invalid request"})
+            return
+        encoded_request = json.dumps(
+            request, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        )
+        request_hash = hashlib.sha256(encoded_request.encode("utf-8")).hexdigest()
+        raw_kind = str(request.get("inferredKind") or "tool").lower()
+        action_kind = "".join(
+            character if character.isalnum() or character in "._-" else "-"
+            for character in raw_kind
+        )[:80] or "tool"
+        risk: Literal["routine", "elevated", "high"] = (
+            "routine"
+            if raw_kind in {"read", "search", "think"}
+            else "elevated"
+            if raw_kind in {"edit", "fetch"}
+            else "high"
+        )
+        title = str(
+            request.get("title")
+            or request.get("displayName")
+            or request.get("toolName")
+            or "Agent tool request"
+        )
+        try:
+            decision = self.server.broker.request(
+                provider_request_id=f"acp-{request_hash[:40]}",
+                action_kind=action_kind,
+                title=title,
+                detail=encoded_request,
+                risk=risk,
+                timeout_seconds=600,
+            )
+        except (KeyError, ValueError):
+            decision = "deny"
+        outcome = {
+            "allow-once": "allow_once",
+            "allow-session": "allow_always",
+            "deny": "reject_once",
+        }.get(decision, "reject_once")
+        self._reply(HTTPStatus.OK, {"outcome": outcome})
 
 
 def _bounded_acp_process(*args: Any, **kwargs: Any) -> tuple[int, bytes, bytes]:
@@ -184,6 +309,7 @@ class _PersistentSessionBase:
     display_name = ""
     provider_family = ""
     protocol = ""
+    adapter_descriptor = None
     supports_verified_attachments = True
 
     def __init__(
@@ -196,6 +322,9 @@ class _PersistentSessionBase:
         permission_tier: Literal[
             "observe", "review", "edit", "full-development"
         ],
+        approval_mode: Literal[
+            "approval-required", "agent-delegated", "full-access"
+        ] | None = None,
         governance_binding_id: str | None,
         project_root: Path | None = None,
         popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
@@ -230,6 +359,26 @@ class _PersistentSessionBase:
             _safe_label(requested_route, "requested route") if requested_route else None
         )
         self.permission_tier = permission_tier
+        default_approval_mode = (
+            "full-access"
+            if permission_tier == "full-development"
+            else "agent-delegated"
+            if permission_tier == "edit"
+            else "approval-required"
+        )
+        selected_approval_mode = approval_mode or default_approval_mode
+        if selected_approval_mode not in APPROVAL_MODES:
+            raise ManagedAgentError("official runtime approval mode is invalid")
+        if permission_tier in {"observe", "review"} and selected_approval_mode != "approval-required":
+            raise ManagedAgentError("read-only runtime requires approval-required mode")
+        if permission_tier == "edit" and selected_approval_mode not in {
+            "approval-required",
+            "agent-delegated",
+        }:
+            raise ManagedAgentError("standard runtime approval mode is invalid")
+        if permission_tier == "full-development" and selected_approval_mode != "full-access":
+            raise ManagedAgentError("full-development runtime requires full-access mode")
+        self.approval_mode = selected_approval_mode
         self.governance_binding_id = (
             _safe_label(governance_binding_id, "governance binding id")
             if governance_binding_id
@@ -263,6 +412,30 @@ class _PersistentSessionBase:
         self._provider_output_limit_exceeded = False
         self._lock = threading.RLock()
         self._terminal = threading.Event()
+        adapter_id = (
+            self.adapter_descriptor.adapter_id
+            if self.adapter_descriptor is not None
+            else self.agent_id
+        )
+        self._approval_broker = ApprovalBroker(
+            session_id=self.session_id,
+            adapter_id=adapter_id,
+            mode=self.approval_mode,
+            on_change=self._approval_changed,
+        )
+
+    def _approval_changed(self, record: ApprovalRecord) -> None:
+        with self._lock:
+            verb = "requested" if record.state == "pending" else record.state
+            self._append(
+                "system",
+                "activity",
+                f"Approval {verb}: {record.title}",
+                summary=record.approval_id,
+            )
+
+    def resolve_approval(self, approval_id: str, decision: str) -> dict[str, object]:
+        return self._approval_broker.resolve(approval_id, decision).as_dict()
 
     def _append(
         self,
@@ -377,6 +550,9 @@ class _PersistentSessionBase:
         if self.permission_tier == "edit":
             return "on-request"
         return "never"
+
+    def _approvals_reviewer(self) -> str:
+        return "auto_review" if self.approval_mode == "agent-delegated" else "user"
 
     def _developer_instructions(self) -> str:
         if self.permission_tier not in WRITE_PERMISSION_TIERS:
@@ -515,6 +691,11 @@ class _PersistentSessionBase:
                 "display_name": self.display_name,
                 "client_name": self.agent_id,
                 "client_version": self._client_version,
+                "adapter": (
+                    self.adapter_descriptor.as_dict()
+                    if self.adapter_descriptor is not None
+                    else None
+                ),
                 "role": self.role,
                 "working_directory": redact_secrets(str(self.working_directory)),
                 "state": self._state,
@@ -539,6 +720,8 @@ class _PersistentSessionBase:
                 "terminal_outcome": self._terminal_outcome(),
                 "execution_mode": self.permission_tier,
                 "permission_tier": self.permission_tier,
+                "approval_mode": self.approval_mode,
+                "approval_broker": self._approval_broker.snapshot(),
                 "governance_binding_id": self.governance_binding_id,
                 "capture_mode": "managed-pipes",
                 "reasoning_contract": "observable-output-only",
@@ -579,6 +762,7 @@ class CodexAppServerSession(_PersistentSessionBase):
     display_name = "OpenAI Codex"
     provider_family = "codex"
     protocol = "codex-app-server-jsonrpc"
+    adapter_descriptor = CODEX_ADAPTER
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -680,7 +864,7 @@ class CodexAppServerSession(_PersistentSessionBase):
                     "cwd": str(self.working_directory),
                     "model": self.requested_route,
                     "approvalPolicy": self._approval_policy(),
-                    "approvalsReviewer": "user",
+                    "approvalsReviewer": self._approvals_reviewer(),
                     "sandbox": self._sandbox_name(),
                     "ephemeral": False,
                     "developerInstructions": self._developer_instructions(),
@@ -807,28 +991,112 @@ class CodexAppServerSession(_PersistentSessionBase):
             method = payload.get("method")
             params = payload.get("params")
             if isinstance(response_id, int) and isinstance(method, str):
-                # PeerBridge has no hidden click-through path. Standard Agent mode
-                # rejects an escalation; Full access is expected not to request one.
-                denied = (
-                    "PeerBridge standard Agent mode denied this escalation; "
-                    "restart the managed session with Full access if it is intended"
-                    if self.permission_tier == "edit"
-                    else "PeerBridge read-only session denied the request"
-                )
                 with contextlib.suppress(ManagedAgentError):
-                    self._send(
-                        {
-                            "jsonrpc": "2.0",
-                            "id": response_id,
-                            "error": {
-                                "code": -32001,
-                                "message": denied,
-                            },
-                        }
+                    self._handle_server_request(
+                        response_id,
+                        method,
+                        params if isinstance(params, Mapping) else {},
+                        generation,
                     )
                 continue
             if isinstance(method, str) and isinstance(params, Mapping):
                 self._handle_notification(method, params, generation)
+
+    def _handle_server_request(
+        self,
+        response_id: int,
+        method: str,
+        params: Mapping[str, Any],
+        generation: int,
+    ) -> None:
+        approval_methods = {
+            "item/commandExecution/requestApproval": "command-execution",
+            "item/fileChange/requestApproval": "file-change",
+            "item/permissions/requestApproval": "permissions",
+        }
+        action_kind = approval_methods.get(method)
+        if action_kind is None:
+            self._send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": response_id,
+                    "error": {
+                        "code": -32001,
+                        "message": "PeerBridge does not implement this server request",
+                    },
+                }
+            )
+            return
+        if action_kind == "command-execution":
+            raw_command = params.get("command")
+            if isinstance(raw_command, list):
+                command = " ".join(str(value) for value in raw_command)
+            else:
+                command = str(raw_command or "")
+            title = str(params.get("reason") or "Run command")
+            detail = " | ".join(
+                value
+                for value in (
+                    command,
+                    f"cwd={params.get('cwd')}" if params.get("cwd") else "",
+                )
+                if value
+            )
+            risk: Literal["routine", "elevated", "high"] = "high"
+        elif action_kind == "file-change":
+            title = str(params.get("reason") or "Apply file changes")
+            detail = json.dumps(
+                params.get("changes") or params.get("grantRoot") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            risk = "elevated"
+        else:
+            title = str(params.get("reason") or "Grant additional permissions")
+            detail = json.dumps(
+                params.get("permissions") or {},
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            risk = "high"
+        if self.permission_tier in {"observe", "review"}:
+            decision = "deny"
+        else:
+            raw_available = params.get("availableDecisions")
+            allow_session = not isinstance(raw_available, list) or (
+                "acceptForSession" in raw_available
+            )
+            available = (
+                ("allow-once", "allow-session", "deny")
+                if allow_session
+                else ("allow-once", "deny")
+            )
+            decision = self._approval_broker.request(
+                provider_request_id=f"codex-{generation}-{response_id}",
+                action_kind=action_kind,
+                title=title,
+                detail=detail,
+                risk=risk,
+                available_decisions=available,
+            )
+        if action_kind == "permissions":
+            result: dict[str, Any] = {
+                "scope": "session" if decision == "allow-session" else "turn",
+                "permissions": (
+                    dict(params.get("permissions") or {})
+                    if decision in {"allow-once", "allow-session"}
+                    else {}
+                ),
+            }
+        else:
+            result = {
+                "decision": {
+                    "allow-once": "accept",
+                    "allow-session": "acceptForSession",
+                    "deny": "decline",
+                }[decision]
+            }
+        self._send({"jsonrpc": "2.0", "id": response_id, "result": result})
 
     def _handle_notification(
         self, method: str, params: Mapping[str, Any], generation: int
@@ -980,6 +1248,7 @@ class CodexAppServerSession(_PersistentSessionBase):
                     "threadId": thread_id,
                     "input": turn_input,
                     "approvalPolicy": self._approval_policy(),
+                    "approvalsReviewer": self._approvals_reviewer(),
                     "sandboxPolicy": self._sandbox_policy(),
                 },
             )
@@ -1075,6 +1344,7 @@ class CodexAppServerSession(_PersistentSessionBase):
         self._launch(resume=True)
 
     def stop(self) -> None:
+        self._approval_broker.cancel_all()
         with self._lock:
             process = self._process
             if self._state in TERMINAL_STATES:
@@ -1096,12 +1366,17 @@ class ClaudeStreamSession(_PersistentSessionBase):
     display_name = "Anthropic Claude Code"
     provider_family = "claude"
     protocol = "claude-stream-json"
+    adapter_descriptor = CLAUDE_ADAPTER
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._claude_session_id = str(uuid.uuid4())
         self._generation = 0
         self._answer_fragments: list[str] = []
+        self._claude_control_requests: dict[str, str] = {}
+        self._claude_approval_slots = threading.BoundedSemaphore(
+            MAX_PENDING_APPROVALS
+        )
 
     def _contract(self) -> dict[str, Any]:
         return {
@@ -1141,6 +1416,7 @@ class ClaudeStreamSession(_PersistentSessionBase):
         if executable is None:
             raise ManagedAgentError("official Claude Code CLI is unavailable")
         write_capable = self.permission_tier in WRITE_PERMISSION_TIERS
+        interactive_approval = write_capable and self.approval_mode == "approval-required"
         available_tools = (
             "Read,Glob,Grep,Edit,Write,Bash,WebFetch,WebSearch"
             if self.permission_tier == "full-development"
@@ -1151,7 +1427,9 @@ class ClaudeStreamSession(_PersistentSessionBase):
             )
         )
         allowed_tools = (
-            available_tools
+            "Read,Glob,Grep"
+            if interactive_approval
+            else available_tools
             if self.permission_tier == "full-development"
             else (
                 "Read,Glob,Grep,Edit,Write,WebFetch,WebSearch"
@@ -1162,6 +1440,8 @@ class ClaudeStreamSession(_PersistentSessionBase):
         permission_mode = (
             "bypassPermissions"
             if self.permission_tier == "full-development"
+            else "manual"
+            if interactive_approval
             else ("acceptEdits" if write_capable else "plan")
         )
         arguments = [
@@ -1180,6 +1460,8 @@ class ClaudeStreamSession(_PersistentSessionBase):
             "--allowedTools",
             allowed_tools,
         ]
+        if interactive_approval:
+            arguments.extend(("--permission-prompt-tool", "stdio"))
         if self.permission_tier == "full-development":
             arguments.append("--allow-dangerously-skip-permissions")
         if self.requested_route:
@@ -1233,6 +1515,245 @@ class ClaudeStreamSession(_PersistentSessionBase):
             daemon=True,
         ).start()
 
+    @staticmethod
+    def _claude_session_permission_suggestions(
+        request: Mapping[str, Any], tool_name: str
+    ) -> tuple[dict[str, Any], ...]:
+        accepted: list[dict[str, Any]] = []
+        for row in request.get("permission_suggestions") or ():
+            if not isinstance(row, Mapping):
+                continue
+            if row.get("destination") != "session":
+                continue
+            if row.get("type") != "addRules" or row.get("behavior") != "allow":
+                continue
+            raw_rules = row.get("rules")
+            if not isinstance(raw_rules, list) or not 1 <= len(raw_rules) <= 4:
+                continue
+            rules: list[dict[str, str]] = []
+            for rule in raw_rules:
+                if not isinstance(rule, Mapping) or rule.get("toolName") != tool_name:
+                    rules = []
+                    break
+                rule_content = rule.get("ruleContent")
+                if (
+                    not isinstance(rule_content, str)
+                    or not rule_content.strip()
+                    or rule_content.strip() == "*"
+                    or len(rule_content.encode("utf-8")) > 1024
+                ):
+                    rules = []
+                    break
+                rules.append(
+                    {"toolName": tool_name, "ruleContent": rule_content}
+                )
+            if not rules:
+                continue
+            candidate = {
+                "type": "addRules",
+                "destination": "session",
+                "behavior": "allow",
+                "rules": rules,
+            }
+            encoded = json.dumps(
+                candidate,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            if len(encoded) <= 8 * 1024:
+                accepted.append(candidate)
+        return tuple(accepted[:8])
+
+    @staticmethod
+    def _claude_permission_risk(tool_name: str) -> Literal["routine", "elevated", "high"]:
+        normalized = tool_name.casefold()
+        if normalized in {"read", "glob", "grep"}:
+            return "routine"
+        if normalized in {"edit", "write", "multiedit", "notebookedit"}:
+            return "elevated"
+        return "high"
+
+    @staticmethod
+    def _claude_provider_request_id(
+        generation: int,
+        request_id: str,
+    ) -> str:
+        digest = hashlib.sha256(request_id.encode("utf-8")).hexdigest()[:40]
+        return f"claude-{generation}-{digest}"
+
+    def _send_claude_control_response(
+        self,
+        process: subprocess.Popen[bytes],
+        generation: int,
+        payload: Mapping[str, Any],
+    ) -> None:
+        wire = json.dumps(
+            payload,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ).encode("utf-8") + b"\n"
+        if len(wire) > MAX_PROVIDER_FRAME_BYTES:
+            raise ManagedAgentError("Claude control response exceeded the bounded limit")
+        with self._lock:
+            if (
+                generation != self._generation
+                or process is not self._process
+                or self._state != "running"
+            ):
+                return
+            try:
+                write_process_stdin_bounded(process, wire)
+            except (OSError, RuntimeError, TimeoutError) as exc:
+                self._append(
+                    "system",
+                    "error",
+                    "Claude interactive approval response could not be delivered.",
+                )
+                terminate_process_tree(process, wait_seconds=2)
+                raise ManagedAgentError(
+                    "Claude interactive approval response failed"
+                ) from exc
+
+    def _handle_claude_control_request(
+        self,
+        process: subprocess.Popen[bytes],
+        generation: int,
+        event: Mapping[str, Any],
+    ) -> None:
+        request_id = event.get("request_id")
+        request = event.get("request")
+        if not isinstance(request_id, str) or not request_id or not isinstance(request, Mapping):
+            return
+        if request.get("subtype") != "can_use_tool":
+            self._send_claude_control_response(
+                process,
+                generation,
+                {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "error",
+                        "request_id": request_id,
+                        "error": "PeerBridge supports only Claude tool permission requests",
+                    },
+                },
+            )
+            return
+        tool_name = str(request.get("tool_name") or "Agent tool")[:160]
+        tool_input = request.get("input")
+        if not isinstance(tool_input, Mapping):
+            tool_input = {}
+        suggestions = self._claude_session_permission_suggestions(request, tool_name)
+        available = (
+            ("allow-once", "allow-session", "deny")
+            if suggestions
+            else ("allow-once", "deny")
+        )
+        provider_request_id = self._claude_provider_request_id(generation, request_id)
+        with self._lock:
+            self._claude_control_requests[request_id] = provider_request_id
+        detail = json.dumps(
+            {
+                "tool_name": tool_name,
+                "input": dict(tool_input),
+                "tool_use_id": request.get("tool_use_id"),
+                "blocked_path": request.get("blocked_path"),
+                "decision_reason": request.get("decision_reason"),
+                "agent_id": request.get("agent_id"),
+                "session_permission_suggestions": list(suggestions),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        try:
+            decision = self._approval_broker.request(
+                provider_request_id=provider_request_id,
+                action_kind="claude-tool",
+                title=str(
+                    request.get("title")
+                    or request.get("display_name")
+                    or tool_name
+                ),
+                detail=detail,
+                risk=self._claude_permission_risk(tool_name),
+                available_decisions=available,
+                timeout_seconds=600,
+            )
+            response_data: dict[str, Any]
+            if decision in {"allow-once", "allow-session"}:
+                response_data = {
+                    "behavior": "allow",
+                    "updatedInput": dict(tool_input),
+                }
+                if decision == "allow-session" and suggestions:
+                    response_data["updatedPermissions"] = list(suggestions)
+            else:
+                response_data = {
+                    "behavior": "deny",
+                    "message": "The operator denied this tool request.",
+                }
+            self._send_claude_control_response(
+                process,
+                generation,
+                {
+                    "type": "control_response",
+                    "response": {
+                        "subtype": "success",
+                        "request_id": request_id,
+                        "response": response_data,
+                    },
+                },
+            )
+        finally:
+            with self._lock:
+                self._claude_control_requests.pop(request_id, None)
+
+    def _cancel_claude_control_request(self, event: Mapping[str, Any]) -> None:
+        request_id = event.get("request_id")
+        if not isinstance(request_id, str):
+            return
+        with self._lock:
+            provider_request_id = self._claude_control_requests.get(request_id)
+        if provider_request_id:
+            self._approval_broker.cancel_provider_request(provider_request_id)
+
+    def _run_claude_control_request(
+        self,
+        process: subprocess.Popen[bytes],
+        generation: int,
+        event: Mapping[str, Any],
+    ) -> None:
+        try:
+            self._handle_claude_control_request(process, generation, event)
+        finally:
+            self._claude_approval_slots.release()
+
+    def _reject_claude_control_overload(
+        self,
+        process: subprocess.Popen[bytes],
+        generation: int,
+        event: Mapping[str, Any],
+    ) -> None:
+        request_id = event.get("request_id")
+        if not isinstance(request_id, str) or not request_id:
+            return
+        self._send_claude_control_response(
+            process,
+            generation,
+            {
+                "type": "control_response",
+                "response": {
+                    "subtype": "success",
+                    "request_id": request_id,
+                    "response": {
+                        "behavior": "deny",
+                        "message": "PeerBridge approval capacity is exhausted.",
+                    },
+                },
+            },
+        )
+
     def _read_stdout(
         self, process: subprocess.Popen[bytes], generation: int
     ) -> None:
@@ -1258,10 +1779,26 @@ class ClaudeStreamSession(_PersistentSessionBase):
                 continue
             if not isinstance(event, Mapping):
                 continue
+            event_type = event.get("type")
+            if event_type == "control_request":
+                if not self._claude_approval_slots.acquire(blocking=False):
+                    self._reject_claude_control_overload(
+                        process, generation, event
+                    )
+                    continue
+                threading.Thread(
+                    target=self._run_claude_control_request,
+                    args=(process, generation, event),
+                    name=f"peerbridge-{self.session_id}-claude-approval",
+                    daemon=True,
+                ).start()
+                continue
+            if event_type == "control_cancel_request":
+                self._cancel_claude_control_request(event)
+                continue
             with self._lock:
                 if generation != self._generation:
                     continue
-                event_type = event.get("type")
                 if event_type == "system" and event.get("subtype") == "init":
                     observed_id = event.get("session_id")
                     if isinstance(observed_id, str) and observed_id:
@@ -1450,6 +1987,7 @@ class ClaudeStreamSession(_PersistentSessionBase):
         self._launch(mode="fork")
 
     def stop(self) -> None:
+        self._approval_broker.cancel_all()
         with self._lock:
             process = self._process
             if self._state in TERMINAL_STATES:
@@ -1580,6 +2118,8 @@ class _AcpNamedSession(_PersistentSessionBase):
         cancel_event: threading.Event | None = None,
     ) -> tuple[int, bytes, bytes]:
         node, helper, runtime_module, state_dir, environment = self._runtime_bridge()
+        approval_server: _AcpApprovalCallbackServer | None = None
+        approval_thread: threading.Thread | None = None
         body: dict[str, object] = {
             "operation": request.get("operation"),
             "runtimeModulePath": str(runtime_module),
@@ -1588,6 +2128,7 @@ class _AcpNamedSession(_PersistentSessionBase):
             "agent": self.acpx_profile,
             "sessionKey": self._acpx_session_name,
             "permissionTier": self.permission_tier,
+            "approvalMode": self.approval_mode,
             "timeoutMs": min(600_000, max(1_000, int(timeout * 1000))),
         }
         if self.requested_route:
@@ -1595,6 +2136,22 @@ class _AcpNamedSession(_PersistentSessionBase):
         for key in ("requestId", "text", "attachments"):
             if key in request:
                 body[key] = request[key]
+        if request.get("operation") == "turn" and self.permission_tier != "full-development":
+            approval_token = secrets.token_urlsafe(32)
+            approval_server = _AcpApprovalCallbackServer(
+                self._approval_broker, approval_token
+            )
+            approval_thread = threading.Thread(
+                target=approval_server.serve_forever,
+                kwargs={"poll_interval": 0.1},
+                name=f"peerbridge-{self.session_id}-approval-callback",
+                daemon=True,
+            )
+            approval_thread.start()
+            body["approvalEndpoint"] = (
+                f"http://127.0.0.1:{approval_server.server_address[1]}/approval"
+            )
+            body["approvalToken"] = approval_token
         stdin_data = json.dumps(
             body,
             ensure_ascii=False,
@@ -1613,6 +2170,12 @@ class _AcpNamedSession(_PersistentSessionBase):
             )
         except (ResourceUnavailableError, RunCancelledError) as exc:
             raise ManagedAgentError(str(exc)) from exc
+        finally:
+            if approval_server is not None:
+                approval_server.shutdown()
+                approval_server.server_close()
+            if approval_thread is not None:
+                approval_thread.join(timeout=2)
 
     @staticmethod
     def _bridge_events(stdout: bytes) -> tuple[Mapping[str, object], ...]:
@@ -2007,6 +2570,7 @@ class _AcpNamedSession(_PersistentSessionBase):
         self.start()
 
     def stop(self) -> None:
+        self._approval_broker.cancel_all()
         with self._lock:
             if self._state in TERMINAL_STATES:
                 return
@@ -2042,6 +2606,7 @@ class GrokAcpSession(_AcpNamedSession):
     acpx_profile = "grok-build"
     official_agent_id = "grok"
     provider_identity = "xai-official-grok-build"
+    adapter_descriptor = GROK_ADAPTER
 
 
 class KimiAcpSession(_AcpNamedSession):
@@ -2054,11 +2619,14 @@ class KimiAcpSession(_AcpNamedSession):
     acpx_profile = "kimi"
     official_agent_id = "kimi-code"
     provider_identity = "moonshot-official-kimi-code"
+    adapter_descriptor = KIMI_ADAPTER
 
 
 class HybridManagedAgentManager:
     """Route official Agents to native runtimes and retain one-shot fallback."""
 
+    # Compatibility injection point for existing tests and local embedders.
+    # Adapter identity still comes from AgentAdapterRegistry.
     _SESSION_TYPES: Mapping[str, type[_PersistentSessionBase]] = {
         "codex": CodexAppServerSession,
         "claude-code": ClaudeStreamSession,
@@ -2073,6 +2641,7 @@ class HybridManagedAgentManager:
         max_retained_sessions: int = MAX_RETAINED_SESSIONS,
         fallback: ManagedAgentManager | None = None,
         wsl_write_builder: Callable[..., Any] | None = build_wsl_write_launch,
+        adapter_registry: AgentAdapterRegistry | None = None,
     ) -> None:
         if not 1 <= int(max_sessions) <= MAX_SESSIONS:
             raise ManagedAgentError("managed Agent session limit is invalid")
@@ -2086,6 +2655,14 @@ class HybridManagedAgentManager:
             max_retained_sessions=max_retained_sessions,
         )
         self._wsl_write_builder = wsl_write_builder
+        self._adapter_registry = adapter_registry or AgentAdapterRegistry(
+            (
+                RegisteredAgentAdapter(CODEX_ADAPTER, CodexAppServerSession),
+                RegisteredAgentAdapter(CLAUDE_ADAPTER, ClaudeStreamSession),
+                RegisteredAgentAdapter(GROK_ADAPTER, GrokAcpSession),
+                RegisteredAgentAdapter(KIMI_ADAPTER, KimiAcpSession),
+            )
+        )
         self._closed = False
         self._lock = threading.RLock()
 
@@ -2130,6 +2707,9 @@ class HybridManagedAgentManager:
         permission_tier: Literal[
             "observe", "review", "edit", "full-development"
         ] = "observe",
+        approval_mode: Literal[
+            "approval-required", "agent-delegated", "full-access"
+        ] | None = None,
         governance_binding_id: str | None = None,
         input_text: str | None = None,
         project_root: Path | None = None,
@@ -2137,7 +2717,7 @@ class HybridManagedAgentManager:
         popen: Callable[..., subprocess.Popen[bytes]] = subprocess.Popen,
     ) -> _PersistentSessionBase:
         try:
-            session_type = self._SESSION_TYPES[agent_id]
+            registered_adapter = self._adapter_registry.for_agent(agent_id)
         except KeyError as exc:
             raise ManagedAgentError("Agent has no official persistent runtime") from exc
         with self._lock:
@@ -2151,12 +2731,16 @@ class HybridManagedAgentManager:
                 raise ManagedAgentError("managed Agent retained session limit reached")
             if active >= self.max_sessions:
                 raise ManagedAgentError("managed Agent session limit reached")
-            session = session_type(
+            session_factory = self._SESSION_TYPES.get(
+                agent_id, registered_adapter.session_factory
+            )
+            session = session_factory(
                 session_id=session_id,
                 role=role,
                 working_directory=working_directory,
                 requested_route=requested_route,
                 permission_tier=permission_tier,
+                approval_mode=approval_mode,
                 governance_binding_id=governance_binding_id,
                 project_root=project_root,
                 popen=popen,

@@ -30,6 +30,20 @@ class AgentInstallError(RuntimeError):
     """An official Agent terminal cannot be detected or installed safely."""
 
 
+def _background_probe_kwargs() -> dict[str, object]:
+    """Keep read-only CLI probes invisible when PeerBridge is a GUI process."""
+
+    if os.name != "nt":
+        return {}
+    startupinfo = subprocess.STARTUPINFO()
+    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    startupinfo.wShowWindow = subprocess.SW_HIDE
+    return {
+        "creationflags": subprocess.CREATE_NO_WINDOW,
+        "startupinfo": startupinfo,
+    }
+
+
 @dataclass(frozen=True)
 class AgentInstallSpec:
     agent_id: str
@@ -558,6 +572,7 @@ def _verify_windows_authenticode(spec: AgentInstallSpec, path: Path) -> bool:
             check=False,
             shell=False,
             env=environment,
+            **_background_probe_kwargs(),
         )
         payload = json.loads(result.stdout) if result.returncode == 0 else None
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
@@ -634,6 +649,7 @@ def detect_official_agent(
                 shell=False,
                 cwd=str(Path(executable).resolve().parent),
                 env=build_local_child_environment(),
+                **_background_probe_kwargs(),
             )
             output = (result.stdout or result.stderr or "").strip().splitlines()
             if result.returncode == 0 and output:
@@ -671,6 +687,7 @@ def detect_installable_agent(
                 shell=False,
                 cwd=str(Path(executable).resolve().parent),
                 env=build_local_child_environment(),
+                **_background_probe_kwargs(),
             )
             output = (result.stdout or result.stderr or "").strip().splitlines()
             if result.returncode == 0 and output:

@@ -171,6 +171,154 @@ def test_claude_standard_agent_keeps_network_tools_without_preapproving_shell(
     assert captured["cwd"] == tmp_path.resolve()
 
 
+def test_claude_interactive_write_approval_uses_stdio_control_channel(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    executable = tmp_path / "claude.exe"
+    executable.write_bytes(b"stub")
+    captured: dict[str, object] = {}
+
+    class NoopThread:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def start(self) -> None:
+            return
+
+    def spawn(command: tuple[str, ...], **kwargs: object) -> object:
+        captured["command"] = command
+        captured["cwd"] = kwargs["cwd"]
+        return object()
+
+    monkeypatch.setattr(runtime_module, "find_trusted_executable", lambda _spec: executable)
+    monkeypatch.setattr(
+        runtime_module, "_official_child_environment", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(runtime_module, "_spawn_owned", spawn)
+    monkeypatch.setattr(runtime_module.threading, "Thread", NoopThread)
+
+    session = ClaudeStreamSession(
+        session_id="claude-interactive-approval",
+        role="implementer",
+        working_directory=tmp_path,
+        requested_route="sonnet",
+        permission_tier="edit",
+        approval_mode="approval-required",
+        governance_binding_id="binding-claude-interactive",
+        project_root=tmp_path,
+    )
+    session.start()
+
+    command = tuple(captured["command"])
+    assert command[command.index("--permission-mode") + 1] == "manual"
+    assert command[command.index("--permission-prompt-tool") + 1] == "stdio"
+    assert command[command.index("--allowedTools") + 1] == "Read,Glob,Grep"
+    assert "Edit" in command[command.index("--tools") + 1]
+
+
+def test_claude_control_request_round_trips_allow_session(
+    tmp_path: Path,
+) -> None:
+    session = ClaudeStreamSession(
+        session_id="claude-control-roundtrip",
+        role="implementer",
+        working_directory=tmp_path,
+        requested_route="sonnet",
+        permission_tier="edit",
+        approval_mode="approval-required",
+        governance_binding_id="binding-claude-roundtrip",
+        project_root=tmp_path,
+    )
+    stdin = io.BytesIO()
+    process = type("Process", (), {"stdin": stdin})()
+    session._state = "running"
+    session._generation = 1
+    session._process = process
+    event = {
+        "type": "control_request",
+        "request_id": "request-1",
+        "request": {
+            "subtype": "can_use_tool",
+            "tool_name": "Write",
+            "input": {"file_path": "result.txt", "content": "ok"},
+            "tool_use_id": "tool-1",
+            "title": "Write result.txt",
+            "permission_suggestions": [
+                {
+                    "type": "addRules",
+                    "destination": "session",
+                    "behavior": "allow",
+                    "rules": [{"toolName": "Write", "ruleContent": "result.txt"}],
+                }
+            ],
+        },
+    }
+
+    worker = threading.Thread(
+        target=session._handle_claude_control_request,
+        args=(process, 1, event),
+    )
+    worker.start()
+    approval_id = ""
+    for _ in range(100):
+        pending = session.snapshot()["approval_broker"]["pending"]
+        if pending:
+            approval_id = pending[0]["approval_id"]
+            break
+        threading.Event().wait(0.01)
+    assert approval_id
+    session.resolve_approval(approval_id, "allow-session")
+    worker.join(timeout=2)
+    assert not worker.is_alive()
+
+    response = json.loads(stdin.getvalue().decode("utf-8"))
+    assert response["type"] == "control_response"
+    assert response["response"]["request_id"] == "request-1"
+    decision = response["response"]["response"]
+    assert decision["behavior"] == "allow"
+    assert decision["updatedInput"] == event["request"]["input"]
+    assert decision["updatedPermissions"] == event["request"]["permission_suggestions"]
+
+
+def test_claude_session_grant_rejects_broad_or_cross_tool_suggestions(
+    tmp_path: Path,
+) -> None:
+    session = ClaudeStreamSession(
+        session_id="claude-session-grant-filter",
+        role="implementer",
+        working_directory=tmp_path,
+        requested_route="sonnet",
+        permission_tier="edit",
+        approval_mode="approval-required",
+        governance_binding_id="binding-claude-session-grant-filter",
+        project_root=tmp_path,
+    )
+    request = {
+        "permission_suggestions": [
+            {
+                "type": "addDirectories",
+                "destination": "session",
+                "directories": ["C:/"],
+            },
+            {
+                "type": "addRules",
+                "destination": "session",
+                "behavior": "allow",
+                "rules": [{"toolName": "Write", "ruleContent": "*"}],
+            },
+            {
+                "type": "addRules",
+                "destination": "session",
+                "behavior": "allow",
+                "rules": [{"toolName": "Bash", "ruleContent": "git status"}],
+            },
+        ]
+    }
+
+    assert session._claude_session_permission_suggestions(request, "Write") == ()
+
+
 def test_claude_full_access_bypasses_per_turn_prompts_only_inside_bound_session(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

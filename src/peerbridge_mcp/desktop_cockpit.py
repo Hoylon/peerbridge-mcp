@@ -1352,6 +1352,59 @@ class AgentCockpit:
             prompt_widget=panel["prompt"],
         )
 
+    def _resolve_panel_approval(self, panel_id: str, decision: str) -> None:
+        panel = self._panels.get(str(panel_id))
+        snapshot = self._latest_snapshots.get(str(panel_id))
+        approval_id = str((panel or {}).get("approval_id") or "")
+        if (
+            panel is None
+            or snapshot is None
+            or snapshot.get("source_type") != "managed-cli"
+            or not approval_id
+        ):
+            self.status.set(self._t("cockpit.approval.unavailable"))
+            self.status_label.configure(fg=self.colors["amber"])
+            return
+        if decision not in {"allow-once", "allow-session", "deny"}:
+            self.status.set(self._t("cockpit.approval.unavailable"))
+            return
+        if not self._set_busy("approval"):
+            return
+        self.status.set(self._t("cockpit.approval.resolving"))
+        source_session_id = str(snapshot.get("source_session_id") or "")
+
+        def worker() -> None:
+            try:
+                session = self.manager.get(source_session_id)
+                resolver = getattr(session, "resolve_approval", None)
+                if not callable(resolver):
+                    raise ManagedAgentError(
+                        "managed Agent adapter has no approval channel"
+                    )
+                resolver(approval_id, decision)
+                self._action_results.put(
+                    {
+                        "ok": True,
+                        "action": "approval",
+                        "session_id": panel_id,
+                        "source_type": "managed-cli",
+                    }
+                )
+            except Exception as exc:
+                self._action_results.put(
+                    {
+                        "ok": False,
+                        "action": "approval",
+                        "error": redact_secrets(str(exc)),
+                    }
+                )
+
+        threading.Thread(
+            target=worker,
+            name="peerbridge-cockpit-approval",
+            daemon=True,
+        ).start()
+
     def _panel_submit_event(self, panel_id: str, event: Any = None) -> str | None:
         if int(getattr(event, "state", 0)) & 0x0001:
             return None
@@ -1475,7 +1528,7 @@ class AgentCockpit:
         )
         frame.grid_propagate(False)
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(3, weight=1)
+        frame.grid_rowconfigure(4, weight=1)
         header_value = tk.StringVar()
         header = tk.Radiobutton(
             frame,
@@ -1521,7 +1574,7 @@ class AgentCockpit:
         )
         activity_label.grid(row=2, column=0, sticky="ew", padx=9, pady=(2, 5))
         notebook = ttk.Notebook(frame)
-        notebook.grid(row=3, column=0, sticky="nsew", padx=7, pady=(3, 4))
+        notebook.grid(row=4, column=0, sticky="nsew", padx=7, pady=(3, 4))
         tabs: dict[str, tk.Frame] = {}
         texts: dict[str, tk.Text] = {}
         for key in ("terminal", "activity", "answer", "evidence"):
@@ -1529,8 +1582,53 @@ class AgentCockpit:
             tabs[key] = tab
             texts[key] = text
         composer = tk.Frame(frame, bg=self.colors["panel_2"])
-        composer.grid(row=4, column=0, sticky="ew", padx=7, pady=(2, 7))
+        composer.grid(row=5, column=0, sticky="ew", padx=7, pady=(2, 7))
         composer.grid_columnconfigure(0, weight=1)
+        approval_frame = tk.Frame(
+            composer,
+            bg=self.colors["panel"],
+            bd=1,
+            relief="ridge",
+        )
+        approval_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 5))
+        approval_frame.grid_columnconfigure(0, weight=1)
+        approval_value = tk.StringVar()
+        approval_label = tk.Label(
+            approval_frame,
+            textvariable=approval_value,
+            bg=self.colors["panel"],
+            fg=self.colors["amber"],
+            anchor="w",
+            justify="left",
+            wraplength=460,
+            font=("Cascadia Mono", 9, "bold"),
+        )
+        approval_label.grid(row=0, column=0, columnspan=3, sticky="ew", padx=7, pady=5)
+        approval_once_button = self._button(
+            approval_frame,
+            command=lambda selected=session_id: self._resolve_panel_approval(
+                selected, "allow-once"
+            ),
+            color="green",
+        )
+        approval_once_button.grid(row=1, column=0, sticky="ew", padx=(7, 3), pady=(0, 6))
+        approval_session_button = self._button(
+            approval_frame,
+            command=lambda selected=session_id: self._resolve_panel_approval(
+                selected, "allow-session"
+            ),
+            color="blue",
+        )
+        approval_session_button.grid(row=1, column=1, sticky="ew", padx=3, pady=(0, 6))
+        approval_deny_button = self._button(
+            approval_frame,
+            command=lambda selected=session_id: self._resolve_panel_approval(
+                selected, "deny"
+            ),
+            color="red",
+        )
+        approval_deny_button.grid(row=1, column=2, sticky="ew", padx=(3, 7), pady=(0, 6))
+        approval_frame.grid_remove()
         prompt_label = tk.Label(
             composer,
             bg=self.colors["panel_2"],
@@ -1538,7 +1636,7 @@ class AgentCockpit:
             anchor="w",
             font=("Cascadia Mono", 8, "bold"),
         )
-        prompt_label.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 2))
+        prompt_label.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 2))
         prompt = tk.Text(
             composer,
             height=3,
@@ -1552,16 +1650,16 @@ class AgentCockpit:
             padx=7,
             pady=5,
         )
-        prompt.grid(row=1, column=0, sticky="ew")
+        prompt.grid(row=2, column=0, sticky="ew")
         self._bind_text_editing(prompt)
         panel_send_button = self._button(
             composer,
             command=lambda selected=session_id: self._send_panel(selected),
             color="cyan",
         )
-        panel_send_button.grid(row=1, column=1, sticky="ns", padx=(7, 0))
+        panel_send_button.grid(row=2, column=1, sticky="ns", padx=(7, 0))
         prompt_tools = tk.Frame(composer, bg=self.colors["panel_2"])
-        prompt_tools.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(3, 0))
+        prompt_tools.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(3, 0))
         panel_attach_button = self._button(
             prompt_tools,
             command=lambda selected=session_id: self._choose_prompt_attachments(
@@ -1609,7 +1707,7 @@ class AgentCockpit:
             justify="left",
             font=("Cascadia Mono", 8),
         )
-        input_status_label.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(3, 0))
+        input_status_label.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(3, 0))
         prompt.bind(
             "<Return>",
             lambda event, selected=session_id: self._panel_submit_event(
@@ -1635,6 +1733,12 @@ class AgentCockpit:
             "tabs": tabs,
             "texts": texts,
             "prompt_label": prompt_label,
+            "approval_frame": approval_frame,
+            "approval_value": approval_value,
+            "approval_once_button": approval_once_button,
+            "approval_session_button": approval_session_button,
+            "approval_deny_button": approval_deny_button,
+            "approval_id": "",
             "prompt": prompt,
             "send_button": panel_send_button,
             "attach_button": panel_attach_button,
@@ -1702,6 +1806,51 @@ class AgentCockpit:
         panel["input_status_label"].configure(
             fg=self.colors["amber"] if not allowed or busy else self.colors["green"]
         )
+
+    def _sync_panel_approval(
+        self, panel: Mapping[str, Any], snapshot: Mapping[str, Any]
+    ) -> None:
+        broker = snapshot.get("approval_broker")
+        pending = (
+            list(broker.get("pending") or ())
+            if isinstance(broker, Mapping)
+            else []
+        )
+        record = pending[0] if pending and isinstance(pending[0], Mapping) else None
+        if record is None:
+            panel["approval_id"] = ""
+            panel["approval_frame"].grid_remove()
+            return
+        approval_id = str(record.get("approval_id") or "")
+        panel["approval_id"] = approval_id
+        detail = str(record.get("detail") or "")
+        self._set_text_variable(
+            panel["approval_value"],
+            self._t("cockpit.approval.pending").format(
+                title=str(record.get("title") or "--"),
+                risk=str(record.get("risk") or "--"),
+                detail=detail[:500],
+            ),
+        )
+        available = set(record.get("available_decisions") or ())
+        busy = self._action_inflight is not None
+        panel["approval_once_button"].configure(
+            text=self._t("cockpit.approval.allow_once"),
+            state="normal" if "allow-once" in available and not busy else "disabled"
+        )
+        panel["approval_session_button"].configure(
+            text=self._t("cockpit.approval.allow_session"),
+            state=(
+                "normal"
+                if "allow-session" in available and not busy
+                else "disabled"
+            )
+        )
+        panel["approval_deny_button"].configure(
+            text=self._t("cockpit.approval.deny"),
+            state="normal" if "deny" in available and not busy else "disabled"
+        )
+        panel["approval_frame"].grid()
 
     def _sync_panel_inputs(self) -> None:
         for session_id, panel in self._panels.items():
@@ -2041,6 +2190,7 @@ class AgentCockpit:
         )
         self._replace_text(panel["texts"]["evidence"], self._evidence_text(snapshot))
         self._sync_panel_input(panel, snapshot)
+        self._sync_panel_approval(panel, snapshot)
 
     def _render_timeline(self) -> None:
         ordered = sorted(
@@ -2384,6 +2534,7 @@ class AgentCockpit:
                     session_id, panel.get("attachment_paths") or ()
                 )
                 self._sync_panel_input(panel, snapshot)
+                self._sync_panel_approval(panel, snapshot)
         localized_ready = self._t("cockpit.status.ready")
         self.status.set(
             cockpit_localized_status(

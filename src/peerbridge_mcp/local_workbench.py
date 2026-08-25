@@ -57,6 +57,7 @@ from .announcements import (
     save_announcement_cache,
     save_announcement_preferences,
 )
+from .approval_broker import APPROVAL_DECISIONS, APPROVAL_MODES
 from .bridge import (
     DEFAULT_ROOM_CONTEXT_CHARS,
     DEFAULT_ROOM_CONTEXT_MESSAGES,
@@ -108,6 +109,7 @@ from .agent_install import (
     launch_agent_installer,
     official_agent_spec,
 )
+from .agent_adapters import official_agent_adapter_descriptors
 from .ccswitch import (
     SUPPORTED_APPS as CCSWITCH_SUPPORTED_APPS,
     CcSwitchError,
@@ -127,7 +129,12 @@ from .managed_agents import (
     ManagedAgentManager,
     build_observe_launch,
 )
-from .localization import LocalizationError, load_preferences, save_preferences
+from .localization import (
+    LocalizationError,
+    SUPPORTED_LOCALES,
+    load_preferences,
+    save_preferences,
+)
 from .official_agent_runtime import HybridManagedAgentManager
 from .monitor import (
     BridgeReader,
@@ -497,6 +504,15 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _default_approval_mode(permission_tier: object) -> str:
+    value = str(permission_tier or "observe")
+    if value == "full-development":
+        return "full-access"
+    if value == "edit":
+        return "agent-delegated"
+    return "approval-required"
+
+
 def _bounded_model_ids(values: Any) -> tuple[tuple[str, ...], bool]:
     rows: list[str] = []
     seen: set[str] = set()
@@ -791,6 +807,10 @@ def _permission_tiers(
 
 
 def _build_managed_agent_catalog(project_root: Path) -> list[dict[str, Any]]:
+    adapter_descriptors = {
+        descriptor.agent_id: descriptor
+        for descriptor in official_agent_adapter_descriptors()
+    }
     try:
         acpx_status = detect_installable_agent("acpx-runtime")
         acpx_ready = bool(acpx_status.installed)
@@ -827,6 +847,7 @@ def _build_managed_agent_catalog(project_root: Path) -> list[dict[str, Any]]:
                 "agent_id": agent_id,
                 "label": spec.display_name,
                 "publisher": spec.publisher,
+                "adapter": adapter_descriptors[agent_id].as_dict(),
                 "docs_url": spec.docs_url,
                 "primary": agent_id in PRIMARY_OFFICIAL_AGENT_IDS,
                 "installed": installed,
@@ -876,8 +897,10 @@ def managed_agent_catalog(
     if force_refresh:
         clear_wsl_sandbox_probe_cache()
     cache_key = str(project_root.resolve()).casefold()
-    now = time.monotonic()
+    # Hold the lock through the bounded discovery pass. Bootstrap requests can
+    # arrive concurrently, but only one of them may launch external CLI probes.
     with _AGENT_CATALOG_CACHE_LOCK:
+        now = time.monotonic()
         cached = _AGENT_CATALOG_CACHE.get(cache_key)
         if (
             not force_refresh
@@ -885,10 +908,9 @@ def managed_agent_catalog(
             and now - cached[0] < AGENT_CATALOG_CACHE_SECONDS
         ):
             return json.loads(json.dumps(cached[1]))
-    rows = _build_managed_agent_catalog(project_root)
-    with _AGENT_CATALOG_CACHE_LOCK:
-        _AGENT_CATALOG_CACHE[cache_key] = (now, rows)
-    return json.loads(json.dumps(rows))
+        rows = _build_managed_agent_catalog(project_root)
+        _AGENT_CATALOG_CACHE[cache_key] = (time.monotonic(), rows)
+        return json.loads(json.dumps(rows))
 
 
 def _safe_member(row: dict[str, Any]) -> dict[str, Any]:
@@ -1469,6 +1491,71 @@ def _safe_session_event(row: dict[str, Any]) -> dict[str, Any]:
 
 def _safe_managed_session(row: dict[str, Any]) -> dict[str, Any]:
     session_id = str(row.get("session_id") or "")
+    raw_adapter = row.get("adapter")
+    if not isinstance(raw_adapter, dict):
+        raw_adapter = {}
+    adapter_capabilities = []
+    for capability in raw_adapter.get("capabilities") or ():
+        if not isinstance(capability, dict):
+            continue
+        adapter_capabilities.append(
+            {
+                "capability_id": str(capability.get("capability_id") or ""),
+                "state": str(capability.get("state") or "unsupported"),
+                "evidence": _public_text(capability.get("evidence")),
+                "limitation": _public_text(capability.get("limitation")),
+            }
+        )
+    adapter = {
+        "contract_version": str(raw_adapter.get("contract_version") or ""),
+        "adapter_id": str(raw_adapter.get("adapter_id") or ""),
+        "agent_id": str(raw_adapter.get("agent_id") or ""),
+        "vendor": _public_text(raw_adapter.get("vendor")),
+        "transport": str(raw_adapter.get("transport") or ""),
+        "provider_identity": str(raw_adapter.get("provider_identity") or ""),
+        "official": bool(raw_adapter.get("official")),
+        "capabilities": adapter_capabilities,
+    }
+    raw_broker = row.get("approval_broker")
+    if not isinstance(raw_broker, dict):
+        raw_broker = {}
+    approval_broker = {
+        "schema": str(raw_broker.get("schema") or ""),
+        "mode": str(raw_broker.get("mode") or row.get("approval_mode") or ""),
+        "pending_count": _safe_int(raw_broker.get("pending_count")),
+        "history_count": _safe_int(raw_broker.get("history_count")),
+        "pending": [],
+        "history": [],
+    }
+    for target, limit in (("pending", 20), ("history", 80)):
+        for record in (raw_broker.get(target) or ())[:limit]:
+            if not isinstance(record, dict):
+                continue
+            approval_broker[target].append(
+                {
+                    "schema": str(record.get("schema") or ""),
+                    "approval_id": str(record.get("approval_id") or ""),
+                    "session_id": str(record.get("session_id") or ""),
+                    "adapter_id": str(record.get("adapter_id") or ""),
+                    "provider_request_id": str(
+                        record.get("provider_request_id") or ""
+                    ),
+                    "action_kind": str(record.get("action_kind") or ""),
+                    "title": _public_text(record.get("title")),
+                    "detail": _public_text(record.get("detail")),
+                    "risk": str(record.get("risk") or ""),
+                    "available_decisions": [
+                        str(value)
+                        for value in (record.get("available_decisions") or ())
+                        if str(value) in APPROVAL_DECISIONS
+                    ],
+                    "created_utc": str(record.get("created_utc") or ""),
+                    "state": str(record.get("state") or ""),
+                    "decision": str(record.get("decision") or ""),
+                    "resolved_utc": str(record.get("resolved_utc") or ""),
+                    "record_sha256": str(record.get("record_sha256") or ""),
+                }
+            )
     raw_authorization = row.get("session_authorization")
     if not isinstance(raw_authorization, dict):
         raw_authorization = {}
@@ -1477,6 +1564,7 @@ def _safe_managed_session(row: dict[str, Any]) -> dict[str, Any]:
         for key in (
             "mode",
             "permission_tier",
+            "approval_mode",
             "governance_binding_id",
             "decision_id",
             "decision_sha256",
@@ -1566,7 +1654,8 @@ def _safe_managed_session(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "source_type": "managed-local",
         "session_id": session_id,
-        "adapter_id": str(row.get("agent_id") or ""),
+        "adapter_id": str(adapter.get("adapter_id") or row.get("agent_id") or ""),
+        "adapter": adapter,
         "owner_agent_id": str(row.get("agent_id") or ""),
         "room_id": "",
         "display_name": _public_text(row.get("display_name")),
@@ -1625,6 +1714,11 @@ def _safe_managed_session(row: dict[str, Any]) -> dict[str, Any]:
         "terminal_outcome": str(row.get("terminal_outcome") or ""),
         "execution_mode": str(row.get("execution_mode") or ""),
         "permission_tier": str(row.get("permission_tier") or "observe"),
+        "approval_mode": str(
+            row.get("approval_mode")
+            or _default_approval_mode(row.get("permission_tier"))
+        ),
+        "approval_broker": approval_broker,
         "session_authorization": session_authorization,
         "usage": {
             str(key): value
@@ -1694,10 +1788,18 @@ def _appearance_state(project_root: Path) -> dict[str, Any]:
     try:
         preferences = load_preferences(project_root)
     except LocalizationError:
-        return {"selected": "modern", "available": ["pixel", "modern"], "configuration_error": True}
+        return {
+            "selected": "modern",
+            "available": ["pixel", "modern"],
+            "locale": "en",
+            "tutorial_completed": False,
+            "configuration_error": True,
+        }
     return {
         "selected": str(preferences.get("theme") or "modern"),
         "available": ["pixel", "modern"],
+        "locale": str(preferences.get("locale") or "en"),
+        "tutorial_completed": bool(preferences.get("tutorial_completed")),
         "configuration_error": False,
     }
 
@@ -2400,6 +2502,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "app.js": ASSET_DIRECTORY / "app.js",
             "peerbridge-icon.png": BRAND_ASSET_DIRECTORY / "peerbridge-icon.png",
             "peerbridge-icon.ico": BRAND_ASSET_DIRECTORY / "peerbridge-icon.ico",
+            "peerbridge-modern-preview.png": BRAND_ASSET_DIRECTORY
+            / "peerbridge-modern-preview.png",
+            "peerbridge-pixel-preview.png": BRAND_ASSET_DIRECTORY
+            / "peerbridge-pixel-preview.png",
         }
         path = paths.get(name)
         if path is None:
@@ -2431,6 +2537,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/assets/peerbridge-icon.png":
             self._asset("peerbridge-icon.png")
+            return
+        if parsed.path == "/assets/peerbridge-modern-preview.png":
+            self._asset("peerbridge-modern-preview.png")
+            return
+        if parsed.path == "/assets/peerbridge-pixel-preview.png":
+            self._asset("peerbridge-pixel-preview.png")
             return
         if parsed.path == "/healthz":
             self._json(
@@ -3152,6 +3264,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 "agent_id",
                 "role",
                 "permission_tier",
+                "approval_mode",
                 "requested_route",
                 "working_directory",
                 "input_text",
@@ -3163,6 +3276,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             agent_id = str(payload.get("agent_id") or "")
             role = str(payload.get("role") or COCKPIT_DEFAULT_LAUNCH_ROLE)
             permission_tier = str(payload.get("permission_tier") or "observe")
+            approval_mode = (
+                str(payload.get("approval_mode") or "").strip()
+                or _default_approval_mode(permission_tier)
+            )
             requested_route = str(payload.get("requested_route") or "").strip()
             selected_directory = str(payload.get("working_directory") or ".").strip()
             input_text = str(payload.get("input_text") or "")
@@ -3177,6 +3294,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 raise WorkbenchError("invalid managed Agent role")
             if permission_tier not in MANAGED_PERMISSION_TIERS:
                 raise WorkbenchError("invalid managed Agent permission tier")
+            if approval_mode not in APPROVAL_MODES:
+                raise WorkbenchError("invalid managed Agent approval mode")
             governed_write = permission_tier in {"edit", "full-development"}
             if governed_write and not SAFE_IDENTIFIER.fullmatch(governance_binding_id):
                 raise WorkbenchError(
@@ -3241,6 +3360,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 session_authorization = {
                     "mode": "once-per-session",
                     "permission_tier": permission_tier,
+                    "approval_mode": approval_mode,
                     "governance_binding_id": governance_binding_id,
                     "decision_id": decision["decision_id"],
                     "decision_sha256": decision["decision_sha256"],
@@ -3264,6 +3384,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     working_directory=working_directory,
                     requested_route=requested_route or None,
                     permission_tier=permission_tier,
+                    approval_mode=approval_mode,
                     governance_binding_id=governance_binding_id or None,
                     project_root=self.server.config.project_root,
                     input_text=input_text if input_text.strip() else None,
@@ -3297,6 +3418,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 "session_id",
                 "action",
                 "input_text",
+                "approval_id",
+                "approval_decision",
             }
             if set(payload) - allowed:
                 raise WorkbenchError("unsupported managed session action fields")
@@ -3315,6 +3438,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 "fork",
                 "compact",
                 "review",
+                "approval",
             }:
                 raise WorkbenchError("invalid managed session action")
             session = self.server.managed_agents.get(session_id)
@@ -3323,17 +3447,33 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 session_snapshot.get("permission_tier")
                 in {"edit", "full-development"}
                 and action
-                in {"send", "vision-test", "resume", "fork", "compact", "review"}
+                in {
+                    "send",
+                    "vision-test",
+                    "resume",
+                    "fork",
+                    "compact",
+                    "review",
+                    "approval",
+                }
             ):
                 binding_id = str(
                     session_snapshot.get("governance_binding_id") or ""
                 )
                 session_authorization = self.server.session_authorization(session_id)
+                session_approval_mode = str(
+                    session_snapshot.get("approval_mode")
+                    or _default_approval_mode(
+                        session_snapshot.get("permission_tier")
+                    )
+                )
                 if (
                     session_authorization is None
                     or session_authorization.get("mode") != "once-per-session"
                     or session_authorization.get("permission_tier")
                     != session_snapshot.get("permission_tier")
+                    or session_authorization.get("approval_mode")
+                    != session_approval_mode
                     or session_authorization.get("governance_binding_id")
                     != binding_id
                 ):
@@ -3360,7 +3500,20 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                     raise WorkbenchError(
                         "managed Agent worktree no longer matches its governance binding"
                     )
-            if action == "send":
+            if action == "approval":
+                if input_text or attachment_rows:
+                    raise WorkbenchError("approval action does not accept input")
+                approval_id = str(payload.get("approval_id") or "")
+                approval_decision = str(payload.get("approval_decision") or "")
+                if not SAFE_IDENTIFIER.fullmatch(approval_id):
+                    raise WorkbenchError("invalid approval ID")
+                if approval_decision not in APPROVAL_DECISIONS:
+                    raise WorkbenchError("invalid approval decision")
+                resolver = getattr(session, "resolve_approval", None)
+                if not callable(resolver):
+                    raise WorkbenchError("managed Agent adapter has no approval channel")
+                resolver(approval_id, approval_decision)
+            elif action == "send":
                 staged = self._stage_browser_attachments(attachment_rows)
                 if (not input_text.strip() and not staged) or len(input_text) > MAX_BODY_CHARS:
                     raise WorkbenchError("managed Agent input is invalid")
@@ -3752,6 +3905,43 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "status": "saved",
             "selected": str(saved["theme"]),
             "restart_required": True,
+        }
+        self.server.remember_result(request_id, payload_sha256, response)
+        self._json(HTTPStatus.OK, response)
+
+    def _handle_ui_preferences_save(self, payload: dict[str, Any]) -> None:
+        if set(payload) != {"request_id", "locale", "tutorial_completed"}:
+            raise WorkbenchError("unsupported UI preference fields")
+        replay = self._begin_replayable_action(payload)
+        if replay is None:
+            return
+        request_id, payload_sha256 = replay
+        locale = str(payload.get("locale") or "")
+        tutorial_completed = payload.get("tutorial_completed")
+        if locale not in SUPPORTED_LOCALES:
+            raise WorkbenchError("unsupported UI locale")
+        if not isinstance(tutorial_completed, bool):
+            raise WorkbenchError("tutorial completion must be a boolean")
+        if not self.server.allow_write():
+            self._json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": "write rate limit exceeded"},
+            )
+            return
+        try:
+            preferences = load_preferences(self.server.config.project_root)
+            saved = save_preferences(
+                self.server.config.project_root,
+                locale=locale,
+                tutorial_completed=tutorial_completed,
+                theme=str(preferences["theme"]),
+            )
+        except LocalizationError as exc:
+            raise WorkbenchError("UI preferences could not be saved") from exc
+        response = {
+            "status": "saved",
+            "locale": str(saved["locale"]),
+            "tutorial_completed": bool(saved["tutorial_completed"]),
         }
         self.server.remember_result(request_id, payload_sha256, response)
         self._json(HTTPStatus.OK, response)
@@ -4567,6 +4757,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "/api/announcements/refresh",
             "/api/announcements/read",
             "/api/appearance/save",
+            "/api/preferences/save",
             "/api/audit/verify",
         }:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -4589,6 +4780,9 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 return
             if path == "/api/appearance/save":
                 self._handle_appearance_save(payload)
+                return
+            if path == "/api/preferences/save":
+                self._handle_ui_preferences_save(payload)
                 return
             if path == "/api/agents/refresh":
                 self._handle_agent_catalog_refresh(payload)

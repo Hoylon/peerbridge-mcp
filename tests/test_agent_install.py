@@ -97,6 +97,10 @@ def test_detect_optional_runtime_uses_the_same_bounded_probe(
     def fake_run(*_args, **kwargs):
         assert kwargs["shell"] is False
         assert kwargs["timeout"] == 8
+        if os.name == "nt":
+            assert kwargs["creationflags"] & subprocess.CREATE_NO_WINDOW
+            assert kwargs["startupinfo"].dwFlags & subprocess.STARTF_USESHOWWINDOW
+            assert kwargs["startupinfo"].wShowWindow == subprocess.SW_HIDE
         return subprocess.CompletedProcess([], 0, stdout="0.13.0\n", stderr="")
 
     trusted = tmp_path / "trusted"
@@ -113,6 +117,17 @@ def test_detect_optional_runtime_uses_the_same_bounded_probe(
     )
     assert status.installed is True
     assert status.version == "0.13.0"
+
+
+def test_background_probe_never_opens_a_windows_console() -> None:
+    kwargs = agent_install._background_probe_kwargs()
+
+    if os.name == "nt":
+        assert kwargs["creationflags"] & subprocess.CREATE_NO_WINDOW
+        assert kwargs["startupinfo"].dwFlags & subprocess.STARTF_USESHOWWINDOW
+        assert kwargs["startupinfo"].wShowWindow == subprocess.SW_HIDE
+    else:
+        assert kwargs == {}
 
 
 def test_detection_rejects_an_unverified_publisher_binary(

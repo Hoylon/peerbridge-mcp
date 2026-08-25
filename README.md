@@ -1,25 +1,72 @@
-# PeerBridge MCP
-
-[English](README.md) | [繁體中文](README.zh-Hant.md) | [简体中文](README.zh-Hans.md)
-
 <p align="center">
-  <img src="src/peerbridge_mcp/release_support/peerbridge-icon.png" width="128" alt="PeerBridge bridge logo">
+  <img src="src/peerbridge_mcp/release_support/peerbridge-icon.png" width="112" alt="PeerBridge bridge logo">
 </p>
 
-Bring Codex, Claude Code, Grok, Kimi, DeepSeek, Gemini, local models, and other MCP or
-OpenAI-compatible Agents into one auditable AI team.
+<h1 align="center">PeerBridge MCP</h1>
 
-PeerBridge connects official clients, relay services, compatible APIs, and local models
-without locking the team to one provider. Its Agent Cockpit can run several reviewed Codex
-and Claude Code sessions on one page while keeping each terminal, activity stream, answer,
-and evidence view bound to one stable session identity. PeerBridge also provides equal room
-seats, approved memory, bounded parallel discussion, task ownership, mutual scoring,
-cross-agent audits, and human-controlled workflows. It runs locally on SQLite, keeps
-provider credentials out of chat and project history, and preserves a SHA-linked record
-of messages, decisions, evidence, scores, reviews, permissions, and handoffs.
+<p align="center"><strong>A local-first control room for governed multi-Agent coding, review, and evidence.</strong></p>
+
+<p align="center">
+  Run Codex, Claude Code, Grok, Kimi, provider APIs, OpenAI-compatible endpoints, and local
+  models as one auditable engineering team.
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-Hant.md">繁體中文</a> |
+  <a href="README.zh-Hans.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.3-2563eb" alt="PeerBridge Alpha 5.3 release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/source-Apache--2.0-475569" alt="Apache 2.0 source license"></a>
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-0f766e" alt="Security policy"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>Download Windows Alpha</strong></a>
+  · <a href="#quickstart">Quickstart</a>
+  · <a href="#features">Features</a>
+  · <a href="docs/client-config.md">Client setup</a>
+</p>
+
+<p align="center">
+  <img src="src/peerbridge_mcp/release_support/peerbridge-modern-preview.png" width="1100" alt="PeerBridge Modern Workbench showing a governed multi-Agent room">
+</p>
+
+<p align="center"><sub>Modern Workbench with synthetic preview data. No private conversation or credential is included.</sub></p>
+
+<details>
+<summary><strong>See the Pixel Control Room</strong></summary>
+<br>
+<p align="center">
+  <img src="src/peerbridge_mcp/release_support/peerbridge-pixel-preview.png" width="1100" alt="PeerBridge Pixel Control Room showing managed Agent sessions">
+</p>
+<p align="center"><sub>The same local coordination core in the original dense Pixel interface.</sub></p>
+</details>
+
+PeerBridge is more than a collection of chat tabs. Every Agent is bound to a stable identity,
+selected model, permission policy, room context, task, and evidence trail. The Agent Cockpit
+can run several reviewed coding sessions on one page while keeping each terminal, activity
+stream, answer, and evidence view separate.
+
+Use it for parallel implementation and review, bounded technical debate, task ownership,
+approved shared memory, mutual scoring, cross-agent audits, and human-controlled release
+work. PeerBridge runs locally on SQLite, keeps provider credentials out of chat and project
+history, and preserves a SHA-linked record of messages, decisions, evidence, scores,
+permissions, and handoffs.
 
 Human or Agent messages can wake the room, collaboration stops on consensus, blockers,
 stagnation, or explicit limits, and the operator can intervene at any time.
+
+| What maintainers get | PeerBridge behavior |
+| --- | --- |
+| One workspace for many Agents | Official coding clients, provider APIs, compatible endpoints, and local runtimes keep separate audited identities. |
+| Work instead of reply cascades | Parallel implementation, review, discussion, and release workflows stop on consensus, blockers, stagnation, or explicit limits. |
+| Governed write access | Permission cards, approved isolated Git worktrees, source-state checks, diffs, and proof records stay human-controlled. |
+| Durable project context | Selected history imports, room memory, task briefings, and handoffs are source-bound instead of silently merged. |
+| Reviewable decisions | Agent activity, answers, evidence, mutual scores, audits, token usage, and stale-proof warnings remain visible. |
+| Local ownership | SQLite data and credentials stay on the operator's machine; optional remote/mobile control is separate and default-off. |
 
 > Status: alpha. The coordination and audit core is tested, but the public API and
 > database schema may change before 1.0.
@@ -208,32 +255,33 @@ The capability is bound to the exact project, scope, Agent ID, and fixed collabo
 profile. Its secret contents are never printed. Reserved operator identities and revocation
 remain available only through the authenticated local Control Room.
 
-When one client can select several official or relay-backed models, record the route
-without exposing credentials:
+When one client can select several provider models, record the exact route without exposing
+credentials:
 
 ```powershell
-$grokDecision = "<permission-decision-id-from-workbench>"
-$grokIdentity = peerbridge identity --project-root . --scope demo issue `
-  --agent-id grok-relay-reviewer --profile collaborator `
-  --permission-decision-id $grokDecision | ConvertFrom-Json
-peerbridge serve --project-root . --agent-id grok-relay-reviewer --scope demo `
-  --identity-capability $grokIdentity.identity_capability `
-  --client-name relay-coding-client `
-  --provider-id relay:grok-official-channel `
+$apiDecision = "<permission-decision-id-from-workbench>"
+$apiIdentity = peerbridge identity --project-root . --scope demo issue `
+  --agent-id api-reviewer --profile collaborator `
+  --permission-decision-id $apiDecision | ConvertFrom-Json
+peerbridge serve --project-root . --agent-id api-reviewer --scope demo `
+  --identity-capability $apiIdentity.identity_capability `
+  --client-name api-coding-client `
+  --provider-id provider-api:grok `
   --model-id grok
 ```
 
 `agent-id` identifies the logical worker. `client-name` identifies the MCP-capable
 application or adapter. `provider-id` is an operator-supplied non-secret route label,
-and `model-id` identifies the selected model. A Grok or DeepSeek official website and a
-relay route are separate identities even when they expose the same model family.
+and `model-id` identifies the selected model. Official CLI, provider API, compatible
+endpoint, and local-runtime sessions remain separate identities even when they expose the
+same model family.
 
 Direct OpenAI-compatible endpoints do not require CC Switch. On the **Connect** page,
 save the API base URL and API key into Windows Credential Manager, discover the provider's
 advertised model IDs, and bind a route to one logical Agent. The same page reads CC Switch
 providers and models through its public CLI and changes the active provider only after an
 explicit confirmation. The API key never enters SQLite or an MCP
-message. Some relays accept one requested model ID but report a stable deployment
+message. Some API deployments accept one requested model ID but report a stable deployment
 alias in responses. In that case set **EXPECTED RESPONSE MODEL** explicitly. For
 example, a route may request `grok-4.6` while requiring the response to report
 `grok-4.6-build`. An unconfigured or changing alias fails closed rather than being
@@ -454,24 +502,24 @@ Saved routes can be registered through MCP:
 }
 ```
 
-For a provider with a verified response alias, add the separate binding:
+For an official provider API with a verified response alias, add the separate binding:
 
 ```json
 {
-  "route_id": "relay-grok-4.6",
-  "agent_id": "grok-relay",
-  "provider_id": "relay-grok-sui-xiang",
+  "route_id": "xai-api-grok-4.6",
+  "agent_id": "grok-api-reviewer",
+  "provider_id": "xai-api-official",
   "model_id": "grok-4.6",
   "response_model_id": "grok-4.6-build",
   "inference_timeout_seconds": 180,
-  "route_class": "relay"
+  "route_class": "official"
 }
 ```
 
 `model_id` is the outbound request identity. `response_model_id` is the exact model
 identity required in every completion response; when omitted it defaults to
 `model_id`. `inference_timeout_seconds` is an explicit per-route request timeout
-from 1 to 300 seconds; when omitted, relay/local routes use 60 seconds and native
+from 1 to 300 seconds; when omitted, compatible API/local routes use 60 seconds and native
 ACP routes use 180 seconds. These values are SHA-bound in the immutable route
 profile, so changing the timeout requires a new `route_id`.
 

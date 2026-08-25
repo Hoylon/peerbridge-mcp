@@ -13,8 +13,9 @@ PeerBridge workspace.
 - Modern and Pixel workspaces include real appearance previews, clearer three-language
   onboarding, model and reasoning controls, Agent activity, diffs, evidence, and token
   usage.
-- Provider, relay, local, and CC Switch routes stay distinct. PeerBridge never silently
-  changes an official route to a relay.
+- Official clients, provider APIs, configurable endpoints, local runtimes, and CC Switch
+  routes stay explicitly identified. PeerBridge never changes a selected route without
+  operator confirmation.
 
 Security hardening in this release removes title-based grant reuse, restricts Claude
 session grants to visible same-tool rules, and caps approval fan-out. The final
@@ -30,7 +31,8 @@ Alpha 5.3 完成 PeerBridge 本機工作區的多廠商適配器與原生權限�
   「批准一次／本工作階段允許／拒絕」卡片。
 - Modern 與 Pixel 介面加入真實預覽、三語首次教學、模型與推理強度、Agent 活動、
   程式碼差異、證據及 Token 使用量。
-- 官方、中轉、本機與 CC Switch 路由保持分離，不會靜默把官方路由切換至中轉。
+- 官方客戶端、供應商 API、可設定 endpoint、本機 runtime 與 CC Switch 路由均有明確
+  身分；未經操作者確認不會更改已選 Route。
 
 本版亦移除標題式權限重用、限制 Claude 工作階段授權範圍，並限制核准請求併發量；
 修復後的最終安全掃描沒有存續問題。
@@ -45,8 +47,8 @@ Alpha 5.3 完成 PeerBridge 本地工作区的多厂商适配器与原生权限�
   “批准一次／本工作阶段允许／拒绝”卡片。
 - Modern 与 Pixel 界面加入真实预览、三语首次教程、模型与推理强度、Agent 活动、
   代码差异、证据及 Token 使用量。
-- 官方、中转、本地与 CC Switch 路由保持分离，不会静默把官方路由切换到中转。
+- 官方客户端、供应商 API、可配置 endpoint、本地 runtime 与 CC Switch 路由都有明确
+  身份；未经操作者确认不会更改已选 Route。
 
 本版同时移除标题式权限复用、限制 Claude 工作阶段授权范围，并限制批准请求并发量；
 修复后的最终安全扫描没有遗留问题。
-

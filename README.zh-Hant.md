@@ -1,21 +1,69 @@
-# PeerBridge MCP
-
-[English](README.md) | [繁體中文](README.zh-Hant.md) | [简体中文](README.zh-Hans.md)
-
 <p align="center">
-  <img src="src/peerbridge_mcp/release_support/peerbridge-icon.png" width="128" alt="PeerBridge 橋樑標誌">
+  <img src="src/peerbridge_mcp/release_support/peerbridge-icon.png" width="112" alt="PeerBridge 橋樑標誌">
 </p>
 
-PeerBridge 把 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本機模型及其他
-相容 Agent 組成一個平等、可稽核的 AI 團隊。它可連接官方客戶端、中轉站、相容
-API 與本機模型，不把使用者綁定在單一供應商。
+<h1 align="center">PeerBridge MCP</h1>
 
-每個 Agent 都有平等房間席位，可共享經核准的記憶、認領工作、互相評分及交叉審計。
-人類可隨時介入；討論會在達成共識、遇到阻塞、停滯、輪數或訊息上限時停止，避免
-無限回覆。Agent Cockpit 可在同一頁並列多個已審核的 Codex、Claude Code、Kimi Code
-或 Grok CLI session，
-每個 session 的終端、活動、答案與證據都保持獨立。即時 Token 儀表板按供應商與模型
-顯示輸入、輸出、快取寫入及快取讀取。
+<p align="center"><strong>本機優先、受治理的多 Agent 開發、審查與證據控制室。</strong></p>
+
+<p align="center">
+  讓 Codex、Claude Code、Grok、Kimi、供應商 API、OpenAI-compatible endpoint 與本機模型
+  組成一個可稽核的工程團隊。
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> |
+  <a href="README.zh-Hant.md">繁體中文</a> |
+  <a href="README.zh-Hans.md">简体中文</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.3-2563eb" alt="PeerBridge Alpha 5.3 發布"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/source-Apache--2.0-475569" alt="Apache 2.0 原始碼授權"></a>
+  <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-0f766e" alt="安全政策"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3"><strong>下載 Windows Alpha</strong></a>
+  · <a href="#windows-可攜版">快速開始</a>
+  · <a href="#主要功能">主要功能</a>
+  · <a href="docs/alpha-quickstart.zh-Hant.md">使用教學</a>
+</p>
+
+<p align="center">
+  <img src="src/peerbridge_mcp/release_support/peerbridge-modern-preview.png" width="1100" alt="PeerBridge Modern Workbench 多 Agent 房間">
+</p>
+
+<p align="center"><sub>Modern Workbench 使用合成示範資料，不包含私人對話或憑證。</sub></p>
+
+<details>
+<summary><strong>查看 Pixel Control Room</strong></summary>
+<br>
+<p align="center">
+  <img src="src/peerbridge_mcp/release_support/peerbridge-pixel-preview.png" width="1100" alt="PeerBridge Pixel Control Room 受管 Agent sessions">
+</p>
+<p align="center"><sub>同一套本機協作核心，保留原有高密度 Pixel 介面。</sub></p>
+</details>
+
+PeerBridge 不只是把多個聊天視窗放在一起。每個 Agent 都綁定穩定身分、模型、權限、
+房間上下文、工作與證據。Agent Cockpit 可在同一頁並列多個已審核的 coding session，
+同時保持每個終端、活動、答案及證據檢視獨立。
+
+它支援平行實作與審查、有限技術討論、工作認領、經核准的共享記憶、互相評分、交叉
+審計及人類控制的發布流程。PeerBridge 在本機 SQLite 執行，供應商憑證不會進入對話或
+專案歷史，並以 SHA 串接訊息、決策、證據、評分、權限與交接記錄。
+
+任何獲授權的人類或 Agent 根訊息都可喚醒房間；協作會在共識、阻塞、停滯或明確上限
+停止，人類可隨時介入。
+
+| 維護者得到什麼 | PeerBridge 的做法 |
+| --- | --- |
+| 多 Agent 共用一個工作區 | 官方 coding client、供應商 API、相容 endpoint 及本機 runtime 保持各自可稽核身分。 |
+| 真正協作而非無限回覆 | 平行實作、審查、討論及發布流程會按共識、阻塞、停滯或明確上限停止。 |
+| 受治理的寫入權限 | 權限卡、核准的隔離 Git worktree、來源狀態、程式碼差異與證據由人類控制。 |
+| 可延續的專案上下文 | 只匯入使用者勾選的歷史，房間記憶、任務簡報與交接均綁定來源。 |
+| 可覆核的結論 | Agent 活動、答案、證據、互評、審計、Token 用量及過期證據警告保持可見。 |
+| 本機資料主權 | SQLite 與憑證留在操作者電腦；遠端／手機控制獨立且預設關閉。 |
 
 > 狀態：Alpha，不是 Stable。公開 API 與資料庫 schema 在 1.0 前仍可能調整。
 
@@ -33,7 +81,7 @@ API 與本機模型，不把使用者綁定在單一供應商。
 - Trust Timeline、過期證據偵測、類型化決策、任務簡報、衝突記錄及可獨立驗證的
   create-only Proof Bundle。
 - 多房間、多 Agent 平行協作；獲授權的人類或 Agent 根訊息可喚醒房間。
-- 官方客戶端、中轉站、OpenAI-compatible API 與 loopback 本機模型接入。
+- 官方客戶端、供應商 API、OpenAI-compatible endpoint 與 loopback 本機模型接入。
 - 透過 CC Switch 官方 CLI 一鍵同步已保存 Provider 的模型 Route，不複製 API Key。
 - 共享核准記憶、工作租約、Agent 互相評分、交叉審計與人工介入。
 - 按共識、阻塞、停滯、輪數及訊息上限停止的有限持續討論。

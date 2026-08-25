@@ -1,28 +1,28 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-25T14:42:02Z",
+  "generated_at_utc": "2026-08-25T15:10:56Z",
   "claims": {
-    "automatic_provider_reply_ready": true,
-    "local_alpha_acceptance_ready": true,
-    "local_alpha_release_ready": true,
-    "strict_package_gate_ready": true,
-    "operator_physical_acceptance_ready": true,
+    "automatic_provider_reply_ready": false,
+    "local_alpha_acceptance_ready": false,
+    "local_alpha_release_ready": false,
+    "strict_package_gate_ready": false,
+    "operator_physical_acceptance_ready": false,
     "remote_mobile_e2e_ready": false,
-    "tests_collected": 1225,
+    "tests_collected": 25,
     "tests_failed": 0,
-    "tests_passed": 1219,
-    "tests_skipped": 6,
-    "release_certified_payload_root_sha256": "1147d469071cd9c8b10da6f1b6688319e711a8f5d43d153b7cd24e3b7d053f18",
+    "tests_passed": 25,
+    "tests_skipped": 0,
+    "release_certified_payload_root_sha256": null,
     "test_evidence": {
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
-      "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <dedicated> --junitxml <receipt>",
-      "created_at_utc": "2026-08-25T14:42:02Z",
-      "tracked_payload_root_sha256": "1147d469071cd9c8b10da6f1b6688319e711a8f5d43d153b7cd24e3b7d053f18",
-      "tests_collected": 1225,
+      "command": ".venv\\Scripts\\python.exe -m pytest tests\\test_ci_release_hardening.py tests\\test_windows_branding.py -q --basetemp <dedicated> --junitxml <receipt>",
+      "created_at_utc": "2026-08-25T15:10:55Z",
+      "tracked_payload_root_sha256": "97475c2a3d87707bfac6dc1484ac9755c10185e9fd3208935f9c63e9c80debd9",
+      "tests_collected": 25,
       "tests_failed": 0,
-      "tests_passed": 1219,
-      "tests_skipped": 6
+      "tests_passed": 25,
+      "tests_skipped": 0
     }
   },
   "peerbridge": {
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "1147d469071cd9c8b10da6f1b6688319e711a8f5d43d153b7cd24e3b7d053f18",
+    "tracked_payload_root_sha256": "97475c2a3d87707bfac6dc1484ac9755c10185e9fd3208935f9c63e9c80debd9",
     "tracked_payload_file_count": 282,
     "source_files": [
       {
@@ -56,9 +56,9 @@
         "sha256": "f805eeb108214daf5c0adec660682a5801ebf35c18055c4615d114609200ba2d"
       },
       {
-        "bytes": 13560,
+        "bytes": 13717,
         "path": ".github/workflows/ci.yml",
-        "sha256": "b1f1b19bb596994b8b8434fa767bc6d0b0bc7112eb8d6fd58c60741ce1b80e80"
+        "sha256": "b5a776814865af91e59e7819884bbeb3ec44ffbe059d3593a26ace97f0311d76"
       },
       {
         "bytes": 10577,
@@ -896,9 +896,9 @@
         "sha256": "7c77ff7b3245f149a8b400770cdc0e6e09039254574b061e91784eab27b8df11"
       },
       {
-        "bytes": 5587,
+        "bytes": 5745,
         "path": "tests/test_ci_release_hardening.py",
-        "sha256": "757500f0024309377f6191e8a4724f40c09dfe701c938c365312ee04db499bc1"
+        "sha256": "e0bdea6d2aa84a07742b1624e3ec1ac7edae00f713d690f258ba080fb47cadca"
       },
       {
         "bytes": 10823,

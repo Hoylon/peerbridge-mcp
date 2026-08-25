@@ -106,13 +106,15 @@ def test_publication_credential_is_isolated_from_release_preparation() -> None:
     assert workflow.count("contents: write") == 1
     assert "contents: write" not in preparation
     assert "contents: read" in preparation
-    assert "actions/checkout@" not in publish
     assert "actions/setup-python@" not in publish
     assert "actions/download-artifact@" in publish
     assert "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6" in publish
     assert "id-token: write" in publish
     assert "attestations: write" in publish
     assert "create-storage-record: false" in publish
+    assert "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683" in publish
+    assert "fetch-depth: 0" in publish
+    assert publish.index("actions/checkout@") < publish.index("gh release create")
     assert 'gh release create "${GITHUB_REF_NAME}"' in publish
     assert workflow.count("persist-credentials: false") == workflow.count(
         "actions/checkout@"

@@ -36,9 +36,13 @@ def build_macos_seatbelt_profile(
     *,
     worktree: Path,
     scratch: Path,
-    readable_roots: Iterable[Path] = (),
 ) -> MacSandboxProfile:
-    """Return a deny-by-default profile with one writable governed worktree."""
+    """Return a minimal write-denial profile for one governed worktree.
+
+    This defense-in-depth contract deliberately allows reads. Agent-level read
+    authority remains governed by the selected provider permission tier; the
+    Seatbelt layer prevents writes outside the approved worktree and scratch.
+    """
 
     try:
         worktree = Path(worktree).resolve(strict=True)
@@ -47,40 +51,12 @@ def build_macos_seatbelt_profile(
         raise MacSandboxError("macOS sandbox directory is unavailable") from exc
     if not worktree.is_dir() or not scratch.is_dir():
         raise MacSandboxError("macOS sandbox directory is unavailable")
-    system_reads = (
-        Path("/System"),
-        Path("/usr"),
-        Path("/bin"),
-        Path("/sbin"),
-        Path("/Library"),
-        Path("/private/etc"),
-        Path("/dev"),
-    )
-    read_paths = [*system_reads, worktree, scratch, *(Path(p).resolve() for p in readable_roots)]
-    read_rules = "\n".join(
-        f"    (subpath {_scheme_string(path)})" for path in read_paths
-    )
-    # Seatbelt still needs metadata access to each ancestor in order to resolve
-    # an allowed descendant. This reveals no file contents and does not widen
-    # the governed write roots.
-    metadata_paths = sorted(
-        {parent for path in read_paths for parent in path.parents},
-        key=lambda path: (len(path.parts), str(path)),
-    )
-    metadata_rules = "\n".join(
-        f"    (literal {_scheme_string(path)})" for path in metadata_paths
-    )
     profile = f"""(version 1)
 (deny default)
 (allow process*)
 (allow sysctl-read)
-(allow mach-lookup)
-(allow signal (target self))
 (allow network-outbound)
-(allow file-read-metadata
-{metadata_rules})
-(allow file-read*
-{read_rules})
+(allow file-read*)
 (allow file-write*
     (literal {_scheme_string(worktree)})
     (subpath {_scheme_string(worktree)})
@@ -104,7 +80,6 @@ def build_macos_seatbelt_command(
     *,
     worktree: Path,
     scratch: Path,
-    readable_roots: Iterable[Path] = (),
 ) -> tuple[str, ...]:
     values = tuple(str(value) for value in command)
     if not values or any(not value or "\x00" in value for value in values):
@@ -114,7 +89,6 @@ def build_macos_seatbelt_command(
     policy = build_macos_seatbelt_profile(
         worktree=worktree,
         scratch=scratch,
-        readable_roots=readable_roots,
     )
     return (
         "/usr/bin/sandbox-exec",

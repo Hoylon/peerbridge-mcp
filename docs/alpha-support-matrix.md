@@ -10,7 +10,7 @@ does not upgrade a provider route to verified official identity.
 | Windows 10/11 | Supported candidate | Primary development and physical QA platform. |
 | Windows x64 portable ZIP | Release-gated | The published asset is accepted only after tagged-source build, fresh create-only extraction, UI self-test, frozen MCP send, initialization, and `doctor`; the executable is not code-signed. |
 | Python | 3.11+ | Dependency-free coordination core; encrypted feedback uses the optional `feedback` extra. |
-| Linux/macOS | Core portable; macOS CI-gated | The stdio/SQLite core is portable. The `macos-14` matrix runs the full core and a live Seatbelt write-denial contract; a signed/notarized macOS desktop artifact is not included. |
+| Linux/macOS | Core portable; macOS CI-gated | The stdio/SQLite core is portable. The `macos-14` matrix runs the full core and a live Seatbelt write-denial contract. That defense-in-depth profile allows reads and restricts writes to the governed worktree and scratch; it is not a read-isolation claim. A signed/notarized macOS desktop artifact is not included. |
 | Wheel and source distribution | Release-gated | Publication requires the annotated tag, a clean source tree, strict package inspection, and reproducible wheel/sdist builds. |
 | Native Windows installer | Not included | The portable ZIP is not an installer. No signed installer, automatic updater, or rollback yet. |
 | Remote/mobile | Experimental, excluded | Existing tailnet evidence is preserved but is outside the local Alpha profile. |

@@ -30,6 +30,15 @@ from peerbridge_mcp.feedback import (
 from tests._image_fixtures import PNG
 
 
+def test_packaged_support_config_matches_compiled_trust_anchor() -> None:
+    path = (
+        Path(feedback_module.__file__).with_name("release_support") / "support.json"
+    )
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == (
+        feedback_module.PACKAGED_SUPPORT_CONFIG_SHA256
+    )
+
+
 def test_default_feedback_outbox_rejects_filesystem_links(tmp_path: Path) -> None:
     project = tmp_path / "project"
     project.mkdir()

@@ -35,7 +35,7 @@ FEEDBACK_SECRET_SCHEMA = "peerbridge.feedback-secret-envelope.v1"
 FEEDBACK_RESULT_SCHEMA = "peerbridge.feedback-result.v1"
 FEEDBACK_UPLOAD_SCHEMA = "peerbridge.feedback-upload.v1"
 PACKAGED_SUPPORT_CONFIG_SHA256 = (
-    "014b829cc465f486be15ce7f20fefde0b927238bb70356b6df4910027adaaeca"
+    "73f586cfeadea78cd530d3bde2f3c11452c86a050eb95005cbd358e9400032e3"
 )
 PACKAGED_SUPPORT_PUBLIC_KEY_SHA256 = (
     "6c99aa67bf12d01cd8c231b67533f311a98de710ee4263d72358b9b97010ef53"

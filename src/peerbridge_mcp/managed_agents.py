@@ -51,6 +51,7 @@ MAX_ARGUMENT_CHARS = 4_096
 MAX_ENVIRONMENT_ENTRIES = 128
 MAX_ENVIRONMENT_VALUE_CHARS = 32_767
 MAX_USAGE_RECORDS_PER_SESSION = 16
+MAX_OUTPUT_DRAIN_SECONDS = 10.0
 ACPX_OBSERVE_TIMEOUT_SECONDS = 180
 ACPX_OBSERVE_PROFILES: Mapping[str, tuple[str, str]] = {
     "kimi-code": ("kimi", "kimi"),
@@ -1019,8 +1020,10 @@ class ManagedAgentSession:
         assert process is not None
         return_code = process.wait()
         release_process_tree(process)
+        drain_deadline = time.monotonic() + MAX_OUTPUT_DRAIN_SECONDS
         for reader in tuple(self._reader_threads):
-            reader.join(timeout=2.0)
+            remaining = max(0.0, drain_deadline - time.monotonic())
+            reader.join(timeout=remaining)
         readers_drained = all(not reader.is_alive() for reader in self._reader_threads)
         with self._lock:
             self._return_code = int(return_code)

@@ -6,5 +6,5 @@
   "public_key_path": "peerbridge-support-public.pub",
   "public_key_sha256": "6c99aa67bf12d01cd8c231b67533f311a98de710ee4263d72358b9b97010ef53",
   "recipient_label": "PeerBridge private support",
-  "privacy_url": "https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.5.2/docs/feedback-privacy.md"
+  "privacy_url": "https://github.com/hoylon/peerbridge-mcp/blob/v0.1.0-alpha.5.3/docs/feedback-privacy.md"
 }

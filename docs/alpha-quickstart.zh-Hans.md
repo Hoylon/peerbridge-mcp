@@ -16,7 +16,7 @@ PeerBridge 把 Codex、Claude Code、Grok、Kimi、DeepSeek、Gemini、本地模
 ### Windows 便携版（推荐）
 
 从 GitHub Alpha 正式发布页下载
-`PeerBridgeControlRoom-0.1.0a5.post2-windows-x64-portable.zip`，完整解压到可写入的文件夹，
+`PeerBridgeControlRoom-0.1.0a5.post3-windows-x64-portable.zip`，完整解压到可写入的文件夹，
 再双击 `Launch PeerBridge.cmd`。程序会把本地工作区放在
 `%LOCALAPPDATA%\PeerBridge\workspace`；压缩包不包含 provider 凭据或私人运行数据。
 

@@ -7,6 +7,29 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.5.3] - 2026-08-25
+
+### Added
+
+- A versioned, exact-identity Agent adapter registry for Codex, Claude Code, Grok, and
+  Kimi Code. Capabilities are evaluated per adapter instead of being reduced to the
+  weakest provider in a room.
+- Provider-native interactive approval for Codex app-server JSON-RPC, Claude Code
+  `can_use_tool` stream-json, and Grok/Kimi ACP permission requests.
+- Modern and Pixel approval cards with Allow once, Allow for session, and Deny actions,
+  plus the Ask for approval, Delegate approval, and Full access composer modes.
+- Real Pixel and Modern screenshots in both first-run and in-app appearance selection.
+- A three-language first-run chooser and quick-start tutorial.
+
+### Security
+
+- Removed title-based approval grant reuse; provider-native session rules now own exact
+  session grant scope.
+- Restricted Claude session permission suggestions to same-tool, non-wildcard session
+  rules and made the normalized scope visible before approval.
+- Capped pending approvals and Claude/ACP approval workers at 16 per session.
+- Completed a post-remediation Codex Security diff scan with zero surviving findings.
+
 ## [0.1.0-alpha.5.2] - 2026-08-23
 
 ### Added
@@ -271,7 +294,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.2...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.3...HEAD
+[0.1.0-alpha.5.3]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.3
 [0.1.0-alpha.5.2]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.2
 [0.1.0-alpha.5.1]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.1
 [0.1.0-alpha.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5

@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-08-25T08:16:27Z",
+  "generated_at_utc": "2026-08-25T08:31:53Z",
   "claims": {
     "automatic_provider_reply_ready": false,
     "local_alpha_acceptance_ready": false,
@@ -17,8 +17,8 @@
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "command": ".venv\\Scripts\\python.exe -m pytest -q --basetemp <dedicated> --junitxml <receipt>",
-      "created_at_utc": "2026-08-25T08:16:26Z",
-      "tracked_payload_root_sha256": "9a0cb5e6a1e077e2ee88fdd99b01410d067efe8bc6fb48cb7066b38345f8e892",
+      "created_at_utc": "2026-08-25T08:31:52Z",
+      "tracked_payload_root_sha256": "fde1ec0671d524b7c08ccfb93c80b2260fa797c37cc703dc8c4d5ae19af48154",
       "tests_collected": 1215,
       "tests_failed": 0,
       "tests_passed": 1209,
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "9a0cb5e6a1e077e2ee88fdd99b01410d067efe8bc6fb48cb7066b38345f8e892",
+    "tracked_payload_root_sha256": "fde1ec0671d524b7c08ccfb93c80b2260fa797c37cc703dc8c4d5ae19af48154",
     "tracked_payload_file_count": 273,
     "source_files": [
       {
@@ -446,9 +446,9 @@
         "sha256": "5f7a6dfb4f95e66fcf6eceeb1b1d3f73a14b1a2422dd82074b8257c3e3d4cf01"
       },
       {
-        "bytes": 3861,
+        "bytes": 3008,
         "path": "src/peerbridge_mcp/macos_sandbox.py",
-        "sha256": "87a06bf3bbcd6e51faca77d3630fd856a1b1dd84316b047ebade52e8b6a9387d"
+        "sha256": "8348b7698639e66ed027fd47e6af8cf78d9d33cd1b84f5a1a919aaedab7e7530"
       },
       {
         "bytes": 51895,
@@ -996,9 +996,9 @@
         "sha256": "b2ee1a62bcbb665cbfc8ddb988fe5c98edfbdaaeb627d54ff9f552acc2594d6d"
       },
       {
-        "bytes": 3102,
+        "bytes": 3149,
         "path": "tests/test_macos_sandbox.py",
-        "sha256": "0de4279ed17722b197953fe9267c924df0924a643d3da0720dba575b436dd064"
+        "sha256": "68d3e321fc89d545cb814a351f69ede906e8e7b5c997a121672d7e30c560bd38"
       },
       {
         "bytes": 80378,
@@ -1318,9 +1318,9 @@
         "sha256": "33e0ee715ecd58533fce7f1b724a5620ad28cb89fa31d4e1bcad291ea9667b6e"
       },
       {
-        "bytes": 13688,
+        "bytes": 13824,
         "path": "docs/alpha-support-matrix.md",
-        "sha256": "f40ff92a46b02b00ea8dced30e9680790ee00d6f382d9d52b4682306d73a659e"
+        "sha256": "ebd872ece33696e5eccf9ab7c7b87015c5829a6d9b302479400087ab44f2b1d9"
       },
       {
         "bytes": 5282,

@@ -351,7 +351,7 @@ def _prompt_for(
         for item in raw_history:
             if (
                 not isinstance(item, Mapping)
-                or item.get("role") not in {"user", "assistant"}
+                or item.get("role") not in {"system", "user", "assistant"}
                 or not isinstance(item.get("content"), str)
             ):
                 raise SupervisorError("room context message is invalid")
@@ -361,7 +361,9 @@ def _prompt_for(
             "bounded same-room history, not a new request. Use them for continuity and "
             "do not claim they came from another room. Context receipt: "
             f"count={int(raw_receipt.get('history_message_count') or 0)}, "
+            f"memory_count={int(raw_receipt.get('memory_record_count') or 0)}, "
             f"sha256={str(raw_receipt.get('history_sha256') or '')}, "
+            f"context_sha256={str(raw_receipt.get('context_sha256') or '')}, "
             f"truncated={str(bool(raw_receipt.get('history_truncated'))).lower()}."
         )
     system_message = {
@@ -548,6 +550,13 @@ class MailboxSupervisor:
     def _runner_for(self, route: RouteRuntime, config: RunnerConfig) -> Runner:
         if self._runner_factory is not None:
             return self._runner_factory(config)
+        if (
+            route.secret_backend == "windows-credential-manager"
+            and route.client_name == "claude-native"
+        ):
+            from .claude_native_runner import ClaudeNativeWcmRunner
+
+            return ClaudeNativeWcmRunner(config, runtime_admitted=True)
         if route.secret_backend == "cc-switch":
             from .ccswitch_runner import CcSwitchRunner
 
@@ -646,7 +655,9 @@ class MailboxSupervisor:
             session_id=bridge.session_id,
             agent_id=route.agent_id,
             identity_capability_path=identity_capability.path,
-            allowed_tools=DEFAULT_ALLOWED_TOOLS if member is not None else (),
+            allowed_tools=(
+                ROOM_RUNNER_CAPABILITY_TOOLS if member is not None else ()
+            ),
             response_only_fallback_on_tool_error=True,
             timeout_seconds=(
                 float(route.inference_timeout_seconds)
@@ -973,7 +984,11 @@ class MailboxSupervisor:
                          ON s.scope=d.scope AND s.message_id=d.message_id
                         AND s.agent_id=d.agent_id AND s.attempt_count=d.attempt_count
                       WHERE m.scope=? AND m.recipient!='*'
-                        AND m.sender!=m.recipient AND m.reply_to IS NULL
+                        AND m.sender!=m.recipient
+                        AND (m.reply_to IS NULL OR (
+                            m.discussion_id IS NOT NULL
+                            AND m.discussion_role='prompt'
+                        ))
                         AND m.route_request_sha256 IS NOT NULL
                         AND r.message_id IS NULL
                         AND (d.status IS NULL OR d.status NOT IN ('completed', 'failed'))
@@ -1239,7 +1254,7 @@ class MailboxSupervisor:
             )
         claimed_count += len(jobs)
 
-        completed = retryable = 0
+        completed = retryable = discussions_advanced = 0
         if jobs:
             workers = min(self.max_parallel_dispatches, len(jobs))
             try:
@@ -1268,18 +1283,29 @@ class MailboxSupervisor:
                         completed += int(outcome.completed)
                         retryable += int(outcome.retryable_failure)
                         terminal += int(outcome.terminal_failure)
+                        # Free discussions enqueue peer reactions as soon as
+                        # one response completes. This does not interrupt any
+                        # in-flight route: the follow-up remains pending until
+                        # a later supervisor cycle can admit that exact route.
+                        discussion_result = self._control.advance_discussions(
+                            {"limit": 25}
+                        )
+                        discussions_advanced += int(
+                            discussion_result.get("count") or 0
+                        )
             finally:
                 for job in jobs:
                     if not job.runtime_admission_transferred.is_set():
                         job.runtime_admission.close()
         discussion_result = self._control.advance_discussions({"limit": 25})
+        discussions_advanced += int(discussion_result.get("count") or 0)
         return CycleResult(
             len(routes),
             claimed_count,
             completed,
             retryable,
             terminal,
-            int(discussion_result.get("count") or 0),
+            discussions_advanced,
         )
 
     def close(self) -> None:

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PeerBridge Workbench</title>
-  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260825-18">
+  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260827-21">
 </head>
 <body>
   <div id="access-gate" class="access-gate" hidden>
@@ -93,6 +93,7 @@
           <span id="connection-state" class="connection-state"><i></i><span data-i18n="connecting">連接中</span></span>
           <button id="chat-home" class="icon-button" type="button" data-view="chat" data-i18n-title="back_to_chat" title="返回對話" aria-label="Back to chat" hidden>←</button>
           <button id="announcement-button" class="icon-button notification-button" type="button" data-view="announcement" data-i18n-title="announcement" title="公告" aria-label="Announcements"><span class="symbol-icon" aria-hidden="true">🔔︎</span><span id="announcement-unread" class="notification-count" hidden>0</span></button>
+          <button id="update-check-button" class="icon-button" type="button" data-i18n-title="check_updates" title="檢查更新" aria-label="Check for updates">⇧</button>
           <button id="refresh-button" class="icon-button" type="button" title="Refresh">↻</button>
           <button id="chat-focus-button" class="icon-button" type="button" data-i18n-title="fullscreen" title="專注對話" aria-label="Focus chat">⛶</button>
           <button id="inspector-toggle" class="icon-button" type="button" aria-label="Context">☷</button>
@@ -134,7 +135,7 @@
             <details id="automation-menu" class="automation-menu">
               <summary id="automation-label">--</summary>
               <div class="automation-popover">
-                <label><span data-i18n="automation_mode">自動模式</span><select id="automation-mode"><option value="off" data-i18n="automation_off_short">關閉</option><option value="once" data-i18n="automation_once_short">一輪</option><option value="discussion" data-i18n="automation_discussion_short">討論</option></select></label>
+                <label><span data-i18n="automation_mode">自動模式</span><select id="automation-mode"><option value="off" data-i18n="automation_off_short">關閉</option><option value="once" data-i18n="automation_once_short">一輪</option><option value="discussion" data-i18n="automation_discussion_short">並行回合</option><option value="free" data-i18n="automation_free_short">自由討論</option><option value="goal" data-i18n="automation_goal_short">直到目標完成</option></select></label>
                 <div class="automation-limits">
                   <label><span data-i18n="max_rounds">最多回合</span><input id="automation-rounds" type="number" min="1" max="20" value="4"></label>
                   <label><span data-i18n="max_messages">最多訊息</span><input id="automation-messages" type="number" min="2" max="200" value="40"></label>
@@ -151,6 +152,7 @@
             </details>
           </div>
           <textarea id="message-body" rows="2" maxlength="20000" data-i18n-placeholder="composer_placeholder" placeholder="向房間發送訊息"></textarea>
+          <div id="slash-palette" class="slash-palette" role="listbox" hidden></div>
           <div id="attachment-list" class="attachment-list" aria-live="polite"></div>
           <div class="composer-toolbar">
             <div class="composer-options">
@@ -491,6 +493,9 @@
         <div class="seat-management">
           <div class="panel-section-heading"><span data-i18n="manage_seats">管理席位</span></div>
           <label class="compact-field"><span data-i18n="agent">Agent</span><select id="seat-agent"></select></label>
+          <label class="compact-field"><span data-i18n="provider">供應商</span><select id="seat-provider"></select></label>
+          <label class="compact-field"><span data-i18n="model">模型</span><select id="seat-model"></select></label>
+          <label class="compact-field"><span data-i18n="reasoning_mode">推理強度</span><select id="seat-reasoning"></select></label>
           <label class="compact-field"><span data-i18n="route">路由</span><select id="seat-route"></select></label>
           <label class="compact-field"><span data-i18n="role">角色</span><select id="seat-role"></select></label>
           <button id="seat-add" class="primary-button full-width" type="button" data-i18n="add_seat">加入席位</button>
@@ -582,6 +587,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="/assets/app.js?v=alpha52-20260825-18" defer></script>
+  <script src="/assets/app.js?v=alpha52-20260827-21" defer></script>
 </body>
 </html>

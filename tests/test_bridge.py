@@ -824,6 +824,51 @@ def test_room_prompt_context_excludes_human_messages_for_other_agents(
     assert beta_context["receipt"]["visibility_filter"].startswith("recipient_self")
 
 
+def test_room_prompt_context_injects_active_room_memory_anchor(tmp_path: Path) -> None:
+    human = make_bridge(tmp_path, "human-operator")
+    human.create_room({"room_id": "memory-context", "name": "Memory context"})
+    human.join_room({"room_id": "memory-context", "agent_id": "alpha"})
+    memory = human.record_memory(
+        {
+            "visibility": "room",
+            "room_id": "memory-context",
+            "title": "Current objective",
+            "body": "Continue the verified Phase-A objective without opening holdout data.",
+            "record_type": "CONSTRAINT",
+        }
+    )
+    human.record_memory(
+        {
+            "visibility": "private",
+            "room_id": "memory-context",
+            "title": "Private note",
+            "body": "PRIVATE-MEMORY-MUST-NOT-LEAK",
+        }
+    )
+    current = human.send_message(
+        {
+            "room_id": "memory-context",
+            "recipient": "alpha",
+            "task_id": "memory-context-task",
+            "subject": "Continue",
+            "body": "Use the durable room anchor.",
+        }
+    )
+    alpha = make_bridge(tmp_path, "alpha")
+    context = alpha.room_prompt_context(current["message_id"])
+
+    assert context["messages"][0]["role"] == "system"
+    assert "Current objective" in context["messages"][0]["content"]
+    assert "PRIVATE-MEMORY-MUST-NOT-LEAK" not in json.dumps(context)
+    assert context["receipt"]["schema"] == "peerbridge.room-prompt-context.v2"
+    assert context["receipt"]["memory_record_count"] == 1
+    assert context["receipt"]["memory_injected"] is True
+    assert context["receipt"]["history_message_count"] == 0
+    assert context["receipt"]["memory_sha256"] == stable_sha256(
+        [{"memory_id": memory["memory_id"], "memory_sha256": memory["memory_sha256"]}]
+    )
+
+
 def test_nonhuman_room_catalog_and_membership_reads_are_visibility_scoped(
     tmp_path: Path,
 ) -> None:
@@ -2178,6 +2223,307 @@ def test_bounded_discussion_advances_once_then_stops_on_consensus(
         assert row["discussion_sha256"] == stable_sha256(
             Bridge._discussion_row_payload(row)
         )
+
+
+def test_free_discussion_advances_on_first_reply_without_interrupting_busy_peer(
+    tmp_path: Path,
+) -> None:
+    human, alpha, beta = _automated_room(tmp_path, room_id="free-room")
+    human.set_room_automation(
+        {
+            "room_id": "free-room",
+            "mode": "free",
+            "max_rounds": 10,
+            "max_messages": 40,
+            "stagnation_rounds": 3,
+        }
+    )
+    posted = human.post_room_message(
+        {
+            "room_id": "free-room",
+            "task_id": "free-discussion",
+            "subject": "Discuss without a barrier",
+            "body": "React as soon as a peer adds new evidence.",
+        }
+    )
+    assert posted["automation_mode"] == "free"
+    with sqlite3.connect(beta.db_path) as connection:
+        beta_route = connection.execute(
+            """SELECT route_profile_id FROM room_memberships
+                 WHERE scope=? AND room_id='free-room' AND agent_id=?""",
+            (beta.scope, beta.agent_id),
+        ).fetchone()[0]
+    beta_claim = beta.claim_message_dispatch(
+        {
+            "room_id": "free-room",
+            "require_route": True,
+            "route_profile_id": beta_route,
+        }
+    )
+    assert beta_claim["claimed"] is True
+
+    _complete_discussion_prompt(alpha, "free-room", "CONTINUE")
+    coordinator = make_bridge(
+        tmp_path, "mailbox-supervisor", discussion_coordinator=True
+    )
+    advanced = coordinator.advance_discussions({"room_id": "free-room"})
+    assert advanced["count"] == 1
+    assert advanced["advanced"][0]["trigger_sender"] == alpha.agent_id
+    assert advanced["advanced"][0]["new_prompt_count"] == 1
+
+    # The new event is queued for beta while beta's original inference keeps
+    # its lease. MailboxSupervisor plans at most one request for each exact
+    # runtime route per cycle and does not begin another cycle until the
+    # current jobs finish.
+    with sqlite3.connect(beta.db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        followup = connection.execute(
+            """SELECT * FROM messages
+                 WHERE discussion_id=? AND discussion_role='prompt'
+                   AND recipient=? AND reply_to IS NOT NULL""",
+            (posted["discussion_id"], beta.agent_id),
+        ).fetchone()
+        original_dispatch = connection.execute(
+            """SELECT status FROM message_dispatches
+                 WHERE message_id=? AND agent_id=?""",
+            (beta_claim["message"]["message_id"], beta.agent_id),
+        ).fetchone()
+    assert followup is not None
+    assert "React as soon as a peer adds new evidence." in followup["body"]
+    assert original_dispatch["status"] == "claimed"
+
+    beta_body = "Beta finished the original task.\n\nPEERBRIDGE_SIGNAL: CONTINUE"
+    beta_receipt = trust_dispatch_result(beta, beta_claim, beta_body)
+    beta.complete_message_dispatch(
+        {
+            "message_id": beta_claim["message"]["message_id"],
+            "lease_token": beta_claim["lease_token"],
+            "body": beta_body,
+            "inference_receipt_sha256": beta_receipt,
+        }
+    )
+    next_claim = beta.claim_message_dispatch(
+        {
+            "room_id": "free-room",
+            "require_route": True,
+            "route_profile_id": beta_route,
+        }
+    )
+    assert next_claim["claimed"] is True
+    assert next_claim["message"]["message_id"] == followup["message_id"]
+
+
+def test_goal_discussion_has_no_round_or_message_limit(tmp_path: Path) -> None:
+    human, alpha, _beta = _automated_room(tmp_path, room_id="goal-room")
+    policy = human.set_room_automation(
+        {
+            "room_id": "goal-room",
+            "mode": "goal",
+            "max_rounds": 20,
+            "max_messages": 200,
+            "stagnation_rounds": 3,
+        }
+    )
+    assert policy["mode"] == "goal"
+    assert policy["max_rounds"] == 0
+    assert policy["max_messages"] == 0
+
+    posted = human.post_room_message(
+        {
+            "room_id": "goal-room",
+            "task_id": "goal-discussion",
+            "subject": "Continue until the objective is complete",
+            "body": "Work asynchronously without a finite round cap.",
+        }
+    )
+    assert posted["automation_mode"] == "goal"
+    _complete_discussion_prompt(alpha, "goal-room", "CONTINUE")
+    coordinator = make_bridge(
+        tmp_path, "mailbox-supervisor", discussion_coordinator=True
+    )
+    advanced = coordinator.advance_discussions({"room_id": "goal-room"})
+    assert advanced["count"] == 1
+    assert advanced["advanced"][0]["status"] == "active"
+    assert advanced["advanced"][0]["stop_reason"] is None
+
+    state = human.get_room_automation({"room_id": "goal-room"})
+    assert state["max_rounds"] == 0
+    assert state["max_messages"] == 0
+
+
+def test_free_discussion_stops_only_after_each_peer_signals_consensus(
+    tmp_path: Path,
+) -> None:
+    human, alpha, beta = _automated_room(tmp_path, room_id="free-consensus")
+    human.set_room_automation(
+        {
+            "room_id": "free-consensus",
+            "mode": "free",
+            "max_rounds": 10,
+            "max_messages": 40,
+            "stagnation_rounds": 3,
+        }
+    )
+    posted = human.post_room_message(
+        {
+            "room_id": "free-consensus",
+            "task_id": "free-consensus-task",
+            "subject": "Ratify asynchronously",
+            "body": "Each peer must independently ratify the conclusion.",
+        }
+    )
+    coordinator = make_bridge(
+        tmp_path, "mailbox-supervisor", discussion_coordinator=True
+    )
+    final = None
+    for contribution in range(3):
+        _complete_discussion_prompt(alpha, "free-consensus", "CONSENSUS")
+        first = coordinator.advance_discussions({"room_id": "free-consensus"})
+        assert first["advanced"][0]["status"] == "active"
+        assert first["advanced"][0]["new_prompt_count"] == 1
+
+        _complete_discussion_prompt(beta, "free-consensus", "CONSENSUS")
+        final = coordinator.advance_discussions({"room_id": "free-consensus"})
+        if contribution < 2:
+            assert final["advanced"][0]["status"] == "active"
+            assert final["advanced"][0]["new_prompt_count"] == 1
+    assert final is not None
+    assert final["advanced"][0]["status"] == "completed"
+    assert final["advanced"][0]["stop_reason"] == "consensus"
+    assert final["advanced"][0]["new_prompt_count"] == 0
+    state = human.get_room_automation({"room_id": "free-consensus"})
+    assert state["active_discussion"] is None
+    with sqlite3.connect(human.db_path) as connection:
+        row = connection.execute(
+            "SELECT status FROM room_discussions WHERE discussion_id=?",
+            (posted["discussion_id"],),
+        ).fetchone()
+    assert row[0] == "completed"
+
+
+def test_free_discussion_latest_terminal_dispatch_waits_for_human(
+    tmp_path: Path,
+) -> None:
+    human, _alpha, beta = _automated_room(tmp_path, room_id="free-terminal")
+    human.set_room_automation(
+        {
+            "room_id": "free-terminal",
+            "mode": "free",
+            "max_rounds": 10,
+            "max_messages": 40,
+            "stagnation_rounds": 3,
+        }
+    )
+    posted = human.post_room_message(
+        {
+            "room_id": "free-terminal",
+            "task_id": "free-terminal-task",
+            "subject": "Fail closed",
+            "body": "A terminal route failure must not look active forever.",
+        }
+    )
+    with sqlite3.connect(beta.db_path) as connection:
+        route_id = connection.execute(
+            """SELECT route_profile_id FROM room_memberships
+                 WHERE scope=? AND room_id='free-terminal' AND agent_id=?""",
+            (beta.scope, beta.agent_id),
+        ).fetchone()[0]
+    claim = beta.claim_message_dispatch(
+        {
+            "room_id": "free-terminal",
+            "require_route": True,
+            "route_profile_id": route_id,
+        }
+    )
+    beta.fail_message_dispatch(
+        {
+            "message_id": claim["message"]["message_id"],
+            "lease_token": claim["lease_token"],
+            "error_code": "route_runtime_unavailable",
+            "retryable": False,
+        }
+    )
+    coordinator = make_bridge(
+        tmp_path, "mailbox-supervisor", discussion_coordinator=True
+    )
+    advanced = coordinator.advance_discussions({"room_id": "free-terminal"})
+    assert advanced["advanced"][0]["status"] == "waiting_human"
+    assert advanced["advanced"][0]["stop_reason"] == "agent_dispatch_failed"
+    assert advanced["advanced"][0]["failed_agent_id"] == beta.agent_id
+    with sqlite3.connect(human.db_path) as connection:
+        state = connection.execute(
+            "SELECT status, stop_reason FROM room_discussions WHERE discussion_id=?",
+            (posted["discussion_id"],),
+        ).fetchone()
+    assert state == ("waiting_human", "agent_dispatch_failed")
+
+
+def test_free_discussion_does_not_fence_another_inflight_peer(
+    tmp_path: Path,
+) -> None:
+    human, alpha, beta = _automated_room(tmp_path, room_id="free-inflight")
+    human.set_room_automation(
+        {
+            "room_id": "free-inflight",
+            "mode": "free",
+            "max_rounds": 10,
+            "max_messages": 40,
+            "stagnation_rounds": 3,
+        }
+    )
+    human.post_room_message(
+        {
+            "room_id": "free-inflight",
+            "task_id": "free-inflight-task",
+            "subject": "Let in-flight peers finish",
+            "body": "One terminal failure must not fence another valid completion.",
+        }
+    )
+
+    def claim(worker: Bridge) -> dict[str, object]:
+        with sqlite3.connect(worker.db_path) as connection:
+            route_id = connection.execute(
+                """SELECT route_profile_id FROM room_memberships
+                     WHERE scope=? AND room_id='free-inflight' AND agent_id=?""",
+                (worker.scope, worker.agent_id),
+            ).fetchone()[0]
+        return worker.claim_message_dispatch(
+            {
+                "room_id": "free-inflight",
+                "require_route": True,
+                "route_profile_id": route_id,
+            }
+        )
+
+    alpha_claim = claim(alpha)
+    beta_claim = claim(beta)
+    beta.fail_message_dispatch(
+        {
+            "message_id": beta_claim["message"]["message_id"],
+            "lease_token": beta_claim["lease_token"],
+            "error_code": "provider_http_failed",
+            "retryable": False,
+        }
+    )
+    coordinator = make_bridge(
+        tmp_path, "mailbox-supervisor", discussion_coordinator=True
+    )
+    assert coordinator.advance_discussions({"room_id": "free-inflight"})["count"] == 0
+
+    body = "Alpha completed valid work.\n\nPEERBRIDGE_SIGNAL: CONTINUE"
+    receipt = trust_dispatch_result(alpha, alpha_claim, body)
+    completed = alpha.complete_message_dispatch(
+        {
+            "message_id": alpha_claim["message"]["message_id"],
+            "lease_token": alpha_claim["lease_token"],
+            "body": body,
+            "inference_receipt_sha256": receipt,
+        }
+    )
+    assert completed["completed"] is True
+    blocked = coordinator.advance_discussions({"room_id": "free-inflight"})
+    assert blocked["advanced"][0]["status"] == "waiting_human"
+    assert blocked["advanced"][0]["failed_agent_id"] == beta.agent_id
 
 
 @pytest.mark.parametrize(

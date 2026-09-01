@@ -7,6 +7,42 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+### Added
+
+- Added free-discussion and goal-until-complete room automation with bounded dispatch,
+  stagnation, failure, and human-control state transitions.
+- Added secure native Antigravity and Claude runner adapters, inference receipts, and
+  package coverage without persisting provider credentials.
+- Added Agent Skill and MCP capability discovery, in-app update checks, clearer live
+  dispatch activity, and current-work summaries in the Modern Workbench.
+- Added an agent-readable `DESIGN.md` contract and a responsive remote workspace with room
+  navigation, Conversation / Work / Agent / Activity views, audited messages, and real
+  pause/resume/continue/stop controls.
+- Added a default-off Tailcat CLI toolkit for ephemeral ports, protected SSH proxying,
+  file transfer, SOCKS5 commands, and an explicitly gated exit-node experiment.
+
+### Changed
+
+- Improved room context allocation so approved memory and recent history retain separate
+  counts and SHA bindings instead of competing under an ambiguous combined total.
+- Expanded the remote experience from a phone-only narrow page to one shared desktop and
+  mobile information model while retaining Tailscale Serve as the production browser path.
+
+### Fixed
+
+- Applied the stable Windows AppUserModelID before Modern WebView creation and reapplied
+  the packaged large/small icons to the real top-level HWND, fixing missing taskbar branding.
+- Preserved actionable dispatch subjects and terminal activity while distinguishing stale,
+  retryable, failed, completed, and active Agent state.
+
+### Security
+
+- Kept Tailcat experimental and independently gated: every server run is foreground and
+  ephemeral, requires a caller-verified binary SHA-256 and allowed client key, rejects
+  reparse points, and never launches `no-auth-ssh`.
+- Excluded local context imports and provider-specific route helpers from the public Git
+  payload; no remote transport token is treated as PeerBridge authorization.
+
 ## [0.1.0-alpha.5.6] - 2026-08-25
 
 ### Fixed

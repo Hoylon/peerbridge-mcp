@@ -299,6 +299,8 @@ AUTOMATION_MODE_TO_KEY = {
     "off": "chat.mode.off",
     "once": "chat.mode.once",
     "discussion": "chat.mode.discussion",
+    "free": "chat.mode.free",
+    "goal": "chat.mode.goal",
 }
 DISCUSSION_STATUS_TO_KEY = {
     "active": "chat.discussion.status.active",
@@ -9686,6 +9688,9 @@ class PixelMonitor:
             self.discussion_status.set(self._t("discussion.limit_integer"))
             self.discussion_status_label.configure(fg=COLORS["red"])
             return
+        if mode == "goal":
+            max_rounds = 0
+            max_messages = 0
         self._run_room_action(
             lambda: self.human_client.set_room_automation(
                 room_id=self.selected_room_id,
@@ -9699,7 +9704,7 @@ class PixelMonitor:
             target_label=self.discussion_status_label,
             success=lambda receipt: (
                 f"AUTO // {str(receipt['mode']).upper()} // "
-                f"R{receipt['max_rounds']} M{receipt['max_messages']} "
+                f"R{receipt['max_rounds'] or '∞'} M{receipt['max_messages'] or '∞'} "
                 f"S{receipt['stagnation_rounds']}"
             ),
         )

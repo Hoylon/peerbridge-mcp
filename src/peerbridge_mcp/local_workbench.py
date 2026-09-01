@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import ctypes
 import hashlib
 import hmac
 import ipaddress
@@ -20,6 +21,7 @@ import os
 import platform
 import re
 import secrets
+import shutil
 import stat
 import subprocess
 import sys
@@ -31,6 +33,7 @@ from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import datetime
 from http import HTTPStatus
+from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -137,14 +140,18 @@ from .localization import (
 )
 from .official_agent_runtime import HybridManagedAgentManager
 from .monitor import (
+    APP_BUILD_SHA256,
     BridgeReader,
     HUMAN_AGENT_ID,
     McpHumanClient,
     ccswitch_route_specs,
+    configure_windows_app_identity,
+    release_windows_icon_handles,
 )
 from .openai_compatible_runner import RunnerError, discover_provider_models
 from .operation_queue import WORKFLOW_TEMPLATES
 from .secret_scan import redact_secrets
+from .updates import check_for_updates
 from .wsl_sandbox import clear_wsl_sandbox_probe_cache, probe_wsl_sandbox
 
 
@@ -160,6 +167,8 @@ MAX_WORKTREE_DIFF_BYTES = 512 * 1024
 MAX_WORKTREE_DIFF_FILES = 160
 MAX_WORKTREE_GIT_METADATA_BYTES = 512 * 1024
 MAX_PROVIDER_MODEL_OPTIONS = 500
+MAX_DISCOVERED_AGENT_CAPABILITIES = 240
+MAX_SKILL_MANIFEST_BYTES = 1024 * 1024
 SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
 SAFE_ROUTE = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
 SAFE_MODEL_ID = re.compile(r"[A-Za-z0-9_.:/-]{1,500}\Z")
@@ -169,6 +178,168 @@ POSIX_PRIVATE_PATH = re.compile(
     r"(?<!\w)/(?:Users|home|var|tmp|etc|private/(?:var|tmp))/[^\s\"']+"
 )
 ALLOWED_PRIORITIES = frozenset({"low", "normal", "high", "critical"})
+
+
+def _skill_frontmatter(path: Path) -> tuple[str, str, str] | None:
+    try:
+        size = path.stat().st_size
+        if size <= 0 or size > MAX_SKILL_MANIFEST_BYTES or path.is_symlink():
+            return None
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    text = raw.decode("utf-8", errors="replace")
+    name = path.parent.name
+    description = ""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            for line in text[3:end].splitlines():
+                key, separator, value = line.partition(":")
+                if not separator:
+                    continue
+                clean = value.strip().strip("'\"")
+                if key.strip() == "name" and clean:
+                    name = clean
+                elif key.strip() == "description" and clean:
+                    description = clean
+    return name[:160], description[:500], hashlib.sha256(raw).hexdigest()
+
+
+def _native_skill_roots(
+    project_root: Path, *, home: Path | None = None
+) -> tuple[tuple[str, str, Path], ...]:
+    home = home or Path.home()
+    return (
+        ("codex", "personal", home / ".codex" / "skills"),
+        ("shared", "personal", home / ".agents" / "skills"),
+        ("claude", "personal", home / ".claude" / "skills"),
+        ("grok", "personal", home / ".grok" / "skills"),
+        ("kimi", "personal", home / ".kimi" / "skills"),
+        ("codex", "project", project_root / ".codex" / "skills"),
+        ("shared", "project", project_root / ".agents" / "skills"),
+        ("claude", "project", project_root / ".claude" / "skills"),
+    )
+
+
+def _discover_native_agent_capabilities(
+    project_root: Path,
+    *,
+    home: Path | None = None,
+    run_cli: bool = True,
+) -> dict[str, Any]:
+    skills: list[dict[str, Any]] = []
+    seen_manifests: set[Path] = set()
+    for source_agent, scope, root in _native_skill_roots(project_root, home=home):
+        if not root.is_dir() or root.is_symlink():
+            continue
+        try:
+            manifests = sorted(root.rglob("SKILL.md"))
+        except OSError:
+            continue
+        for manifest in manifests:
+            if len(skills) >= MAX_DISCOVERED_AGENT_CAPABILITIES:
+                break
+            try:
+                resolved = manifest.resolve(strict=True)
+                resolved.relative_to(root.resolve(strict=True))
+            except (OSError, ValueError):
+                continue
+            if resolved in seen_manifests:
+                continue
+            seen_manifests.add(resolved)
+            parsed = _skill_frontmatter(resolved)
+            if parsed is None:
+                continue
+            name, description, source_sha256 = parsed
+            capability_id = re.sub(r"[^A-Za-z0-9_.:-]+", "-", resolved.parent.name).strip("-")
+            if not capability_id:
+                capability_id = source_sha256[:16]
+            skills.append(
+                {
+                    "kind": "skill",
+                    "capability_id": capability_id[:200],
+                    "display_name": name,
+                    "description": description,
+                    "source_agent": source_agent,
+                    "scope": scope,
+                    "source_sha256": source_sha256,
+                    "available": True,
+                }
+            )
+
+    servers: list[dict[str, Any]] = []
+    creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    codex = shutil.which("codex") if run_cli else None
+    if codex:
+        try:
+            completed = subprocess.run(
+                [codex, "mcp", "list", "--json"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+                creationflags=creation_flags,
+            )
+            payload = json.loads(completed.stdout) if completed.returncode == 0 else []
+            for item in payload if isinstance(payload, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if not SAFE_IDENTIFIER.fullmatch(name):
+                    continue
+                transport = item.get("transport") or {}
+                servers.append(
+                    {
+                        "kind": "mcp-server",
+                        "capability_id": name,
+                        "display_name": name,
+                        "source_agent": "codex",
+                        "transport": str(transport.get("type") or "unknown")[:40]
+                        if isinstance(transport, dict)
+                        else "unknown",
+                        "available": bool(item.get("enabled")),
+                    }
+                )
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            pass
+
+    claude = shutil.which("claude") if run_cli else None
+    if claude:
+        try:
+            completed = subprocess.run(
+                [claude, "mcp", "list"],
+                cwd=project_root,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+                creationflags=creation_flags,
+            )
+            for line in completed.stdout.splitlines():
+                match = re.match(r"^([A-Za-z0-9_.:-]{1,200}):.*? - ([^ ]+)", line.strip())
+                if not match:
+                    continue
+                marker = match.group(2)
+                servers.append(
+                    {
+                        "kind": "mcp-server",
+                        "capability_id": match.group(1),
+                        "display_name": match.group(1),
+                        "source_agent": "claude",
+                        "transport": "official-cli",
+                        "available": marker not in {"×", "⏸"},
+                    }
+                )
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return {
+        "skills": skills,
+        "mcp_servers": servers[:MAX_DISCOVERED_AGENT_CAPABILITIES],
+        "skill_count": len(skills),
+        "mcp_server_count": min(len(servers), MAX_DISCOVERED_AGENT_CAPABILITIES),
+    }
 ROOM_ROLE_IDS = frozenset(
     {"equal-participant", "researcher", "implementer", "reviewer", "custom"}
 )
@@ -2943,6 +3114,12 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             if set(payload) != {"request_id"}:
                 raise WorkbenchError("unsupported audit verification fields")
             result = client.call_tool("verify_audit_chain", {})
+        elif path == "/api/capabilities/discover":
+            if set(payload) != {"request_id"}:
+                raise WorkbenchError("unsupported capability discovery fields")
+            result = _discover_native_agent_capabilities(
+                self.server.config.project_root
+            )
         elif path == "/api/capability/register":
             allowed = {
                 "request_id",
@@ -3580,13 +3757,19 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 raise WorkbenchError("invalid room ID")
             if room_id.startswith("history."):
                 raise WorkbenchError("imported history rooms are read-only")
-            if mode not in {"off", "once", "discussion"}:
+            if mode not in {"off", "once", "discussion", "free", "goal"}:
                 raise WorkbenchError("invalid automation mode")
-            if not 1 <= max_rounds <= 20:
-                raise WorkbenchError("max rounds must be 1..20")
-            if not 2 <= max_messages <= 200:
-                raise WorkbenchError("max messages must be 2..200")
-            if not 1 <= stagnation <= min(5, max_rounds):
+            if mode == "goal":
+                max_rounds = 0
+                max_messages = 0
+            else:
+                if not 1 <= max_rounds <= 20:
+                    raise WorkbenchError("max rounds must be 1..20")
+                if not 2 <= max_messages <= 200:
+                    raise WorkbenchError("max messages must be 2..200")
+            if not 1 <= stagnation <= 5:
+                raise WorkbenchError("stagnation rounds are invalid")
+            if max_rounds and stagnation > max_rounds:
                 raise WorkbenchError("stagnation rounds are invalid")
             result = client.set_room_automation(
                 room_id=room_id,
@@ -3595,6 +3778,18 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 max_messages=max_messages,
                 stagnation_rounds=stagnation,
             )
+        elif path == "/api/update/check":
+            allowed = {"request_id"}
+            if set(payload) - allowed:
+                raise WorkbenchError("unsupported update-check fields")
+            result = check_for_updates(
+                current_version=__version__,
+                current_build_sha256=(
+                    APP_BUILD_SHA256
+                    if APP_BUILD_SHA256 != "unavailable"
+                    else None
+                ),
+            ).as_dict()
         elif path == "/api/room/member-role":
             allowed = {
                 "request_id",
@@ -4719,6 +4914,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "/api/room/create",
             "/api/room/member",
             "/api/room/automation",
+            "/api/update/check",
             "/api/room/member-role",
             "/api/discussion/control",
             "/api/workflow/enqueue",
@@ -4759,6 +4955,7 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "/api/appearance/save",
             "/api/preferences/save",
             "/api/audit/verify",
+            "/api/capabilities/discover",
         }:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
             return
@@ -5113,6 +5310,96 @@ def _workbench_icon() -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+WORKBENCH_WINDOW_TITLE = "PeerBridge MCP Control Room // LIVE"
+
+
+def _apply_windows_webview_icon(title: str, ico_path: Path) -> tuple[int, ...]:
+    """Apply owned icon handles to this process's visible WebView top-level window."""
+    if sys.platform != "win32" or not ico_path.is_file():
+        return ()
+    try:
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        user32.GetWindowThreadProcessId.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_ulong),
+        )
+        user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+        user32.GetWindowTextLengthW.argtypes = (ctypes.c_void_p,)
+        user32.GetWindowTextLengthW.restype = ctypes.c_int
+        user32.GetWindowTextW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_int,
+        )
+        user32.GetWindowTextW.restype = ctypes.c_int
+        user32.LoadImageW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_wchar_p,
+            ctypes.c_uint,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint,
+        )
+        user32.LoadImageW.restype = ctypes.c_void_p
+        user32.SendMessageW.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_uint,
+            ctypes.c_size_t,
+            ctypes.c_void_p,
+        )
+        user32.SendMessageW.restype = ctypes.c_ssize_t
+
+        callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+        user32.EnumWindows.argtypes = (callback_type, ctypes.c_void_p)
+        user32.EnumWindows.restype = ctypes.c_bool
+        windows: list[int] = []
+
+        @callback_type
+        def collect(hwnd: ctypes.c_void_p, _state: ctypes.c_void_p) -> bool:
+            process_id = ctypes.c_ulong()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+            if int(process_id.value) != os.getpid():
+                return True
+            length = int(user32.GetWindowTextLengthW(hwnd) or 0)
+            if length <= 0:
+                return True
+            buffer = ctypes.create_unicode_buffer(length + 1)
+            user32.GetWindowTextW(hwnd, buffer, len(buffer))
+            if buffer.value == title:
+                windows.append(int(hwnd))
+            return True
+
+        user32.EnumWindows(collect, None)
+        if not windows:
+            return ()
+        handles: list[int] = []
+        for size, icon_kind in ((32, 1), (16, 0)):
+            handle = int(
+                user32.LoadImageW(
+                    None,
+                    str(ico_path),
+                    1,  # IMAGE_ICON
+                    size,
+                    size,
+                    0x0010,  # LR_LOADFROMFILE
+                )
+                or 0
+            )
+            if not handle:
+                continue
+            for hwnd in windows:
+                user32.SendMessageW(
+                    ctypes.c_void_p(hwnd),
+                    0x0080,  # WM_SETICON
+                    icon_kind,
+                    ctypes.c_void_p(handle),
+                )
+            handles.append(handle)
+        return tuple(handles)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return ()
+
+
 def run_native_workbench(
     server: WorkbenchServer,
     *,
@@ -5127,6 +5414,7 @@ def run_native_workbench(
     except Exception:
         server.server_close()
         raise
+    configure_windows_app_identity()
 
     stopped = threading.Event()
     server_thread = threading.Thread(
@@ -5143,24 +5431,47 @@ def run_native_workbench(
         server.shutdown()
 
     initial_url = workbench_url(server)
-    window = webview.create_window(
-        "PeerBridge MCP Control Room // LIVE",
-        initial_url,
-        width=1440,
-        height=900,
-        min_size=(980, 650),
-        resizable=True,
-        background_color="#f6f7f9",
-        text_select=True,
-    )
-    window.events.closed += stop_server
     server_thread.start()
+    try:
+        # Do not create a native window until every required loopback asset is
+        # actually readable. A process/listener alone is not a UI health check.
+        for asset in ("/", "/assets/app.js", "/assets/app.css"):
+            connection = HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+            try:
+                connection.request("GET", asset)
+                response = connection.getresponse()
+                body = response.read()
+            finally:
+                connection.close()
+            if response.status != HTTPStatus.OK or not body:
+                raise WorkbenchError(
+                    f"native workbench asset failed health check: {asset}"
+                )
+
+        window = webview.create_window(
+            WORKBENCH_WINDOW_TITLE,
+            initial_url,
+            width=1440,
+            height=900,
+            min_size=(980, 650),
+            resizable=True,
+            hidden=False,
+            background_color="#f6f7f9",
+            text_select=True,
+        )
+        window.events.closed += stop_server
+    except Exception:
+        stop_server()
+        server.server_close()
+        server_thread.join(timeout=5)
+        raise
     original_platform_system = platform.system
     if sys.platform == "win32":
         # Python 3.13 resolves platform.system() through WMI on Windows. Some
         # healthy machines have a stalled WMI provider, which would otherwise
         # freeze pywebview before it creates the first native window.
         platform.system = lambda: "Windows"
+    icon_handles: tuple[int, ...] = ()
     try:
         start_options: dict[str, Any] = {
             "gui": "edgechromium",
@@ -5172,14 +5483,53 @@ def run_native_workbench(
             start_options["icon"] = str(icon)
 
         def load_when_webview_ready() -> None:
-            # A newly-created WebView2 private profile can expose its native
-            # window before the first navigation is committed. Re-issuing the
-            # same loopback URL once the UI loop is ready prevents a blank
-            # first launch without widening the local capability boundary.
-            window.load_url(initial_url)
+            nonlocal icon_handles
+            show_window = getattr(window, "show", None)
+            if callable(show_window):
+                show_window()
+            if icon is not None:
+                icon_handles = _apply_windows_webview_icon(
+                    WORKBENCH_WINDOW_TITLE,
+                    icon,
+                )
+            mount_probe = """
+                (() => {
+                  const app = document.getElementById('app');
+                  const gate = document.getElementById('access-gate');
+                  const visible = (app && !app.hidden) || (gate && !gate.hidden);
+                  return Boolean(visible && document.body && document.body.innerText.trim().length > 20);
+                })()
+            """
+            mounted = False
+            for _attempt in range(8):
+                window.load_url(initial_url)
+                time.sleep(0.5)
+                try:
+                    mounted = bool(window.evaluate_js(mount_probe))
+                except Exception:
+                    mounted = False
+                if mounted:
+                    break
+            if not mounted:
+                diagnostic = """
+                    <!doctype html><html><head><meta charset="utf-8">
+                    <style>body{font:16px system-ui;margin:0;background:#f6f7f9;color:#172033}
+                    main{max-width:620px;margin:14vh auto;padding:28px;border:1px solid #ccd3df;background:white}
+                    h1{font-size:22px}p{line-height:1.6}</style></head><body><main>
+                    <h1>PeerBridge could not mount the local workspace</h1>
+                    <p>The local server is running, but WebView2 did not render the application after eight verified retries.</p>
+                    <p>Close this window and report <strong>WEBVIEW_MOUNT_TIMEOUT</strong>. No room data was changed.</p>
+                    </main></body></html>
+                """
+                load_html = getattr(window, "load_html", None)
+                if callable(load_html):
+                    load_html(diagnostic)
+                else:
+                    raise WorkbenchError("WEBVIEW_MOUNT_TIMEOUT")
 
         webview.start(load_when_webview_ready, **start_options)
     finally:
+        release_windows_icon_handles(icon_handles)
         platform.system = original_platform_system
         stop_server()
         server.server_close()

@@ -22,14 +22,31 @@ launcher credential. The backend receives it through a child-process environment
 stores only its SHA-256, and never accepts it as a command-line argument. It persists only a
 SHA-derived human agent ID and never writes the raw login to SQLite or the audit chain.
 
-The page can:
+The responsive desktop/mobile page can:
 
-- inspect scope-bound messages, tasks, registered routes, providers, and agent presence;
+- switch among visible rooms and inspect scope-bound messages, tasks, registered routes,
+  providers, Agent presence, and dispatch/tool activity;
 - send an explicit human message through the same MCP `send_message` tool as the desktop
-  control room.
+  control room;
+- pause, resume, continue, or stop an already active room discussion through the existing
+  audited `control_discussion` MCP tool.
 
 It cannot run a shell, read arbitrary files, edit provider credentials, apply a patch,
 claim a task, approve a review, or modify project files.
+
+The interface follows the same information model on a wide desktop and a phone. Desktop uses
+a persistent room rail, work timeline, and inspector. Phone uses a room drawer, compact
+Conversation / Work switch, fixed composer, and safe-area-aware controls. No voice or upload
+button is shown because the current remote backend deliberately denies microphone, camera,
+and arbitrary file permissions.
+
+## Optional Tailcat companion
+
+Tailcat support is a default-off CLI companion, not a replacement for this authenticated
+browser path. It covers ephemeral port forwarding, protected SSH proxying, file transfer,
+SOCKS5 commands, and an explicitly gated exit-node experiment. Its current browser WASM demo
+does not provide a production PeerBridge HTTP tunnel and remains DERP-relayed. See
+[experimental Tailcat remote toolkit](tailcat-remote.md) for the exact boundary and launcher.
 
 ## Start on Windows
 

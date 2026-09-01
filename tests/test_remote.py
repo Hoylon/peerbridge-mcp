@@ -25,6 +25,7 @@ from peerbridge_mcp.remote import (
     make_server,
     tailscale_self_login,
 )
+from peerbridge_mcp.monitor import McpHumanClient
 
 
 LOGIN = "operator@example.test"
@@ -237,6 +238,27 @@ def test_remote_is_loopback_only_and_requires_tailnet_identity(tmp_path: Path) -
         assert status == 403
 
 
+def test_remote_page_has_desktop_mobile_navigation_and_real_controls(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db, "scope-a")
+    with running_server(tmp_path, db, "scope-a") as port:
+        status, headers, body = request(port, "GET", "/")
+    page = body.decode("utf-8")
+    assert status == 200
+    assert headers["Content-Security-Policy"].startswith("default-src 'self'")
+    assert "class=\"mode-tabs\"" in page
+    assert "id=\"rail\"" in page
+    assert "id=\"composer\"" in page
+    assert "data-tab=\"activity\"" in page
+    assert "id=\"discussionStop\"" in page
+    assert "Tailcat · CLI" in page
+    assert "@media(max-width:760px)" in page
+    assert "__CSRF__" not in page
+    assert ACCESS not in page
+
+
 def test_health_binds_evidence_run_identity_when_enabled(tmp_path: Path) -> None:
     db = tmp_path / "bridge.sqlite3"
     seed(tmp_path, db, "scope-a")
@@ -402,13 +424,103 @@ def test_snapshot_is_scope_bound_and_redacts_secret_metadata(tmp_path: Path) -> 
         "tasks": 0,
         "routes": 1,
         "providers": 1,
+        "dispatches": 0,
     }
+    assert payload["room_id"] == "lobby"
+    assert payload["rooms"][0]["room_id"] == "lobby"
+    assert payload["dispatches"] == []
+    assert payload["automation"]["active_discussion"] is None
     assert payload["messages"][0]["body"] == "scope-local evidence"
     assert "cross-scope-marker-must-not-appear" not in serialized
     assert LOGIN not in serialized
     assert "credential_target" not in serialized
     assert "endpoint_sha256" not in serialized
     assert len(payload["snapshot_signature"]) == 64
+
+
+def test_snapshot_selects_one_safe_room(tmp_path: Path) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    bridge = seed(tmp_path, db, "scope-a")
+    bridge.create_room({"room_id": "remote-room", "name": "Remote Room"})
+    bridge.join_room(
+        {
+            "room_id": "remote-room",
+            "agent_id": "peer-agent",
+            "route_profile_id": "peer-route",
+        }
+    )
+    bridge.post_room_message(
+        {
+            "room_id": "remote-room",
+            "task_id": "room-task",
+            "subject": "Room-specific message",
+            "body": "Only this room should be rendered.",
+        }
+    )
+    with running_server(tmp_path, db, "scope-a") as port:
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/snapshot?room_id=remote-room",
+            headers=auth_headers(),
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["room_id"] == "remote-room"
+        assert [row["subject"] for row in payload["messages"]] == [
+            "Room-specific message"
+        ]
+
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/snapshot?room_id=bad%2Froom",
+            headers=auth_headers(),
+        )
+        assert status == 400
+        assert json.loads(body)["error"] == "invalid room ID"
+
+
+def test_remote_discussion_control_uses_bounded_mcp_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db, "scope-a")
+    calls: list[dict[str, object]] = []
+
+    def control(_self: McpHumanClient, **kwargs: object) -> dict[str, str]:
+        calls.append(kwargs)
+        return {
+            "status": str(kwargs["action"]),
+            "discussion_sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(McpHumanClient, "control_discussion", control)
+    with running_server(tmp_path, db, "scope-a") as port:
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/discussion/control",
+            headers=auth_headers(**{CSRF_HEADER: CSRF}),
+            payload={
+                "discussion_id": "discussion-one",
+                "action": "stop",
+                "extra_rounds": 2,
+            },
+        )
+    assert status == 200
+    assert json.loads(body) == {
+        "discussion_id": "discussion-one",
+        "discussion_sha256": "a" * 64,
+        "status": "stop",
+    }
+    assert calls == [
+        {
+            "discussion_id": "discussion-one",
+            "action": "stop",
+            "extra_rounds": 2,
+        }
+    ]
 
 
 def test_remote_message_uses_mcp_path_and_keeps_audit_valid(tmp_path: Path) -> None:

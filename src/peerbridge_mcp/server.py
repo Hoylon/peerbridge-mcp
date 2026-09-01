@@ -237,7 +237,8 @@ TOOL_SCHEMAS = [
     {
         "name": "set_room_automation",
         "description": (
-            "Set a room's auto-response mode and bounded discussion limits. "
+            "Set a room's off, once, parallel-round, free asynchronous, or unbounded goal response mode. "
+            "Goal mode ignores round and message limits while retaining explicit terminal safety conditions. "
             "Only the room creator or human operator may change it."
         ),
         "inputSchema": _object(
@@ -245,10 +246,10 @@ TOOL_SCHEMAS = [
                 "room_id": STRING,
                 "mode": {
                     "type": "string",
-                    "enum": ["off", "once", "discussion"],
+                    "enum": ["off", "once", "discussion", "free", "goal"],
                 },
-                "max_rounds": {"type": "integer", "minimum": 1, "maximum": 20},
-                "max_messages": {"type": "integer", "minimum": 2, "maximum": 200},
+                "max_rounds": {"type": "integer", "minimum": 0, "maximum": 20},
+                "max_messages": {"type": "integer", "minimum": 0, "maximum": 200},
                 "stagnation_rounds": {"type": "integer", "minimum": 1, "maximum": 5},
             },
             ["room_id", "mode"],
@@ -256,7 +257,7 @@ TOOL_SCHEMAS = [
     },
     {
         "name": "control_discussion",
-        "description": "Pause, resume, stop, or extend one bounded room discussion.",
+        "description": "Pause, resume, stop, or continue one room discussion.",
         "inputSchema": _object(
             {
                 "discussion_id": STRING,

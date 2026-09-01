@@ -4,6 +4,8 @@
   const translations = {
     "zh-Hant": {
       access_title: "無法連接本機工作台", access_body: "請由 PeerBridge 桌面程式重新開啟 Modern Workbench。",
+      check_updates: "檢查更新", checking_updates: "正在檢查更新…", update_available: "可用版本：{version}", up_to_date: "目前已是最新版", update_failed: "檢查更新失敗",
+      doing_now: "正在做什麼", registered_capability: "已註冊能力", detecting_capabilities: "正在檢測 Agent Skills 與 MCP…", no_capabilities: "沒有偵測到可用能力", capability_picker: "Skills 與 MCP", close: "關閉",
       local_workbench: "本機工作台", new_room: "新增房間", chat: "對話", back_to_chat: "返回對話", tasks: "工作板", audit: "審計與證據", all_features: "所有功能",
       recent_rooms: "最近房間", search_rooms: "搜尋房間", search_rooms_placeholder: "輸入房間名稱", clear_search: "清除搜尋", no_room_matches: "沒有符合的房間", operator: "本機操作者", connecting: "連接中", online: "本機已連線", offline: "重新連接中",
       load_older: "載入較早訊息", empty_title: "開始一個協作回合", empty_body: "向房間發送訊息，已連線的 Agent 會按房間規則處理。",
@@ -11,15 +13,15 @@
       workspace: "工作區", token_usage: "Token 使用量", room_status: "房間狀態", agents: "Agent", round: "回合", work: "工作", seats: "席位",
       messages: "訊息", sent: "已送出", send_failed: "發送失敗", copy: "複製訊息", copied: "已複製", no_operator: "請先加入此房間，才能發送訊息。",
       no_tasks: "目前沒有工作", status: "狀態", claimed_by: "負責者", total: "總計", input: "輸入", output: "輸出", cache: "快取", reasoning: "推理",
-      automation_off: "自動：關閉", automation_once: "自動：一輪", automation_discussion: "自動：討論", active: "進行中", waiting: "等待中",
-      current_round: "目前協作", connected_agents: "已連線 Agent", task_progress: "工作進度", dispatch_progress: "派送狀態", audit_events: "審計事件", evidence: "證據",
+      automation_off: "自動：關閉", automation_once: "自動：一輪", automation_discussion: "自動：並行回合", automation_free: "自動：自由討論", automation_goal: "自動：直到目標完成", active: "進行中", waiting: "等待中",
+      current_round: "目前協作", active_goal: "進行中的目標", connected_agents: "已連線 Agent", task_progress: "工作進度", dispatch_progress: "派送狀態", audit_events: "審計事件", evidence: "證據",
       room_ready: "房間已就緒", discussion_active: "協作討論進行中", one_round_ready: "單輪協作待命", activity_hint: "本機協作狀態與證據已同步", context_active: "同房上下文已啟用",
       evidence_snapshot: "本機快照", completed: "已完成", records: "筆記錄", dispatch_queue: "派送佇列", recent_tasks: "最近工作",
       work_updates: "工作更新", replies: "個回覆", participants: "位參與者", attempt: "嘗試", no_dispatches: "目前沒有派送", no_updates: "目前沒有工作更新",
       dispatch_pending: "待處理", dispatch_claimed: "執行中", dispatch_completed: "已完成", dispatch_failed: "失敗", dispatch_retry: "等待重試", files: "個附件",
       nav_workspace: "工作區", nav_governance: "治理與證據", nav_system: "系統支援", cockpit: "多智能體控制台", review: "互評", change: "變更", trust: "信任與證據", connect: "接入", memory: "記憶", feedback: "意見回饋", announcement: "公告",
       agent_runtime: "Agent 即時狀態", agent_runtime_hint: "以本機 presence、工作階段與派送事件顯示可觀察活動。", model_route: "模型／路由", current_code_diff: "目前程式碼變更", current_code_diff_hint: "只讀取本專案 Git 工作樹；秘密內容會遮蔽，輸出有大小上限。", recorded_changes: "已記錄變更", code_added: "新增", code_deleted: "刪除", diff_unavailable: "目前無法讀取 Git 變更", diff_clean: "工作樹沒有變更", diff_truncated: "只顯示部分差異", observable_activity: "可觀察活動", activity_offline: "離線", activity_idle: "在線待命", activity_running: "正在執行", activity_searching: "正在搜尋網絡", activity_reasoning: "正在思考", activity_reading: "正在讀取", activity_editing: "正在編輯", activity_waiting: "等待回覆", activity_failed: "執行失敗", activity_completed: "已完成", permission: "權限",
-      subject_placeholder: "主旨", automation_mode: "自動模式", automation_off_short: "關閉", automation_once_short: "一輪", automation_discussion_short: "討論", max_rounds: "最多回合", max_messages: "最多訊息", stagnation: "停滯回合", apply: "套用", pause: "暫停", resume: "恢復", continue: "繼續", stop: "停止", attach: "附件", refresh: "重新整理", fullscreen: "專注對話", exit_fullscreen: "退出專注對話", native_compact: "壓縮上下文", native_fork: "建立分支", native_review: "原生審查", native_review_hint: "輸入框可選填審查指示；留空則審查未提交變更。", native_actions: "官方工作階段操作",
+      subject_placeholder: "主旨", automation_mode: "自動模式", automation_off_short: "關閉", automation_once_short: "一輪", automation_discussion_short: "並行回合", automation_free_short: "自由討論", automation_goal_short: "直到目標完成", max_rounds: "最多事件", max_messages: "最多訊息", stagnation: "停滯事件", apply: "套用", pause: "暫停", resume: "恢復", continue: "繼續", stop: "停止", attach: "附件", refresh: "重新整理", fullscreen: "專注對話", exit_fullscreen: "退出專注對話", native_compact: "壓縮上下文", native_fork: "建立分支", native_review: "原生審查", native_review_hint: "輸入框可選填審查指示；留空則審查未提交變更。", native_actions: "官方工作階段操作",
       managed_sessions: "受管工作階段", session_activity: "工作階段活動", operations: "執行佇列", review_requests: "互評請求", review_results: "互評結果", recent_events: "最近事件", trust_records: "信任記錄", permissions: "權限決策", provider_connections: "供應商連線", routes: "模型路由", memory_records: "記憶記錄", briefings: "工作簡報",
       private_feedback: "私密送出", feedback_ready: "回饋入口已就緒", feedback_unavailable: "回饋設定尚未完成", feedback_body: "一般診斷會遮蔽秘密；完整憑證只會在明確同意後於本機加密。", feedback_summary_label: "問題摘要", feedback_summary_placeholder: "一句話說明問題", feedback_contact_label: "聯絡方式（選填）", feedback_contact_placeholder: "電郵或其他聯絡方式", feedback_message_label: "詳細內容", feedback_message_placeholder: "說明發生了甚麼、預期結果及重現步驟", feedback_attachment_hint: "可附畫面或診斷檔；最多 5 個，共 16 MiB。", feedback_credential_label: "完整 API Key 診斷（選填）", feedback_credential_body: "只有勾選同意後，內容才會在本機以支援公鑰加密；不會以明文送出。", feedback_credential_placeholder: "只在需要重現 Key 解析問題時填寫", feedback_credential_consent: "我明確同意在本機加密後隨本次回饋送出。", feedback_submit: "私密送出", feedback_submitting: "正在封裝及送出…", feedback_delivered: "已安全送達，案件編號", feedback_saved: "未能連線，已在本機保存封裝回饋，案件編號", feedback_required: "請填寫問題摘要及詳細內容。", feedback_consent_required: "填寫完整憑證時必須明確勾選加密同意。", feedback_encryption_unavailable: "此版本未設定支援公鑰，不能附加完整憑證。", show: "顯示", hide: "隱藏", announcement_status: "公告來源狀態", announcement_unconfigured: "尚未設定公告 HTTPS 來源；本機不會偽造公告。", announcement_disabled: "公告網絡同步已停用；目前顯示本機快取。", announcement_ready: "公告 HTTPS 來源已就緒。", announcement_updated: "公告已同步", no_announcements: "目前沒有公告", no_records: "目前沒有記錄", enabled: "已啟用", disabled: "已停用", unknown: "未提供", role: "角色", role_saved: "角色已更新", automation_saved: "自動模式已更新", action_failed: "操作失敗", remove: "移除", attachment_limit: "最多 5 個附件，每個 8 MiB，總計 16 MiB。", period_today: "今天", period_7d: "近 7 日", period_30d: "近 30 日", period_all: "全部",
       agent: "Agent", route: "路由", no_route: "不綁定路由", manage_seats: "管理席位", add_seat: "加入席位", remove_seat: "移除席位", current_member: "現有成員", seat_added: "席位已加入", seat_removed: "席位已移除", no_available_agent: "沒有可加入的 Agent", no_removable_member: "沒有可移除的成員",
@@ -33,6 +35,8 @@
     },
     "zh-Hans": {
       access_title: "无法连接本地工作台", access_body: "请从 PeerBridge 桌面程序重新打开 Modern Workbench。",
+      check_updates: "检查更新", checking_updates: "正在检查更新…", update_available: "可用版本：{version}", up_to_date: "当前已是最新版本", update_failed: "检查更新失败",
+      doing_now: "正在做什么", registered_capability: "已注册能力", detecting_capabilities: "正在检测 Agent Skills 与 MCP…", no_capabilities: "没有检测到可用能力", capability_picker: "Skills 与 MCP", close: "关闭",
       local_workbench: "本地工作台", new_room: "新建房间", chat: "对话", back_to_chat: "返回对话", tasks: "工作板", audit: "审计与证据", all_features: "所有功能",
       recent_rooms: "最近房间", search_rooms: "搜索房间", search_rooms_placeholder: "输入房间名称", clear_search: "清除搜索", no_room_matches: "没有匹配的房间", operator: "本地操作者", connecting: "连接中", online: "本机已连接", offline: "正在重新连接",
       load_older: "加载较早消息", empty_title: "开始一个协作回合", empty_body: "向房间发送消息，已连接的 Agent 会按房间规则处理。",
@@ -40,15 +44,15 @@
       workspace: "工作区", token_usage: "Token 使用量", room_status: "房间状态", agents: "Agent", round: "回合", work: "工作", seats: "席位",
       messages: "消息", sent: "已发送", send_failed: "发送失败", copy: "复制消息", copied: "已复制", no_operator: "请先加入该房间，再发送消息。",
       no_tasks: "当前没有工作", status: "状态", claimed_by: "负责人", total: "总计", input: "输入", output: "输出", cache: "缓存", reasoning: "推理",
-      automation_off: "自动：关闭", automation_once: "自动：一轮", automation_discussion: "自动：讨论", active: "进行中", waiting: "等待中",
-      current_round: "当前协作", connected_agents: "已连接 Agent", task_progress: "工作进度", dispatch_progress: "派送状态", audit_events: "审计事件", evidence: "证据",
+      automation_off: "自动：关闭", automation_once: "自动：一轮", automation_discussion: "自动：并行轮次", automation_free: "自动：自由讨论", automation_goal: "自动：直到目标完成", active: "进行中", waiting: "等待中",
+      current_round: "当前协作", active_goal: "进行中的目标", connected_agents: "已连接 Agent", task_progress: "工作进度", dispatch_progress: "派送状态", audit_events: "审计事件", evidence: "证据",
       room_ready: "房间已就绪", discussion_active: "协作讨论进行中", one_round_ready: "单轮协作待命", activity_hint: "本地协作状态与证据已同步", context_active: "同房上下文已启用",
       evidence_snapshot: "本地快照", completed: "已完成", records: "条记录", dispatch_queue: "派送队列", recent_tasks: "最近工作",
       work_updates: "工作更新", replies: "个回复", participants: "位参与者", attempt: "尝试", no_dispatches: "当前没有派送", no_updates: "当前没有工作更新",
       dispatch_pending: "待处理", dispatch_claimed: "执行中", dispatch_completed: "已完成", dispatch_failed: "失败", dispatch_retry: "等待重试", files: "个附件",
       nav_workspace: "工作区", nav_governance: "治理与证据", nav_system: "系统支持", cockpit: "多智能体控制台", review: "互评", change: "变更", trust: "信任与证据", connect: "接入", memory: "记忆", feedback: "意见反馈", announcement: "公告",
       agent_runtime: "Agent 实时状态", agent_runtime_hint: "根据本地 presence、工作阶段和派送事件显示可观察活动。", model_route: "模型／路由", current_code_diff: "当前代码变更", current_code_diff_hint: "只读取本项目 Git 工作树；秘密内容会遮蔽，输出有大小上限。", recorded_changes: "已记录变更", code_added: "新增", code_deleted: "删除", diff_unavailable: "当前无法读取 Git 变更", diff_clean: "工作树没有变更", diff_truncated: "仅显示部分差异", observable_activity: "可观察活动", activity_offline: "离线", activity_idle: "在线待命", activity_running: "正在执行", activity_searching: "正在搜索网络", activity_reasoning: "正在思考", activity_reading: "正在读取", activity_editing: "正在编辑", activity_waiting: "等待回复", activity_failed: "执行失败", activity_completed: "已完成", permission: "权限",
-      subject_placeholder: "主题", automation_mode: "自动模式", automation_off_short: "关闭", automation_once_short: "一轮", automation_discussion_short: "讨论", max_rounds: "最多轮次", max_messages: "最多消息", stagnation: "停滞轮次", apply: "应用", pause: "暂停", resume: "恢复", continue: "继续", stop: "停止", attach: "附件", refresh: "刷新", fullscreen: "专注对话", exit_fullscreen: "退出专注对话", native_compact: "压缩上下文", native_fork: "建立分支", native_review: "原生审查", native_review_hint: "输入框可选填审查指示；留空则审查未提交变更。", native_actions: "官方工作阶段操作",
+      subject_placeholder: "主题", automation_mode: "自动模式", automation_off_short: "关闭", automation_once_short: "一轮", automation_discussion_short: "并行轮次", automation_free_short: "自由讨论", automation_goal_short: "直到目标完成", max_rounds: "最多事件", max_messages: "最多消息", stagnation: "停滞事件", apply: "应用", pause: "暂停", resume: "恢复", continue: "继续", stop: "停止", attach: "附件", refresh: "刷新", fullscreen: "专注对话", exit_fullscreen: "退出专注对话", native_compact: "压缩上下文", native_fork: "建立分支", native_review: "原生审查", native_review_hint: "输入框可选填审查指示；留空则审查未提交变更。", native_actions: "官方工作阶段操作",
       managed_sessions: "受管工作阶段", session_activity: "工作阶段活动", operations: "执行队列", review_requests: "互评请求", review_results: "互评结果", recent_events: "最近事件", trust_records: "信任记录", permissions: "权限决策", provider_connections: "供应商连接", routes: "模型路由", memory_records: "记忆记录", briefings: "工作简报",
       private_feedback: "私密发送", feedback_ready: "反馈入口已就绪", feedback_unavailable: "反馈设置尚未完成", feedback_body: "一般诊断会遮蔽秘密；完整凭证只会在明确同意后于本机加密。", feedback_summary_label: "问题摘要", feedback_summary_placeholder: "用一句话说明问题", feedback_contact_label: "联系方式（选填）", feedback_contact_placeholder: "邮箱或其他联系方式", feedback_message_label: "详细内容", feedback_message_placeholder: "说明发生了什么、预期结果和复现步骤", feedback_attachment_hint: "可附截图或诊断文件；最多 5 个，共 16 MiB。", feedback_credential_label: "完整 API Key 诊断（选填）", feedback_credential_body: "只有勾选同意后，内容才会在本机使用支持公钥加密；不会以明文发送。", feedback_credential_placeholder: "只在需要复现 Key 解析问题时填写", feedback_credential_consent: "我明确同意在本机加密后随本次反馈发送。", feedback_submit: "私密发送", feedback_submitting: "正在封装并发送…", feedback_delivered: "已安全送达，工单编号", feedback_saved: "无法连接，已在本地保存封装反馈，工单编号", feedback_required: "请填写问题摘要和详细内容。", feedback_consent_required: "填写完整凭证时必须明确勾选加密同意。", feedback_encryption_unavailable: "此版本未设置支持公钥，不能附加完整凭证。", show: "显示", hide: "隐藏", announcement_status: "公告来源状态", announcement_unconfigured: "尚未设置公告 HTTPS 来源；本机不会伪造公告。", announcement_disabled: "公告网络同步已停用；当前显示本地缓存。", announcement_ready: "公告 HTTPS 来源已就绪。", announcement_updated: "公告已同步", no_announcements: "当前没有公告", no_records: "当前没有记录", enabled: "已启用", disabled: "已停用", unknown: "未提供", role: "角色", role_saved: "角色已更新", automation_saved: "自动模式已更新", action_failed: "操作失败", remove: "移除", attachment_limit: "最多 5 个附件，每个 8 MiB，总计 16 MiB。", period_today: "今天", period_7d: "近 7 日", period_30d: "近 30 日", period_all: "全部",
       agent: "Agent", route: "路由", no_route: "不绑定路由", manage_seats: "管理席位", add_seat: "加入席位", remove_seat: "移除席位", current_member: "现有成员", seat_added: "席位已加入", seat_removed: "席位已移除", no_available_agent: "没有可加入的 Agent", no_removable_member: "没有可移除的成员",
@@ -62,6 +66,8 @@
     },
     en: {
       access_title: "Local workbench unavailable", access_body: "Open Modern Workbench again from the PeerBridge desktop app.",
+      check_updates: "Check for updates", checking_updates: "Checking for updates…", update_available: "Version available: {version}", up_to_date: "You are up to date", update_failed: "Update check failed",
+      doing_now: "Current activity", registered_capability: "Registered capability", detecting_capabilities: "Detecting Agent skills and MCP…", no_capabilities: "No available capabilities detected", capability_picker: "Skills and MCP", close: "Close",
       local_workbench: "Local workbench", new_room: "New room", chat: "Chat", back_to_chat: "Back to chat", tasks: "Task board", audit: "Audit & evidence", all_features: "All features",
       recent_rooms: "Recent rooms", search_rooms: "Search rooms", search_rooms_placeholder: "Enter a room name", clear_search: "Clear search", no_room_matches: "No matching rooms", operator: "Local operator", connecting: "Connecting", online: "Local connection", offline: "Reconnecting",
       load_older: "Load earlier messages", empty_title: "Start a collaboration round", empty_body: "Post to the room and connected agents will act under the room policy.",
@@ -69,15 +75,15 @@
       workspace: "Workspace", token_usage: "Token usage", room_status: "Room status", agents: "Agents", round: "Round", work: "Work", seats: "Seats",
       messages: "Messages", sent: "Sent", send_failed: "Send failed", copy: "Copy message", copied: "Copied", no_operator: "Join this room before sending a message.",
       no_tasks: "No tasks yet", status: "Status", claimed_by: "Owner", total: "Total", input: "Input", output: "Output", cache: "Cache", reasoning: "Reasoning",
-      automation_off: "Automation: off", automation_once: "Automation: once", automation_discussion: "Automation: discussion", active: "Active", waiting: "Waiting",
-      current_round: "Current collaboration", connected_agents: "Connected agents", task_progress: "Task progress", dispatch_progress: "Dispatches", audit_events: "Audit events", evidence: "Evidence",
+      automation_off: "Automation: off", automation_once: "Automation: once", automation_discussion: "Automation: parallel rounds", automation_free: "Automation: free discussion", automation_goal: "Automation: until goal complete", active: "Active", waiting: "Waiting",
+      current_round: "Current collaboration", active_goal: "Active goal", connected_agents: "Connected agents", task_progress: "Task progress", dispatch_progress: "Dispatches", audit_events: "Audit events", evidence: "Evidence",
       room_ready: "Room ready", discussion_active: "Collaborative discussion active", one_round_ready: "One-round collaboration ready", activity_hint: "Local coordination state and evidence are synchronized", context_active: "Same-room context enabled",
       evidence_snapshot: "Local snapshot", completed: "Completed", records: "records", dispatch_queue: "Dispatch queue", recent_tasks: "Recent work",
       work_updates: "Work updates", replies: "replies", participants: "participants", attempt: "attempt", no_dispatches: "No dispatches", no_updates: "No work updates",
       dispatch_pending: "Pending", dispatch_claimed: "Running", dispatch_completed: "Completed", dispatch_failed: "Failed", dispatch_retry: "Retry queued", files: "files",
       nav_workspace: "Workspace", nav_governance: "Governance & evidence", nav_system: "System support", cockpit: "Multi-agent cockpit", review: "Peer review", change: "Changes", trust: "Trust & evidence", connect: "Connections", memory: "Memory", feedback: "Feedback", announcement: "Announcements",
       agent_runtime: "Live agent status", agent_runtime_hint: "Shows observable activity from local presence, sessions, and dispatch events.", model_route: "Model / route", current_code_diff: "Current code changes", current_code_diff_hint: "Reads only this project's Git worktree. Secrets are redacted and output is bounded.", recorded_changes: "Recorded changes", code_added: "added", code_deleted: "deleted", diff_unavailable: "Git changes are currently unavailable", diff_clean: "The worktree is clean", diff_truncated: "Only part of the diff is shown", observable_activity: "Observable activity", activity_offline: "Offline", activity_idle: "Online · idle", activity_running: "Running", activity_searching: "Searching the web", activity_reasoning: "Reasoning", activity_reading: "Reading", activity_editing: "Editing", activity_waiting: "Waiting for a reply", activity_failed: "Failed", activity_completed: "Completed", permission: "Permission",
-      subject_placeholder: "Subject", automation_mode: "Automation mode", automation_off_short: "Off", automation_once_short: "One round", automation_discussion_short: "Discussion", max_rounds: "Maximum rounds", max_messages: "Maximum messages", stagnation: "Stagnation rounds", apply: "Apply", pause: "Pause", resume: "Resume", continue: "Continue", stop: "Stop", attach: "Attach", refresh: "Refresh", fullscreen: "Focus chat", exit_fullscreen: "Exit focus chat", native_compact: "Compact context", native_fork: "Fork session", native_review: "Native review", native_review_hint: "Optionally use the input field for review instructions; leave it empty to review uncommitted changes.", native_actions: "Official session actions",
+      subject_placeholder: "Subject", automation_mode: "Automation mode", automation_off_short: "Off", automation_once_short: "One round", automation_discussion_short: "Parallel rounds", automation_free_short: "Free discussion", automation_goal_short: "Until goal complete", max_rounds: "Maximum events", max_messages: "Maximum messages", stagnation: "Stagnation events", apply: "Apply", pause: "Pause", resume: "Resume", continue: "Continue", stop: "Stop", attach: "Attach", refresh: "Refresh", fullscreen: "Focus chat", exit_fullscreen: "Exit focus chat", native_compact: "Compact context", native_fork: "Fork session", native_review: "Native review", native_review_hint: "Optionally use the input field for review instructions; leave it empty to review uncommitted changes.", native_actions: "Official session actions",
       managed_sessions: "Managed sessions", session_activity: "Session activity", operations: "Execution queue", review_requests: "Review requests", review_results: "Review results", recent_events: "Recent events", trust_records: "Trust records", permissions: "Permission decisions", provider_connections: "Provider connections", routes: "Model routes", memory_records: "Memory records", briefings: "Task briefings",
       private_feedback: "Private submission", feedback_ready: "Feedback entry is ready", feedback_unavailable: "Feedback setup is incomplete", feedback_body: "Normal diagnostics redact secrets; complete credentials are locally encrypted only after explicit consent.", feedback_summary_label: "Issue summary", feedback_summary_placeholder: "Describe the issue in one line", feedback_contact_label: "Contact (optional)", feedback_contact_placeholder: "Email or another contact method", feedback_message_label: "Details", feedback_message_placeholder: "Describe what happened, the expected result, and reproduction steps", feedback_attachment_hint: "Attach a screenshot or diagnostic file; up to 5 files and 16 MiB total.", feedback_credential_label: "Complete API key diagnostic (optional)", feedback_credential_body: "Only after explicit consent is the value encrypted locally to the support public key. Plaintext is never sent.", feedback_credential_placeholder: "Use only when reproducing a key parsing problem", feedback_credential_consent: "I explicitly consent to local encryption and inclusion with this submission.", feedback_submit: "Submit privately", feedback_submitting: "Sealing and submitting…", feedback_delivered: "Delivered securely. Case", feedback_saved: "Connection unavailable; sealed feedback saved locally. Case", feedback_required: "Enter an issue summary and details.", feedback_consent_required: "Explicit encryption consent is required when a complete credential is entered.", feedback_encryption_unavailable: "This build has no support public key, so complete credentials cannot be attached.", show: "Show", hide: "Hide", announcement_status: "Announcement source", announcement_unconfigured: "No announcement HTTPS source is configured; local mode will not fabricate announcements.", announcement_disabled: "Announcement network sync is disabled; showing the local cache.", announcement_ready: "The announcement HTTPS source is ready.", announcement_updated: "Announcements synchronized", no_announcements: "No announcements", no_records: "No records yet", enabled: "Enabled", disabled: "Disabled", unknown: "Not reported", role: "Role", role_saved: "Role updated", automation_saved: "Automation updated", action_failed: "Action failed", remove: "Remove", attachment_limit: "Up to 5 attachments, 8 MiB each and 16 MiB total.", period_today: "Today", period_7d: "Last 7 days", period_30d: "Last 30 days", period_all: "All time",
       agent: "Agent", route: "Route", no_route: "No bound route", manage_seats: "Manage seats", add_seat: "Add seat", remove_seat: "Remove seat", current_member: "Current member", seat_added: "Seat added", seat_removed: "Seat removed", no_available_agent: "No agent is available to add", no_removable_member: "No member can be removed",
@@ -512,6 +518,7 @@
       discover_first: "先讀取供應商", discover_models_first: "先讀取模型", discover_providers: "讀取供應商", discover_models: "讀取模型", save_route: "建立路由", activate_provider: "切換供應商",
       provider_setup: "直接 API／中轉／本機供應商", provider_setup_hint: "憑證只保存於本機安全儲存；PeerBridge 資料庫只記錄不可逆指紋與端點雜湊。", connection_id: "連線 ID", route_class: "路由類型", endpoint: "API 端點", official: "官方", relay: "中轉", local: "本機", save_provider: "保存供應商",
       model_route_setup: "讀取模型並建立路由", model_route_setup_hint: "模型清單由所選供應商即時回報，不會用預設名稱冒充。", provider_saved: "供應商已保存", providers_discovered: "供應商清單已更新", models_discovered: "模型清單已更新", route_saved: "模型路由已建立", provider_activated: "CC Switch 供應商已切換",
+      provider: "供應商", provider_default: "供應商預設",
       install_agent: "安裝", update_agent: "更新", install_agent_confirm: "PeerBridge 將啟動供應商的官方安裝程序。是否繼續？", agent_installer_started: "官方 Agent 安裝程序已啟動", clipboard_image_attached: "已從剪貼簿加入圖片", terminal_not_started: "終端尚未啟動", start_terminal: "啟動終端", model: "模型", reasoning_mode: "推理強度", publisher_guide: "官方安裝指南", attachment_only_message: "附件", all_session_timeline: "全部終端時間軸", attachment_type_invalid: "附件格式不受支援", attachment_count_limit: "附件最多 5 個", attachment_file_size_limit: "每個附件不可超過 8 MiB", attachment_total_size_limit: "附件總大小不可超過 16 MiB", verify_audit_chain: "驗證審計鏈", audit_chain_verified: "審計鏈驗證通過", mark_all_read: "全部標為已讀", announcements_marked_read: "公告已標為已讀", usage_truncated: "所選期間的趨勢資料已截斷", schedule_next_run: "下次執行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供應商未設定模型 API 端點", confirm_ccswitch_switch: "確認把 {app} 切換到 {provider}？", bootstrap_failed: "本機資料載入失敗；可按重新整理重試", acpx_runtime: "ACPX 執行環境", acpx_required: "Grok 與 Kimi 的持續工作階段需要 ACPX", install_dependency: "安裝依賴", dispatches: "派送", events: "事件", memories: "記憶", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "請先填寫必要的工作 ID 或證據包路徑", edit_schedule: "編輯排程", start_review_workflow: "派發互評流程", continue_history: "從此歷史繼續", history_continued: "已建立可寫續談房間"
     },
     "zh-Hans": {
@@ -520,6 +527,7 @@
       discover_first: "先读取供应商", discover_models_first: "先读取模型", discover_providers: "读取供应商", discover_models: "读取模型", save_route: "创建路由", activate_provider: "切换供应商",
       provider_setup: "直接 API／中转／本地供应商", provider_setup_hint: "凭证只保存在本地安全存储；PeerBridge 数据库仅记录不可逆指纹和端点哈希。", connection_id: "连接 ID", route_class: "路由类型", endpoint: "API 端点", official: "官方", relay: "中转", local: "本地", save_provider: "保存供应商",
       model_route_setup: "读取模型并创建路由", model_route_setup_hint: "模型清单由所选供应商实时返回，不会使用预设名称冒充。", provider_saved: "供应商已保存", providers_discovered: "供应商列表已更新", models_discovered: "模型列表已更新", route_saved: "模型路由已创建", provider_activated: "CC Switch 供应商已切换",
+      provider: "供应商", provider_default: "供应商默认",
       install_agent: "安装", update_agent: "更新", install_agent_confirm: "PeerBridge 将启动供应商的官方安装程序。是否继续？", agent_installer_started: "官方 Agent 安装程序已启动", clipboard_image_attached: "已从剪贴板添加图片", terminal_not_started: "终端尚未启动", start_terminal: "启动终端", model: "模型", reasoning_mode: "推理强度", publisher_guide: "官方安装指南", attachment_only_message: "附件", all_session_timeline: "全部终端时间轴", attachment_type_invalid: "附件格式不受支持", attachment_count_limit: "附件最多 5 个", attachment_file_size_limit: "每个附件不能超过 8 MiB", attachment_total_size_limit: "附件总大小不能超过 16 MiB", verify_audit_chain: "验证审计链", audit_chain_verified: "审计链验证通过", mark_all_read: "全部标为已读", announcements_marked_read: "公告已标为已读", usage_truncated: "所选期间的趋势数据已截断", schedule_next_run: "下次执行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供应商未设置模型 API 端点", confirm_ccswitch_switch: "确认将 {app} 切换到 {provider}？", bootstrap_failed: "本地数据加载失败；可点击刷新重试", acpx_runtime: "ACPX 运行环境", acpx_required: "Grok 和 Kimi 的持续工作阶段需要 ACPX", install_dependency: "安装依赖", dispatches: "派送", events: "事件", memories: "记忆", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "请先填写必要的工作 ID 或证据包路径", edit_schedule: "编辑计划", start_review_workflow: "派发互评流程", continue_history: "从此历史继续", history_continued: "已创建可写续聊房间"
     },
     en: {
@@ -528,6 +536,7 @@
       discover_first: "Discover providers first", discover_models_first: "Discover models first", discover_providers: "Discover providers", discover_models: "Discover models", save_route: "Create route", activate_provider: "Switch provider",
       provider_setup: "Direct API, relay, or local provider", provider_setup_hint: "Credentials stay in local secure storage. The PeerBridge database stores only irreversible fingerprints and endpoint hashes.", connection_id: "Connection ID", route_class: "Route class", endpoint: "API endpoint", official: "Official", relay: "Relay", local: "Local", save_provider: "Save provider",
       model_route_setup: "Discover models and create a route", model_route_setup_hint: "The selected provider advertises the model list live; PeerBridge does not invent model names.", provider_saved: "Provider saved", providers_discovered: "Provider list updated", models_discovered: "Model list updated", route_saved: "Model route created", provider_activated: "CC Switch provider changed",
+      provider: "Provider", provider_default: "Provider default",
       install_agent: "Install", update_agent: "Update", install_agent_confirm: "PeerBridge will start the publisher's official installer. Continue?", agent_installer_started: "Official Agent installer started", clipboard_image_attached: "Image attached from clipboard", terminal_not_started: "Terminal not started", start_terminal: "Start terminal", model: "Model", reasoning_mode: "Reasoning effort", publisher_guide: "Official installation guide", attachment_only_message: "Attachment", all_session_timeline: "All-terminal timeline", attachment_type_invalid: "This attachment type is not supported", attachment_count_limit: "Up to 5 attachments", attachment_file_size_limit: "Each attachment must be no larger than 8 MiB", attachment_total_size_limit: "Attachments must total no more than 16 MiB", verify_audit_chain: "Verify audit chain", audit_chain_verified: "Audit chain verified", mark_all_read: "Mark all read", announcements_marked_read: "Announcements marked as read", usage_truncated: "Trend data is truncated for the selected period", schedule_next_run: "Next run", expires: "Expires", consumed: "Consumed", ccswitch_missing_endpoint: "This provider has no model API endpoint", confirm_ccswitch_switch: "Switch {app} to {provider}?", bootstrap_failed: "Local data failed to load. Use Refresh to retry.", acpx_runtime: "ACPX runtime", acpx_required: "Grok and Kimi persistent sessions require ACPX", install_dependency: "Install dependency", dispatches: "Dispatches", events: "Events", memories: "Memories", reason_low: "Low", reason_medium: "Medium", reason_high: "High", reason_xhigh: "Extra high", reason_max: "Maximum", proof_required: "Enter the required task ID or proof-bundle path first", edit_schedule: "Edit schedule", start_review_workflow: "Start review workflow", continue_history: "Continue from this history", history_continued: "Writable continuation room created"
     }
   };
@@ -537,7 +546,7 @@
     view: "chat", signature: "", etag: "", timer: null, loading: false, older: [], firstRender: true, tutorialAutoChecked: false,
     attachments: [], managedAttachments: [], managedTurnAttachments: Object.create(null), feedbackAttachments: [],
     cockpitMode: "grid", selectedSessionId: "", sessionDetailTab: "terminal", usagePeriod: "30d", chatFocus: false, roomSearch: "", ccswitchProviders: [], ccswitchModels: [], providerModels: [], historyContinuationSourceRoom: "",
-    worktreeDiff: null, worktreeDiffLoading: false, agentLaunchSelections: Object.create(null), preparedApprovalMode: "",
+    worktreeDiff: null, worktreeDiffLoading: false, agentLaunchSelections: Object.create(null), preparedApprovalMode: "", discoveredCapabilities: null, capabilityDiscoveryPending: false,
     renderSignatures: Object.create(null)
   };
   const MAX_DIFF_RENDER_LINES = 4000;
@@ -690,6 +699,7 @@
     const sessionEvents = (data.cockpit?.events || []).filter((row) => row.session_id && row.session_id === session?.session_id);
     const event = latestByTime(sessionEvents, ["created_utc"]);
     const dispatch = latestByTime((data.dispatches || []).filter((row) => row.agent_id === agentId));
+    const dispatchMessage = (data.messages || []).find((row) => row.message_id === dispatch?.message_id) || null;
     const work = latestByTime((data.work_updates || []).filter((row) => row.agent_id === agentId));
     const sessionState = String(session?.state || session?.status || session?.lifecycle_state || "").toLowerCase();
     const dispatchState = String(dispatch?.status || "").toLowerCase();
@@ -710,12 +720,12 @@
       summary = t("activity_stale");
     } else if ((recentObservable(dispatch) && ["claimed", "running", "active", "processing"].includes(dispatchState)) || (recentObservable(work) && ["claimed", "running", "active", "review"].includes(workState))) {
       activity = { key: "activity_running", tone: "working" };
-      summary = work?.summary || dispatch?.error_code || "";
+      summary = work?.summary || dispatchMessage?.subject || dispatch?.error_code || "";
     } else if (recentObservable(dispatch) && (dispatchState.includes("retry") || ["pending", "queued"].includes(dispatchState))) {
       activity = { key: "activity_waiting", tone: "waiting" };
     } else if ((recentObservable(dispatch, ["completed_utc", "updated_utc"]) && ["failed", "dead_letter"].includes(dispatchState)) || sessionState === "failed") {
       activity = { key: "activity_failed", tone: "danger" };
-      summary = dispatch?.error_code || session?.terminal_outcome || "";
+      summary = dispatch?.error_code || dispatchMessage?.subject || session?.terminal_outcome || "";
     } else if (presence || member?.online) {
       activity = { key: "activity_idle", tone: "online" };
       if (event) summary = event.summary || "";
@@ -835,7 +845,9 @@
     if (!response.ok) throw new Error(localizedErrorMessage(result.error || String(response.status)));
     state.etag = "";
     await fetchState(true);
-    return result;
+    return result.status === "updated" && Object.prototype.hasOwnProperty.call(result, "result")
+      ? result.result
+      : result;
   }
 
   function renderMetricStrip(containerId, rows) {
@@ -925,7 +937,134 @@
   }
 
   function automationText(mode) {
-    return t({ off: "automation_off", once: "automation_once", discussion: "automation_discussion" }[mode] || "automation_off");
+    return t({ off: "automation_off", once: "automation_once", discussion: "automation_discussion", free: "automation_free", goal: "automation_goal" }[mode] || "automation_off");
+  }
+
+  function syncAutomationLimitControls() {
+    const goalMode = byId("automation-mode").value === "goal";
+    const operatorActive = Boolean(state.data?.operator_active);
+    [["automation-rounds", "4"], ["automation-messages", "40"]].forEach(([id, fallback]) => {
+      const input = byId(id);
+      if (goalMode) {
+        if (input.value) input.dataset.lastFiniteValue = input.value;
+        input.value = "";
+        input.placeholder = "∞";
+        input.disabled = true;
+      } else {
+        input.placeholder = "";
+        if (!input.value) input.value = input.dataset.lastFiniteValue || fallback;
+        input.disabled = !operatorActive;
+      }
+    });
+  }
+
+  function slashCommands() {
+    const registered = (state.data?.capabilities || [])
+      .filter((entry) => entry.enabled !== false && ["skill", "mcp-tool"].includes(entry.kind))
+      .map((entry) => ({
+        kind: entry.kind === "skill" ? "skill" : "mcp",
+        capabilityId: entry.capability_id,
+        sourceAgent: "peerbridge",
+        displayName: entry.display_name || entry.capability_id,
+        description: t("registered_capability"),
+        capability: true
+      }));
+    const discovered = state.discoveredCapabilities || [];
+    const unique = new Map();
+    [...discovered, ...registered].forEach((entry) => {
+      const key = `${entry.kind}:${entry.sourceAgent}:${entry.capabilityId}`;
+      if (!unique.has(key)) unique.set(key, entry);
+    });
+    return [...unique.values()].map((entry) => ({
+      ...entry,
+      command: `/${entry.kind} ${entry.sourceAgent}:${entry.capabilityId}`,
+      label: `${entry.displayName} · ${entry.sourceAgent}${entry.description ? ` · ${entry.description}` : ""}`
+    }));
+  }
+
+  async function discoverSlashCapabilities() {
+    if (state.capabilityDiscoveryPending || state.discoveredCapabilities !== null) return;
+    state.capabilityDiscoveryPending = true;
+    renderSlashPalette();
+    try {
+      const result = await postAction("/api/capabilities/discover", {});
+      state.discoveredCapabilities = [
+        ...(result.skills || []).map((entry) => ({
+          kind: "skill",
+          capabilityId: entry.capability_id,
+          sourceAgent: entry.source_agent,
+          displayName: entry.display_name,
+          description: entry.description || ""
+        })),
+        ...(result.mcp_servers || []).map((entry) => ({
+          kind: "mcp",
+          capabilityId: entry.capability_id,
+          sourceAgent: entry.source_agent,
+          displayName: entry.display_name,
+          description: entry.available ? t("enabled") : t("disabled")
+        }))
+      ];
+    } catch (error) {
+      state.discoveredCapabilities = [];
+      toast(`${t("action_failed")}: ${error.message}`);
+    } finally {
+      state.capabilityDiscoveryPending = false;
+      renderSlashPalette();
+    }
+  }
+
+  function closeSlashPalette() {
+    const palette = byId("slash-palette");
+    palette.hidden = true;
+    palette.replaceChildren();
+  }
+
+  function renderSlashPalette() {
+    const input = byId("message-body");
+    const palette = byId("slash-palette");
+    const value = input.value.trimStart();
+    if (!value.startsWith("/") || value.includes("\n")) {
+      closeSlashPalette();
+      return;
+    }
+    if (state.discoveredCapabilities === null) void discoverSlashCapabilities();
+    const query = value.slice(1).toLowerCase();
+    const entries = slashCommands().filter((entry) =>
+      `${entry.command} ${entry.label}`.toLowerCase().includes(query)
+    ).slice(0, 18);
+    palette.replaceChildren();
+    const header = node("div", "slash-palette-header");
+    header.append(node("strong", "", t("capability_picker")));
+    const closeButton = node("button", "slash-palette-close", "×");
+    closeButton.type = "button";
+    closeButton.setAttribute("aria-label", t("close"));
+    closeButton.title = t("close");
+    closeButton.addEventListener("click", closeSlashPalette);
+    header.append(closeButton);
+    palette.append(header);
+    if (state.capabilityDiscoveryPending) {
+      const pending = node("div", "slash-command");
+      pending.append(node("code", "", "…"), node("span", "", t("detecting_capabilities")));
+      palette.append(pending);
+    }
+    entries.forEach((entry) => {
+      const button = node("button", "slash-command");
+      button.type = "button";
+      button.setAttribute("role", "option");
+      button.append(node("code", "", entry.command), node("span", "", entry.label));
+      button.addEventListener("click", () => {
+        input.value = `${entry.command} `;
+        closeSlashPalette();
+        input.focus();
+      });
+      palette.append(button);
+    });
+    if (!state.capabilityDiscoveryPending && entries.length === 0) {
+      const empty = node("div", "slash-command");
+      empty.append(node("code", "", "--"), node("span", "", t("no_capabilities")));
+      palette.append(empty);
+    }
+    palette.hidden = false;
   }
 
   function renderRooms() {
@@ -1022,9 +1161,12 @@
     if (!dispatches.length) return null;
     const rail = node("div", "dispatch-rail");
     dispatches.forEach((dispatch) => {
+      const runtime = agentRuntime(dispatch.agent_id);
       const item = node("div", `dispatch-chip ${dispatchTone(dispatch.status)}`);
       item.append(node("i", ""), node("strong", "", dispatch.agent_id || "Agent"), node("span", "", dispatchLabel(dispatch.status)));
       if (dispatch.attempt_count > 1) item.append(node("small", "", `${t("attempt")} ${dispatch.attempt_count}`));
+      const activity = runtime.summary || t(runtime.activity.key);
+      item.append(node("span", "dispatch-activity", `${t("doing_now")}: ${activity}`));
       rail.append(item);
     });
     return rail;
@@ -1071,7 +1213,11 @@
       state.data?.room_id,
       members,
       state.data?.routes || [],
-      state.data?.cockpit?.presence || []
+      state.data?.cockpit?.presence || [],
+      state.data?.cockpit?.sessions || [],
+      state.data?.cockpit?.events || [],
+      state.data?.dispatches || [],
+      state.data?.work_updates || []
     ]);
     if (state.renderSignatures.agents === signature) return;
     state.renderSignatures.agents = signature;
@@ -1087,6 +1233,7 @@
       runtimeMeta.append(node("span", "", `${t("permission")}: ${runtime.permission ? permissionTierLabel(runtime.permission) : "--"}`));
       runtimeMeta.append(node("span", "", `${t("role")}: ${member.role_label || roleLabel(member.role_id)}`));
       copy.append(runtimeMeta);
+      copy.append(node("span", "agent-doing", `${t("doing_now")}: ${runtime.summary || t(runtime.activity.key)}`));
       row.append(copy);
       if (member.agent_id !== "human-operator") {
         const role = node("select", "role-select"); role.setAttribute("aria-label", `${t("role")}: ${member.agent_id}`);
@@ -1128,21 +1275,59 @@
     ].filter((value) => value && value !== "human-operator"))].sort();
     const agentSelect = byId("seat-agent"); const priorAgent = agentSelect.value;
     replaceSelectOptions(agentSelect, agentIds.map((value) => [value, value]), priorAgent);
+    const providerSelect = byId("seat-provider");
+    const modelSelect = byId("seat-model");
+    const reasoningSelect = byId("seat-reasoning");
+    const routeSelect = byId("seat-route");
+    const agentRoutes = () => routes.filter((route) => route.agent_id === agentSelect.value);
+    const reasoningLabel = (value) => {
+      if (!value) return t("provider_default");
+      const localized = t(`reason_${value}`);
+      return localized === `reason_${value}` ? value : localized;
+    };
+    const syncDimensionsFromRoute = () => {
+      const rows = agentRoutes();
+      const selected = rows.find((route) => route.route_id === routeSelect.value) || null;
+      const providers = [...new Set(rows.map((route) => route.provider_id).filter(Boolean))].sort();
+      replaceSelectOptions(providerSelect, providers.map((value) => [value, value]), selected?.provider_id || providerSelect.value);
+      const providerRows = rows.filter((route) => route.provider_id === providerSelect.value);
+      const models = [...new Set(providerRows.map((route) => route.model_id).filter(Boolean))].sort();
+      replaceSelectOptions(modelSelect, models.map((value) => [value, value]), selected?.model_id || modelSelect.value);
+      const modelRows = providerRows.filter((route) => route.model_id === modelSelect.value);
+      const reasonings = [...new Set(modelRows.map((route) => route.reasoning_mode || ""))].sort();
+      replaceSelectOptions(reasoningSelect, reasonings.map((value) => [value, reasoningLabel(value)]), selected?.reasoning_mode || "");
+    };
+    const syncRouteFromDimensions = () => {
+      const match = agentRoutes().find((route) =>
+        route.provider_id === providerSelect.value
+        && route.model_id === modelSelect.value
+        && (route.reasoning_mode || "") === reasoningSelect.value
+      );
+      routeSelect.value = match?.route_id || "";
+    };
     const renderRouteOptions = () => {
-      const agentId = agentSelect.value;
-      const rows = routes.filter((route) => route.agent_id === agentId).map((route) => [
+      const rows = agentRoutes();
+      const selectedMember = members.find((member) => member.agent_id === agentSelect.value);
+      const preferred = rows.some((route) => route.route_id === routeSelect.value)
+        ? routeSelect.value
+        : selectedMember?.route_profile_id || rows[0]?.route_id || "";
+      replaceSelectOptions(routeSelect, [["", t("no_route")], ...rows.map((route) => [
         route.route_id,
-        [route.provider_id, route.model_id, route.reasoning_mode].filter(Boolean).join(" · ") || route.route_id
-      ]);
-      replaceSelectOptions(byId("seat-route"), [["", t("no_route")], ...rows]);
+        [route.provider_id, route.model_id, reasoningLabel(route.reasoning_mode || "")].filter(Boolean).join(" · ") || route.route_id
+      ])], preferred);
+      syncDimensionsFromRoute();
     };
     renderRouteOptions();
     agentSelect.onchange = renderRouteOptions;
+    routeSelect.onchange = syncDimensionsFromRoute;
+    providerSelect.onchange = () => { routeSelect.value = ""; syncDimensionsFromRoute(); syncRouteFromDimensions(); };
+    modelSelect.onchange = () => { routeSelect.value = ""; syncDimensionsFromRoute(); syncRouteFromDimensions(); };
+    reasoningSelect.onchange = syncRouteFromDimensions;
     replaceSelectOptions(byId("seat-role"), roomRoleValues().map((value) => [value, roleLabel(value)]), byId("seat-role").value || "equal-participant");
     const removable = members.filter((member) => member.agent_id !== "human-operator");
     replaceSelectOptions(byId("seat-remove-member"), removable.length ? removable.map((member) => [member.agent_id, member.agent_id]) : [["", t("no_removable_member")]]);
     const readOnlyRoom = Boolean(state.data?.history_import?.selected);
-    ["seat-agent", "seat-route", "seat-role", "seat-remove-member"].forEach((id) => { byId(id).disabled = readOnlyRoom; });
+    ["seat-agent", "seat-provider", "seat-model", "seat-reasoning", "seat-route", "seat-role", "seat-remove-member"].forEach((id) => { byId(id).disabled = readOnlyRoom; });
     byId("seat-add").disabled = readOnlyRoom || !agentIds.length;
     byId("seat-remove").disabled = readOnlyRoom || !removable.length;
   }
@@ -2218,7 +2403,7 @@
 
   function renderRound() {
     const panel = byId("round-summary"); panel.replaceChildren(); const auto = state.data?.automation || {}; const discussion = auto.active_discussion;
-    [[t("status"), discussion?.status || automationText(auto.mode)], [t("round"), discussion ? `${discussion.round_index} / ${auto.max_rounds}` : "--"], [t("messages"), discussion?.message_count ?? "--"]].forEach(([label, value]) => { const card = node("div", "round-card"); card.append(node("span", "", label), node("strong", "", String(value))); panel.append(card); });
+    [[t("status"), discussion?.status || automationText(auto.mode)], [t("round"), discussion ? `${discussion.round_index} / ${auto.max_rounds || "∞"}` : "--"], [t("messages"), discussion?.message_count ?? "--"]].forEach(([label, value]) => { const card = node("div", "round-card"); card.append(node("span", "", label), node("strong", "", String(value))); panel.append(card); });
     byId("work-mode").textContent = discussion?.status || automationText(auto.mode);
 
     const dispatches = state.data?.dispatches || []; byId("dispatch-count").textContent = String(dispatches.length);
@@ -2252,12 +2437,20 @@
     const completed = completedTaskCount(tasks);
     const mode = state.data?.automation?.mode || "off";
     const discussion = state.data?.automation?.active_discussion;
-    byId("overview-title").textContent = discussion ? t("discussion_active") : mode === "once" ? t("one_round_ready") : t("room_ready");
+    const goalMemory = (state.data?.memories || [])
+      .filter((memory) => memory.status === "active" && memory.visibility === "room" && memory.room_id === state.data?.room?.room_id && String(memory.title || "").includes("GOAL_ANCHOR"))
+      .sort((left, right) => String(right.created_utc || "").localeCompare(String(left.created_utc || "")))[0];
+    const overview = byId("collaboration-overview");
+    overview.classList.toggle("goal-active", mode === "goal" && Boolean(goalMemory));
+    byId("overview-title").textContent = mode === "goal" && goalMemory ? t("active_goal") : discussion ? t("discussion_active") : mode === "once" ? t("one_round_ready") : t("room_ready");
     const contextPolicy = state.data?.context_policy || {};
     const contextDetail = contextPolicy.enabled
       ? `${t("context_active")} · ${contextPolicy.max_messages} ${t("messages")}`
       : t("activity_hint");
-    byId("overview-detail").textContent = discussion?.termination_reason || contextDetail;
+    const goalBody = String(goalMemory?.body || "").trim();
+    const goalSummary = goalBody.split(/\n+/).find((line) => line.trim() && !line.includes("GOAL_ANCHOR")) || String(goalMemory?.title || "");
+    byId("overview-detail").textContent = mode === "goal" && goalMemory ? goalSummary : discussion?.termination_reason || contextDetail;
+    byId("overview-detail").title = mode === "goal" && goalMemory ? goalBody : "";
     byId("overview-agents").textContent = `${online} / ${members.length}`;
     byId("overview-tasks").textContent = `${completed} / ${tasks.length}`;
     const dispatches = state.data?.dispatches || [];
@@ -2312,7 +2505,7 @@
     }
     const automation = state.data.automation || {};
     byId("automation-label").textContent = automationText(automation.mode); byId("room-message-count").textContent = compact(room?.message_count || 0); byId("room-token-count").textContent = compact(state.data.usage?.totals?.total_tokens || 0);
-    byId("automation-mode").value = automation.mode || "off"; byId("automation-rounds").value = automation.max_rounds || 4; byId("automation-messages").value = automation.max_messages || 40; byId("automation-stagnation").value = automation.stagnation_rounds || 2;
+    byId("automation-mode").value = automation.mode || "off"; byId("automation-rounds").value = automation.max_rounds || ""; byId("automation-messages").value = automation.max_messages || ""; byId("automation-stagnation").value = automation.stagnation_rounds || 2; syncAutomationLimitControls();
     byId("discussion-controls").hidden = !automation.active_discussion;
     ["send-button", "message-body", "message-subject", "attachment-button", "recipient", "composer-permission", "priority", "save-automation"].forEach((id) => { byId(id).disabled = !state.data.operator_active; });
     if (state.data.operator_active) updateComposerPermissionControls();
@@ -3113,7 +3306,7 @@
     button.disabled = true; status.textContent = "…";
     try {
       const response = await postAction("/api/proof/export", { task_id: taskId });
-      const relativePath = String(response?.result?.relative_path || "");
+      const relativePath = String(response?.relative_path || "");
       if (relativePath.startsWith(".peerbridge-artifacts/proof-bundles/")) byId("proof-path").value = relativePath;
       status.textContent = t("proof_exported"); toast(t("proof_exported"));
     } catch (error) { status.textContent = `${t("action_failed")}: ${error.message}`; toast(status.textContent); }
@@ -3153,7 +3346,11 @@
       state.sessionDetailTab = button.dataset.sessionTab;
       renderCockpit();
     }));
-    byId("composer").addEventListener("submit", sendMessage); byId("message-body").addEventListener("keydown", (event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); byId("composer").requestSubmit(); } });
+    byId("composer").addEventListener("submit", sendMessage); byId("message-body").addEventListener("input", renderSlashPalette); byId("message-body").addEventListener("keydown", (event) => { if (event.key === "Escape") { closeSlashPalette(); return; } if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); byId("composer").requestSubmit(); } });
+    document.addEventListener("pointerdown", (event) => {
+      const palette = byId("slash-palette");
+      if (!palette.hidden && !palette.contains(event.target) && event.target !== byId("message-body")) closeSlashPalette();
+    });
     byId("recipient").addEventListener("change", updateComposerPermissionControls);
     byId("message-body").addEventListener("paste", (event) => handleClipboardImages(event, addAttachments));
     byId("attachment-button").addEventListener("click", () => byId("attachment-input").click());
@@ -3218,8 +3415,9 @@
     byId("proof-verify").addEventListener("click", verifyProof);
     byId("workflow-attempts").addEventListener("input", () => { byId("workflow-attempts").dataset.touched = "true"; });
     byId("workflow-template").addEventListener("change", () => { delete byId("workflow-attempts").dataset.touched; renderWorkflowControls(); });
+    byId("automation-mode").addEventListener("change", syncAutomationLimitControls);
     byId("save-automation").addEventListener("click", async () => {
-      const mode = byId("automation-mode").value; const maxRounds = Number(byId("automation-rounds").value); const maxMessages = Number(byId("automation-messages").value); const stagnation = Number(byId("automation-stagnation").value);
+      const mode = byId("automation-mode").value; const goalMode = mode === "goal"; const maxRounds = goalMode ? 0 : Number(byId("automation-rounds").value); const maxMessages = goalMode ? 0 : Number(byId("automation-messages").value); const stagnation = Number(byId("automation-stagnation").value);
       try {
         await postAction("/api/room/automation", { room_id: state.data.room_id, mode, max_rounds: maxRounds, max_messages: maxMessages, stagnation_rounds: stagnation });
         byId("automation-menu").open = false; toast(t("automation_saved"));
@@ -3232,6 +3430,21 @@
       catch (error) { toast(`${t("action_failed")}: ${error.message}`); }
       finally { button.disabled = false; }
     }));
+    byId("update-check-button").addEventListener("click", async () => {
+      const button = byId("update-check-button");
+      button.disabled = true;
+      toast(t("checking_updates"));
+      try {
+        const result = await postAction("/api/update/check", {});
+        toast(result.update_available
+          ? t("update_available").replace("{version}", result.latest_version)
+          : t("up_to_date"));
+      } catch (error) {
+        toast(`${t("update_failed")}: ${error.message}`);
+      } finally {
+        button.disabled = false;
+      }
+    });
     byId("refresh-button").addEventListener("click", () => fetchState(true)); byId("chat-focus-button").addEventListener("click", () => setChatFocus(!state.chatFocus)); byId("sidebar-toggle").addEventListener("click", () => byId("sidebar").classList.toggle("open")); byId("inspector-toggle").addEventListener("click", () => byId("inspector").classList.toggle("open")); byId("inspector-close").addEventListener("click", () => byId("inspector").classList.remove("open"));
     byId("refresh-announcements").addEventListener("click", refreshAnnouncements);
     byId("mark-announcements-read").addEventListener("click", markAnnouncementsRead);

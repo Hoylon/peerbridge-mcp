@@ -58,7 +58,7 @@ ROUTE_CLASSES = {"official", "relay", "local"}
 SECRET_BACKENDS = {"windows-credential-manager", "cc-switch", "native-acp"}
 MEMORY_VISIBILITIES = {"private", "room", "project"}
 MEMORY_RECORD_TYPES = {"FACT", "DECISION", "CONSTRAINT", "PREFERENCE", "DEPRECATED"}
-ROOM_AUTOMATION_MODES = {"off", "once", "discussion"}
+ROOM_AUTOMATION_MODES = {"off", "once", "discussion", "free", "goal"}
 DISCUSSION_STATUSES = {"active", "paused", "waiting_human", "completed", "stopped"}
 DISCUSSION_SIGNALS = {"CONTINUE", "CONSENSUS", "BLOCKED"}
 DEFAULT_DISCUSSION_MAX_ROUNDS = 4
@@ -67,6 +67,7 @@ DEFAULT_DISCUSSION_STAGNATION_ROUNDS = 2
 MAX_DISCUSSION_ROUNDS = 20
 MAX_DISCUSSION_MESSAGES = 200
 MAX_DISCUSSION_CONTEXT_CHARS = 100_000
+FREE_DISCUSSION_MIN_CONTRIBUTIONS = 3
 DEFAULT_ROOM_CONTEXT_MESSAGES = 24
 MAX_ROOM_CONTEXT_MESSAGES = 100
 DEFAULT_ROOM_CONTEXT_CHARS = 24_000
@@ -2924,26 +2925,30 @@ class Bridge:
         room_id = _require_identifier(args.get("room_id"), "room_id")
         mode = str(args.get("mode") or "").strip().lower()
         if mode not in ROOM_AUTOMATION_MODES:
-            raise BridgeError("mode must be off, once or discussion")
-        max_rounds = self._bounded_integer(
-            args.get("max_rounds", DEFAULT_DISCUSSION_MAX_ROUNDS),
-            "max_rounds",
-            minimum=1,
-            maximum=MAX_DISCUSSION_ROUNDS,
-        )
-        max_messages = self._bounded_integer(
-            args.get("max_messages", DEFAULT_DISCUSSION_MAX_MESSAGES),
-            "max_messages",
-            minimum=2,
-            maximum=MAX_DISCUSSION_MESSAGES,
-        )
+            raise BridgeError("mode must be off, once, discussion, free or goal")
+        if mode == "goal":
+            max_rounds = 0
+            max_messages = 0
+        else:
+            max_rounds = self._bounded_integer(
+                args.get("max_rounds", DEFAULT_DISCUSSION_MAX_ROUNDS),
+                "max_rounds",
+                minimum=1,
+                maximum=MAX_DISCUSSION_ROUNDS,
+            )
+            max_messages = self._bounded_integer(
+                args.get("max_messages", DEFAULT_DISCUSSION_MAX_MESSAGES),
+                "max_messages",
+                minimum=2,
+                maximum=MAX_DISCUSSION_MESSAGES,
+            )
         stagnation_rounds = self._bounded_integer(
             args.get("stagnation_rounds", DEFAULT_DISCUSSION_STAGNATION_ROUNDS),
             "stagnation_rounds",
             minimum=1,
             maximum=5,
         )
-        if stagnation_rounds > max_rounds:
+        if max_rounds and stagnation_rounds > max_rounds:
             raise BridgeError("stagnation_rounds cannot exceed max_rounds")
         now = utc_now()
         payload = {
@@ -2977,7 +2982,7 @@ class Bridge:
                     room_id,
                 ),
             )
-            if mode != "discussion":
+            if mode not in {"discussion", "free", "goal"}:
                 open_discussions = connection.execute(
                     """SELECT * FROM room_discussions
                         WHERE scope=? AND room_id=?
@@ -4939,6 +4944,7 @@ class Bridge:
         discussion_id: str,
         discussion_round: int,
         created: str,
+        reply_to: str | None = None,
     ) -> dict[str, Any]:
         message_id = uuid.uuid4().hex
         content = {
@@ -4951,7 +4957,7 @@ class Bridge:
             "subject": subject,
             "body": body,
             "priority": priority,
-            "reply_to": None,
+            "reply_to": reply_to,
             "artifact_paths": artifacts,
             "route_request": self._route_request_content_binding(route_request),
             "discussion_id": discussion_id,
@@ -4975,7 +4981,7 @@ class Bridge:
                    requested_reasoning_mode, requested_route_class,
                    route_request_sha256, discussion_id, discussion_round,
                    discussion_role, visibility, created_utc, acknowledged_utc, content_sha256
-               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?,
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                           ?, ?, 'prompt', 'room', ?, NULL, ?)""",
             (
                 message_id,
@@ -4987,6 +4993,7 @@ class Bridge:
                 subject,
                 body,
                 priority,
+                reply_to,
                 json.dumps(artifacts, ensure_ascii=False),
                 route_profile_id,
                 route_request["route_profile_sha256"],
@@ -5415,14 +5422,14 @@ class Bridge:
                 )
                 return result
 
-            if mode != "discussion":
+            if mode not in {"discussion", "free", "goal"}:
                 raise BridgeError("unsupported room automation mode")
             discussion_id = uuid.uuid4().hex
             prepared = self._routed_room_seats(
                 connection, room_id, exclude_agent_id=self.agent_id
             )
             minimum_complete_round_messages = 2 * len(prepared)
-            if int(policy["max_messages"]) < minimum_complete_round_messages:
+            if int(policy["max_messages"]) and int(policy["max_messages"]) < minimum_complete_round_messages:
                 raise BridgeError(
                     "max_messages cannot fit one complete discussion round for all "
                     f"{len(prepared)} routed Agent seats; requires at least "
@@ -5535,7 +5542,7 @@ class Bridge:
                 task_id,
             )
             result = {
-                "automation_mode": "discussion",
+                "automation_mode": mode,
                 "discussion_id": discussion_id,
                 "room_id": room_id,
                 "task_id": task_id,
@@ -5660,14 +5667,53 @@ class Bridge:
                     scan_limit,
                 ),
             ).fetchall()
+            memory_rows = connection.execute(
+                """SELECT * FROM memories
+                     WHERE scope=? AND room_id=? AND visibility='room'
+                       AND status='active'
+                     ORDER BY created_utc DESC, memory_id DESC LIMIT 8""",
+                (self.scope, current["room_id"]),
+            ).fetchall()
 
         current_item = dict(current)
         seen = {self._room_context_dedup_key(current_item)}
+        memory_messages: list[dict[str, str]] = []
+        memory_bindings: list[dict[str, str]] = []
+        memory_used_chars = 0
+        memory_truncated = False
+        memory_budget = min(8_000, max_chars // 3)
+        for row in reversed(memory_rows):
+            heading = (
+                "[Durable same-room memory"
+                f" | type={str(row['record_type'] or 'FACT')}"
+                f" | title={str(row['title'] or '').strip()}]\n"
+            )
+            body = str(row["body"] or "").strip()
+            remaining = memory_budget - memory_used_chars
+            if remaining <= len(heading):
+                memory_truncated = True
+                continue
+            available = remaining - len(heading)
+            if len(body) > available:
+                marker = "\n[memory truncated]"
+                body = body[: max(0, available - len(marker))] + marker
+                memory_truncated = True
+            content = heading + body
+            memory_messages.append({"role": "system", "content": content})
+            memory_bindings.append(
+                {
+                    "memory_id": str(row["memory_id"]),
+                    "memory_sha256": str(row["memory_sha256"]),
+                }
+            )
+            memory_used_chars += len(content)
+
         selected_desc: list[tuple[int, dict[str, str]]] = []
         duplicate_rows_omitted = 0
         omitted_for_limit = 0
         any_message_truncated = False
         used_chars = 0
+        history_char_budget = max(0, max_chars - memory_used_chars)
         for row in rows:
             row_item = dict(row)
             key = self._room_context_dedup_key(row_item)
@@ -5675,10 +5721,10 @@ class Bridge:
                 duplicate_rows_omitted += 1
                 continue
             seen.add(key)
-            if len(selected_desc) >= max_messages or used_chars >= max_chars:
+            if len(selected_desc) >= max_messages or used_chars >= history_char_budget:
                 omitted_for_limit += 1
                 continue
-            remaining = max_chars - used_chars
+            remaining = history_char_budget - used_chars
             per_message_limit = min(MAX_ROOM_CONTEXT_MESSAGE_CHARS, remaining)
             if per_message_limit <= 0:
                 omitted_for_limit += 1
@@ -5691,18 +5737,28 @@ class Bridge:
             selected_desc.append((int(row["sequence"]), rendered))
 
         selected_desc.reverse()
-        messages = [item for _, item in selected_desc]
+        history_messages = [item for _, item in selected_desc]
+        messages = [*memory_messages, *history_messages]
         sequences = [sequence for sequence, _ in selected_desc]
+        history_sha = stable_sha256(history_messages)
         context_sha = stable_sha256(messages)
         receipt = {
-            "schema": "peerbridge.room-prompt-context.v1",
+            "schema": "peerbridge.room-prompt-context.v2",
             "scope": self.scope,
             "room_id": str(current["room_id"]),
             "agent_id": self.agent_id,
             "source_message_id": message_id,
-            "history_message_count": len(messages),
+            "history_message_count": len(history_messages),
             "history_chars": used_chars,
-            "history_sha256": context_sha,
+            "memory_record_count": len(memory_messages),
+            "memory_chars": memory_used_chars,
+            "memory_sha256": stable_sha256(memory_bindings),
+            "memory_injected": bool(memory_messages),
+            "memory_truncated": memory_truncated,
+            "context_message_count": len(messages),
+            "context_chars": memory_used_chars + used_chars,
+            "history_sha256": history_sha,
+            "context_sha256": context_sha,
             "duplicate_rows_omitted": duplicate_rows_omitted,
             "visibility_filter": (
                 "recipient_self_or_broadcast_or_explicit_room_visibility"
@@ -6010,7 +6066,8 @@ class Bridge:
                 "m.scope=?",
                 "(m.recipient=? OR m.recipient='*')",
                 "m.sender!=?",
-                "m.reply_to IS NULL",
+                "(m.reply_to IS NULL OR (m.discussion_id IS NOT NULL "
+                "AND m.discussion_role='prompt'))",
                 "r.message_id IS NULL",
                 "(m.discussion_id IS NULL OR EXISTS ("
                 "SELECT 1 FROM room_discussions rd "
@@ -6283,6 +6340,9 @@ class Bridge:
 
             response_model_id = self.model_id
             expected_receipt_schema = "peerbridge.openai-compatible-run.v1"
+            execution_client_name = self.client_name
+            connection_endpoint_sha256 = None
+            credential_version_sha256 = None
             source_route_profile_id = source["route_profile_id"]
             source_route_profile_sha = source["route_profile_sha256"]
             if execution_route_profile_id is None and source_route_profile_id:
@@ -6311,6 +6371,7 @@ class Bridge:
                 ):
                     raise BridgeError("execution route profile is no longer exact")
                 response_model_id = profile["response_model_id"] or profile["model_id"]
+                execution_client_name = profile["client_name"]
             if connection_id is not None:
                 if execution_route_profile_id is None:
                     raise BridgeError(
@@ -6344,6 +6405,16 @@ class Bridge:
                     "native-acp": "peerbridge.acpx-inference-receipt.v1",
                     "cc-switch": "peerbridge.ccswitch-inference-receipt.v1",
                 }[provider_connection["secret_backend"]]
+                connection_endpoint_sha256 = provider_connection["endpoint_sha256"]
+                credential_version_sha256 = provider_connection["credential_version_sha256"]
+                if (
+                    provider_connection["secret_backend"]
+                    == "windows-credential-manager"
+                    and execution_client_name == "claude-native"
+                ):
+                    expected_receipt_schema = (
+                        "peerbridge.claude-native-wcm-inference-receipt.v1"
+                    )
 
             expected_route = {
                 "route_profile_id": execution_route_profile_id,
@@ -6358,6 +6429,9 @@ class Bridge:
                 "room_id": source["room_id"],
                 "session_id": self.session_id,
             }
+            if expected_receipt_schema == "peerbridge.claude-native-wcm-inference-receipt.v1":
+                expected_route["endpoint_sha256"] = connection_endpoint_sha256
+                expected_route["credential_version_sha256"] = credential_version_sha256
             try:
                 validated = validate_inference_receipt(
                     receipt,
@@ -6976,6 +7050,305 @@ class Bridge:
             parts.append(f"\n[{row['sender']}]\n{str(row['body']).strip()}")
         return "\n".join(parts)
 
+    @staticmethod
+    def _free_discussion_context(
+        rows: Iterable[sqlite3.Row],
+        event_number: int,
+        trigger_sender: str,
+        root_body: str,
+    ) -> str:
+        parts = [
+            f"FREE DISCUSSION EVENT {event_number}.",
+            f"{trigger_sender} has just added a contribution. Do not wait for a fixed turn order. ",
+            "Continue your current work without interruption, then review the recent peer contributions ",
+            "below. Add only new evidence, resolve a disagreement, or state a concrete blocker. ",
+            "End with exactly one line: PEERBRIDGE_SIGNAL: CONTINUE, CONSENSUS, or BLOCKED.",
+            f"\n\n[PINNED ROOT]\n{root_body.strip()}",
+        ]
+        for row in rows:
+            parts.append(f"\n[{row['sender']}]\n{str(row['body']).strip()}")
+        return "".join(parts)
+
+    def _advance_free_discussion_locked(
+        self,
+        connection: sqlite3.Connection,
+        discussion: sqlite3.Row,
+    ) -> dict[str, Any] | None:
+        """Advance one completed response without waiting for a round barrier."""
+
+        discussion_id = str(discussion["discussion_id"])
+        try:
+            participants = self._discussion_participants(connection, discussion_id)
+        except BridgeError as exc:
+            now = utc_now()
+            cancelled = self._cancel_discussion_dispatches(
+                connection,
+                discussion_id,
+                error_code="discussion_participant_unavailable",
+                now=now,
+            )
+            updated, updated_sha = self._store_discussion_state(
+                connection,
+                discussion,
+                now=now,
+                status="waiting_human",
+                stop_reason="participant_unavailable",
+            )
+            event = self._event(
+                connection,
+                "discussion.free_blocked",
+                {
+                    "discussion_id": discussion_id,
+                    "status": "waiting_human",
+                    "stop_reason": "participant_unavailable",
+                    "detail": str(exc),
+                    "cancelled_dispatch_count": cancelled,
+                    "discussion_sha256": updated_sha,
+                },
+                str(discussion["task_id"]),
+            )
+            return {
+                "discussion_id": discussion_id,
+                "room_id": discussion["room_id"],
+                "processed_round": updated["processed_round"],
+                "current_round": updated["current_round"],
+                "status": "waiting_human",
+                "stop_reason": "participant_unavailable",
+                "new_prompt_count": 0,
+                "discussion_sha256": updated_sha,
+                "audit_chain_sha256": event["chain_sha256"],
+            }
+
+        latest_terminal = connection.execute(
+            """SELECT prompt.*, d.error_code
+                 FROM messages prompt
+                 JOIN message_dispatches d
+                   ON d.scope=prompt.scope AND d.message_id=prompt.message_id
+                  AND d.agent_id=prompt.recipient AND d.status='failed'
+                WHERE prompt.scope=? AND prompt.discussion_id=?
+                  AND prompt.discussion_role='prompt'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM messages newer
+                       WHERE newer.scope=prompt.scope
+                         AND newer.discussion_id=prompt.discussion_id
+                         AND newer.discussion_role='prompt'
+                         AND newer.recipient=prompt.recipient
+                         AND newer.sequence>prompt.sequence
+                  )
+                ORDER BY prompt.sequence LIMIT 1""",
+            (self.scope, discussion_id),
+        ).fetchone()
+        if latest_terminal is not None:
+            in_flight = connection.execute(
+                """SELECT COUNT(*) FROM messages prompt
+                     JOIN message_dispatches d
+                       ON d.scope=prompt.scope AND d.message_id=prompt.message_id
+                      AND d.agent_id=prompt.recipient
+                    WHERE prompt.scope=? AND prompt.discussion_id=?
+                      AND prompt.discussion_role='prompt'
+                      AND d.status='claimed'
+                      AND d.lease_expires_epoch>?""",
+                (self.scope, discussion_id, time.time()),
+            ).fetchone()[0]
+            if int(in_flight):
+                return None
+            now = utc_now()
+            updated, updated_sha = self._store_discussion_state(
+                connection,
+                discussion,
+                now=now,
+                status="waiting_human",
+                stop_reason="agent_dispatch_failed",
+            )
+            event = self._event(
+                connection,
+                "discussion.free_blocked",
+                {
+                    "discussion_id": discussion_id,
+                    "status": "waiting_human",
+                    "stop_reason": "agent_dispatch_failed",
+                    "agent_id": latest_terminal["recipient"],
+                    "message_id": latest_terminal["message_id"],
+                    "error_code": latest_terminal["error_code"],
+                    "discussion_sha256": updated_sha,
+                },
+                str(discussion["task_id"]),
+            )
+            return {
+                "discussion_id": discussion_id,
+                "room_id": discussion["room_id"],
+                "processed_round": updated["processed_round"],
+                "current_round": updated["current_round"],
+                "status": "waiting_human",
+                "stop_reason": "agent_dispatch_failed",
+                "new_prompt_count": 0,
+                "failed_agent_id": latest_terminal["recipient"],
+                "discussion_sha256": updated_sha,
+                "audit_chain_sha256": event["chain_sha256"],
+            }
+
+        response = connection.execute(
+            """SELECT reply.* FROM messages reply
+                 WHERE reply.scope=? AND reply.discussion_id=?
+                   AND reply.discussion_role='response'
+                   AND NOT EXISTS (
+                       SELECT 1 FROM messages followup
+                        WHERE followup.scope=reply.scope
+                          AND followup.discussion_id=reply.discussion_id
+                          AND followup.discussion_role='prompt'
+                          AND followup.reply_to=reply.message_id
+                   )
+                 ORDER BY reply.sequence LIMIT 1""",
+            (self.scope, discussion_id),
+        ).fetchone()
+        if response is None:
+            return None
+
+        participant_ids = {agent_id for agent_id, _route_id, _request in participants}
+        recent_all = connection.execute(
+            """SELECT * FROM messages
+                 WHERE scope=? AND discussion_id=? AND discussion_role='response'
+                 ORDER BY sequence""",
+            (self.scope, discussion_id),
+        ).fetchall()
+        latest_by_sender: dict[str, sqlite3.Row] = {}
+        contribution_counts = {agent_id: 0 for agent_id in participant_ids}
+        for item in recent_all:
+            sender = str(item["sender"])
+            if sender in participant_ids:
+                latest_by_sender[sender] = item
+                contribution_counts[sender] += 1
+        latest_signals = {
+            sender: self._discussion_signal(str(item["body"]))
+            for sender, item in latest_by_sender.items()
+        }
+        signal = self._discussion_signal(str(response["body"]))
+        complete_latest_set = participant_ids == set(latest_by_sender)
+        minimum_contributions_met = all(
+            count >= FREE_DISCUSSION_MIN_CONTRIBUTIONS
+            for count in contribution_counts.values()
+        )
+        consensus = complete_latest_set and minimum_contributions_met and all(
+            value == "CONSENSUS" for value in latest_signals.values()
+        )
+        blocked = complete_latest_set and all(
+            value == "BLOCKED" for value in latest_signals.values()
+        )
+
+        digest = self._normalized_discussion_digest([response])
+        stagnant = bool(
+            discussion["last_round_digest"]
+            and digest == str(discussion["last_round_digest"])
+        )
+        stagnation_count = (
+            int(discussion["stagnation_count"]) + 1 if stagnant else 0
+        )
+        message_count = int(discussion["message_count"]) + 1
+        next_event = int(discussion["current_round"]) + 1
+        targets = [item for item in participants if item[0] != str(response["sender"])]
+        next_status = "active"
+        stop_reason = None
+        if signal == "INVALID":
+            next_status, stop_reason = "waiting_human", "malformed_signal"
+        elif consensus:
+            next_status, stop_reason = "completed", "consensus"
+        elif blocked:
+            next_status, stop_reason = "waiting_human", "all_agents_blocked"
+        elif int(discussion["max_rounds"]) and next_event > int(discussion["max_rounds"]):
+            next_status, stop_reason = "waiting_human", "event_limit"
+        elif int(discussion["max_messages"]) and message_count + len(targets) > int(discussion["max_messages"]):
+            next_status, stop_reason = "waiting_human", "message_limit"
+        elif stagnation_count >= int(discussion["stagnation_rounds"]):
+            next_status, stop_reason = "waiting_human", "stagnation"
+        elif not targets:
+            next_status, stop_reason = "completed", "single_agent_complete"
+
+        new_messages: list[dict[str, Any]] = []
+        now = utc_now()
+        if next_status == "active":
+            recent = list(recent_all[-8:])
+            root_prompt = connection.execute(
+                """SELECT body FROM messages
+                     WHERE scope=? AND discussion_id=? AND discussion_round=1
+                       AND discussion_role='prompt'
+                     ORDER BY sequence LIMIT 1""",
+                (self.scope, discussion_id),
+            ).fetchone()
+            if root_prompt is None:
+                next_status, stop_reason = "waiting_human", "root_context_missing"
+            context = self._free_discussion_context(
+                recent,
+                next_event,
+                str(response["sender"]),
+                str(root_prompt["body"]) if root_prompt is not None else "",
+            )
+            if len(context) > MAX_DISCUSSION_CONTEXT_CHARS:
+                next_status, stop_reason = "waiting_human", "context_limit"
+            for agent_id, route_id, request in (
+                targets if next_status == "active" else []
+            ):
+                new_messages.append(
+                    self._insert_discussion_prompt(
+                        connection,
+                        room_id=str(discussion["room_id"]),
+                        task_id=str(discussion["task_id"]),
+                        sender=DISCUSSION_ORCHESTRATOR_ID,
+                        recipient=agent_id,
+                        subject=f"Re: {discussion['subject']} // free event {next_event}",
+                        body=context,
+                        artifacts=[],
+                        priority="normal",
+                        route_profile_id=route_id,
+                        route_request=request,
+                        discussion_id=discussion_id,
+                        discussion_round=next_event,
+                        created=now,
+                        reply_to=str(response["message_id"]),
+                    )
+                )
+            message_count += len(new_messages)
+
+        updated, updated_sha = self._store_discussion_state(
+            connection,
+            discussion,
+            now=now,
+            status=next_status,
+            current_round=next_event,
+            processed_round=next_event,
+            message_count=message_count,
+            stagnation_count=stagnation_count,
+            last_round_digest=digest,
+            stop_reason=stop_reason,
+        )
+        event = self._event(
+            connection,
+            "discussion.free_event_advanced",
+            {
+                "discussion_id": discussion_id,
+                "trigger_message_id": response["message_id"],
+                "trigger_sender": response["sender"],
+                "event_number": next_event,
+                "signal": signal,
+                "status": next_status,
+                "stop_reason": stop_reason,
+                "new_prompt_count": len(new_messages),
+                "discussion_sha256": updated_sha,
+            },
+            str(discussion["task_id"]),
+        )
+        return {
+            "discussion_id": discussion_id,
+            "room_id": discussion["room_id"],
+            "processed_round": next_event,
+            "current_round": updated["current_round"],
+            "status": next_status,
+            "stop_reason": stop_reason,
+            "new_prompt_count": len(new_messages),
+            "trigger_sender": response["sender"],
+            "discussion_sha256": updated_sha,
+            "audit_chain_sha256": event["chain_sha256"],
+        }
+
     def advance_discussions(self, args: dict[str, Any]) -> dict[str, Any]:
         """Advance complete discussion rounds exactly once under a global DB transaction."""
         if (
@@ -6991,19 +7364,33 @@ class Bridge:
         advanced: list[dict[str, Any]] = []
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            where = ["scope=?", "status='active'", "processed_round<current_round"]
+            where = [
+                "rd.scope=?",
+                "rd.status='active'",
+                "(rd.processed_round<rd.current_round OR rap.mode IN ('free','goal'))",
+            ]
             params: list[Any] = [self.scope]
             if room_id:
-                where.append("room_id=?")
+                where.append("rd.room_id=?")
                 params.append(room_id)
             params.append(limit)
             discussions = connection.execute(
-                f"""SELECT * FROM room_discussions
-                     WHERE {' AND '.join(where)}
-                     ORDER BY updated_utc, discussion_id LIMIT ?""",
+                f"""SELECT rd.*, rap.mode AS automation_mode
+                       FROM room_discussions rd
+                       JOIN room_automation_policies rap
+                         ON rap.scope=rd.scope AND rap.room_id=rd.room_id
+                      WHERE {' AND '.join(where)}
+                      ORDER BY rd.updated_utc, rd.discussion_id LIMIT ?""",
                 tuple(params),
             ).fetchall()
             for discussion in discussions:
+                if str(discussion["automation_mode"]) in {"free", "goal"}:
+                    result = self._advance_free_discussion_locked(
+                        connection, discussion
+                    )
+                    if result is not None:
+                        advanced.append(result)
+                    continue
                 discussion_id = str(discussion["discussion_id"])
                 current_round = int(discussion["current_round"])
                 prompts = connection.execute(
@@ -7123,9 +7510,9 @@ class Bridge:
                     next_status, stop_reason = "completed", "consensus"
                 elif blocked:
                     next_status, stop_reason = "waiting_human", "all_agents_blocked"
-                elif current_round >= int(discussion["max_rounds"]):
+                elif int(discussion["max_rounds"]) and current_round >= int(discussion["max_rounds"]):
                     next_status, stop_reason = "waiting_human", "round_limit"
-                elif message_count + (2 * len(participants)) > int(
+                elif int(discussion["max_messages"]) and message_count + (2 * len(participants)) > int(
                     discussion["max_messages"]
                 ):
                     next_status, stop_reason = "waiting_human", "message_limit"
@@ -7254,15 +7641,16 @@ class Bridge:
                     raise BridgeError("continue requires a paused or waiting discussion")
                 current_round = int(row["current_round"])
                 processed_round = int(row["processed_round"])
-                max_rounds = min(
-                    MAX_DISCUSSION_ROUNDS,
-                    max(max_rounds, current_round + extra_rounds),
-                )
+                if max_rounds:
+                    max_rounds = min(
+                        MAX_DISCUSSION_ROUNDS,
+                        max(max_rounds, current_round + extra_rounds),
+                    )
                 status, stop_reason = "active", None
                 # A paused, unprocessed round already has prompts and only needs
                 # to be re-enabled. A waiting discussion needs a brand-new round.
                 if processed_round >= current_round:
-                    if current_round >= MAX_DISCUSSION_ROUNDS:
+                    if max_rounds and current_round >= MAX_DISCUSSION_ROUNDS:
                         raise BridgeError("discussion reached the absolute round limit")
                     responses = connection.execute(
                         """SELECT * FROM messages
@@ -7274,7 +7662,7 @@ class Bridge:
                     seats = self._discussion_participants(connection, discussion_id)
                     next_round = current_round + 1
                     complete_round_messages = 2 * len(seats)
-                    if (
+                    if max_messages and (
                         int(row["message_count"]) + complete_round_messages
                         > MAX_DISCUSSION_MESSAGES
                     ):
@@ -7304,14 +7692,15 @@ class Bridge:
                                 created=now,
                             )
                         )
-                    max_messages = min(
-                        MAX_DISCUSSION_MESSAGES,
-                        max(
-                            max_messages,
-                            int(row["message_count"])
-                            + len(seats) * 2 * extra_rounds,
-                        ),
-                    )
+                    if max_messages:
+                        max_messages = min(
+                            MAX_DISCUSSION_MESSAGES,
+                            max(
+                                max_messages,
+                                int(row["message_count"])
+                                + len(seats) * 2 * extra_rounds,
+                            ),
+                        )
                     row_changes = {
                         "current_round": next_round,
                         "message_count": int(row["message_count"]) + len(new_messages),

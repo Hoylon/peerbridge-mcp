@@ -32,6 +32,17 @@ def test_owner_logo_source_and_operational_assets_are_packaged() -> None:
     assert WINDOWS_APP_USER_MODEL_ID == "PeerBridge.MCP.ControlRoom"
 
 
+def test_modern_webview_reapplies_windows_identity_and_native_icons() -> None:
+    source = (
+        PROJECT_ROOT / "src" / "peerbridge_mcp" / "local_workbench.py"
+    ).read_text(encoding="utf-8")
+    assert "configure_windows_app_identity()" in source
+    assert "def _apply_windows_webview_icon" in source
+    assert "EnumWindows" in source
+    assert "WM_SETICON" in source
+    assert "release_windows_icon_handles(icon_handles)" in source
+
+
 def test_portable_verifier_instance_mutex_is_bounded() -> None:
     assert windows_instance_mutex_name("") == DEFAULT_INSTANCE_MUTEX
     assert (

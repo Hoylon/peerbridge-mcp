@@ -24,6 +24,7 @@ from .agent_install import (
     find_trusted_executable,
     official_agent_spec,
 )
+from .agent_identity import verify_agent_identity_capability
 from .bridge import (
     MAX_TEXT_CHARS,
     _reject_reparse_ancestry,
@@ -256,7 +257,13 @@ def _mcp_permission_policy(allowed_tools: Sequence[str]) -> tuple[str, str]:
     return encoded, _sha256_bytes(encoded.encode("utf-8"))
 
 
-def _mcp_config_path(config: RunnerConfig, agent: str, runtime: Path) -> tuple[Path, str]:
+def _mcp_config_path(
+    config: RunnerConfig,
+    agent: str,
+    runtime: Path,
+    *,
+    client_name: str,
+) -> tuple[Path, str]:
     if config.identity_capability_path is None:
         raise ConfigurationError(
             "a pre-issued Agent identity capability is required for ACPX MCP"
@@ -264,6 +271,20 @@ def _mcp_config_path(config: RunnerConfig, agent: str, runtime: Path) -> tuple[P
     identity_capability = Path(config.identity_capability_path)
     if not identity_capability.is_absolute() or not identity_capability.is_file():
         raise ConfigurationError("Agent identity capability is unavailable")
+    bound_client_name = client_name
+    if config.db_path is not None:
+        verified_capability = verify_agent_identity_capability(
+            config.project_root,
+            Path(config.db_path),
+            config.scope,
+            config.agent_id,
+            identity_capability,
+        )
+        if (
+            verified_capability.route_binding is not None
+            and verified_capability.route_binding.client_name
+        ):
+            bound_client_name = verified_capability.route_binding.client_name
     args = [
         "-m",
         "peerbridge_mcp",
@@ -279,7 +300,7 @@ def _mcp_config_path(config: RunnerConfig, agent: str, runtime: Path) -> tuple[P
         "--session-id",
         config.session_id,
         "--client-name",
-        f"acpx-{agent}",
+        bound_client_name,
         "--provider-id",
         config.provider_id,
         "--model-id",
@@ -733,6 +754,9 @@ class AcpxRunner:
         self.agent = _agent_from_reference(
             client_name=client_name, credential_target=credential_target
         )
+        self.client_name = str(client_name or "").strip() or _OFFICIAL_AGENT_IDS[
+            self.agent
+        ]
         self.executable = Path(executable) if executable else find_acpx()
         if self.executable is None or not self.executable.is_file():
             raise ConfigurationError("ACPX interoperability runtime is not installed")
@@ -775,7 +799,10 @@ class AcpxRunner:
         runtime.mkdir(parents=True, exist_ok=True)
         _reject_reparse_ancestry(state_root, runtime, "ACPX runtime state")
         mcp_config, mcp_config_sha = _mcp_config_path(
-            self.config, self.agent, runtime
+            self.config,
+            self.agent,
+            runtime,
+            client_name=self.client_name,
         )
         permission_policy, permission_policy_sha = _mcp_permission_policy(
             self.config.allowed_tools

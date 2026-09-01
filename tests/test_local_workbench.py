@@ -35,6 +35,49 @@ from peerbridge_mcp.monitor import MCP_HUMAN_CLIENT_TOOLS, McpHumanClient
 TOKEN = "test-admin-token-not-for-production"
 
 
+def test_native_capability_discovery_finds_agent_skills_without_registration(
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    codex_skill = home / ".codex" / "skills" / "security-review" / "SKILL.md"
+    shared_skill = home / ".agents" / "skills" / "research" / "SKILL.md"
+    project_skill = tmp_path / ".claude" / "skills" / "release-gate" / "SKILL.md"
+    for path, body in (
+        (
+            codex_skill,
+            "---\nname: Security Review\ndescription: Review code safely.\n---\n",
+        ),
+        (
+            shared_skill,
+            "---\nname: Shared Research\ndescription: Research with citations.\n---\n",
+        ),
+        (
+            project_skill,
+            "---\nname: Release Gate\ndescription: Verify a release.\n---\n",
+        ),
+    ):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    result = workbench_module._discover_native_agent_capabilities(
+        tmp_path,
+        home=home,
+        run_cli=False,
+    )
+
+    assert result["skill_count"] == 3
+    assert result["mcp_server_count"] == 0
+    assert {
+        (row["display_name"], row["source_agent"], row["scope"])
+        for row in result["skills"]
+    } == {
+        ("Security Review", "codex", "personal"),
+        ("Shared Research", "shared", "personal"),
+        ("Release Gate", "claude", "project"),
+    }
+    assert all(re.fullmatch(r"[0-9a-f]{64}", row["source_sha256"]) for row in result["skills"])
+
+
 def test_managed_agent_catalog_coalesces_concurrent_discovery(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -193,6 +236,87 @@ def auth_headers(port: int, **extra: str) -> dict[str, str]:
         "Origin": f"http://127.0.0.1:{port}",
         **extra,
     }
+
+
+def test_workbench_exposes_read_only_update_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    result = SimpleNamespace(
+        as_dict=lambda: {
+            "current_version": "0.1.0a5",
+            "latest_version": "0.1.0a6",
+            "update_available": True,
+            "release_url": "https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.6",
+        }
+    )
+    monkeypatch.setattr(workbench_module, "check_for_updates", lambda **_kwargs: result)
+    with running_server(tmp_path, db) as (port, _server):
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/update/check",
+            headers=auth_headers(port),
+            payload={"request_id": "updatecheck0123456789abcdef"},
+        )
+    assert status == 200
+    payload = json.loads(body)["result"]
+    assert payload["update_available"] is True
+    assert payload["latest_version"] == "0.1.0a6"
+
+
+def test_workbench_capability_discovery_endpoint_returns_no_secret_fields(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    monkeypatch.setattr(
+        workbench_module,
+        "_discover_native_agent_capabilities",
+        lambda _root: {
+            "skills": [
+                {
+                    "kind": "skill",
+                    "capability_id": "security-review",
+                    "display_name": "Security Review",
+                    "description": "Review code safely.",
+                    "source_agent": "codex",
+                    "scope": "personal",
+                    "source_sha256": "a" * 64,
+                    "available": True,
+                }
+            ],
+            "mcp_servers": [
+                {
+                    "kind": "mcp-server",
+                    "capability_id": "peerbridge-main",
+                    "display_name": "peerbridge-main",
+                    "source_agent": "claude",
+                    "transport": "official-cli",
+                    "available": False,
+                }
+            ],
+            "skill_count": 1,
+            "mcp_server_count": 1,
+        },
+    )
+    with running_server(tmp_path, db) as (port, _server):
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/capabilities/discover",
+            headers=auth_headers(port),
+            payload={"request_id": "capabilityscan0123456789abcdef"},
+        )
+    assert status == 200
+    decoded = json.loads(body)["result"]
+    assert decoded["skill_count"] == 1
+    assert decoded["mcp_server_count"] == 1
+    serialized = json.dumps(decoded).lower()
+    assert "api_key" not in serialized
+    assert "command" not in serialized
+    assert "environment" not in serialized
 
 
 def message_payload(body: str = "Please review the Alpha 5.2 workbench.") -> dict[str, object]:
@@ -611,6 +735,9 @@ class FakeWebview:
         self.window_options: dict[str, object] = {}
         self.start_options: dict[str, object] = {}
         self.loaded_urls: list[str] = []
+        self.show_calls = 0
+        self.mount_checks = 0
+        self.diagnostic_html: list[str] = []
         self.platform_seen = ""
 
     def create_window(self, title: str, url: str, **options: object) -> object:
@@ -618,7 +745,14 @@ class FakeWebview:
         return SimpleNamespace(
             events=SimpleNamespace(closed=self.closed),
             load_url=self.loaded_urls.append,
+            evaluate_js=lambda _script: self._mount_ready(),
+            load_html=self.diagnostic_html.append,
+            show=lambda: setattr(self, "show_calls", self.show_calls + 1),
         )
+
+    def _mount_ready(self) -> bool:
+        self.mount_checks += 1
+        return True
 
     def start(self, ready: object | None = None, **options: object) -> None:
         self.start_options = dict(options)
@@ -659,17 +793,44 @@ def test_native_workbench_uses_webview2_and_stops_server(
         lambda: runtime,
     )
     monkeypatch.setattr(workbench_module.platform, "system", lambda: "WMI-BLOCKED")
+    identity_calls: list[bool] = []
+    icon_calls: list[tuple[str, Path]] = []
+    released: list[tuple[int, ...]] = []
+    monkeypatch.setattr(
+        workbench_module,
+        "configure_windows_app_identity",
+        lambda: identity_calls.append(True) or True,
+    )
+    monkeypatch.setattr(
+        workbench_module,
+        "_apply_windows_webview_icon",
+        lambda title, icon: icon_calls.append((title, icon)) or (101, 102),
+    )
+    monkeypatch.setattr(
+        workbench_module,
+        "release_windows_icon_handles",
+        lambda handles: released.append(tuple(handles)),
+    )
 
     assert run_native_workbench(server, webview_module=fake) == 0
     assert fake.window_options["title"] == "PeerBridge MCP Control Room // LIVE"
     assert fake.window_options["min_size"] == (980, 650)
+    assert fake.window_options["hidden"] is False
     assert fake.window_options["text_select"] is True
     assert fake.start_options["gui"] == "edgechromium"
     assert fake.start_options["private_mode"] is True
     assert fake.loaded_urls == [fake.window_options["url"]]
+    assert fake.show_calls == 1
+    assert fake.mount_checks == 1
+    assert fake.diagnostic_html == []
     assert fake.settings["WEBVIEW2_RUNTIME_PATH"] == str(runtime)
     assert fake.platform_seen == "Windows"
     assert workbench_module.platform.system() == "WMI-BLOCKED"
+    assert identity_calls == [True]
+    assert icon_calls == [
+        (workbench_module.WORKBENCH_WINDOW_TITLE, workbench_module._workbench_icon())
+    ]
+    assert released == [(101, 102)]
 
 
 def test_public_text_redacts_private_macos_temporary_paths() -> None:
@@ -801,8 +962,8 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'id="history-dialog"' in body
         assert b'id="import-history"' in body
         assert b'id="identity-authorize-form"' in body
-        assert b'/assets/app.css?v=alpha52-20260825-18' in body
-        assert b'/assets/app.js?v=alpha52-20260825-18' in body
+        assert b'/assets/app.css?v=alpha52-20260827-21' in body
+        assert b'/assets/app.js?v=alpha52-20260827-21' in body
         assert b'id="chat-focus-button"' in body
         assert b'id="room-search-button"' in body
         assert b'id="announcement-button"' in body
@@ -946,10 +1107,19 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     assert '<span>文 / EN</span>' in html
     assert 'id="ccswitch-form"' in html
     assert 'id="provider-connection-form"' in html
+    assert 'id="collaboration-overview"' in html
+    assert 'active_goal: "進行中的目標"' in javascript
+    assert 'String(memory.title || "").includes("GOAL_ANCHOR")' in javascript
     assert 'id="provider-route-form"' in html
+    assert 'option value="goal"' in html
+    assert 'id="seat-provider"' in html
+    assert 'id="seat-model"' in html
+    assert 'id="seat-reasoning"' in html
     assert 'id="agent-runtime-strip"' in html
     assert 'id="worktree-diff-view"' in html
     assert 'function agentRuntime(agentId)' in javascript
+    assert 'function syncAutomationLimitControls()' in javascript
+    assert 'node("span", "dispatch-activity", `${t("doing_now")}: ${activity}`)' in javascript
     assert 'function renderAgentRuntimeStrip()' in javascript
     assert 'function fetchWorktreeDiff(force = false)' in javascript
     assert 'const MAX_DIFF_RENDER_LINES = 4000' in javascript
@@ -970,6 +1140,25 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     assert "workflowLabel(entry)" in javascript
     assert javascript.count("workflowLabel({ workflow_id: entry.workflow_id })") == 2
     assert 'node("pre", "session-terminal session-terminal-preview", t("terminal_not_started"))' not in javascript
+
+
+def test_slash_capability_palette_unwraps_audited_actions_and_can_close() -> None:
+    asset_root = (
+        Path(__file__).resolve().parents[1]
+        / "src"
+        / "peerbridge_mcp"
+        / "workbench"
+    )
+    javascript = (asset_root / "app.js").read_text(encoding="utf-8")
+    stylesheet = (asset_root / "app.css").read_text(encoding="utf-8")
+
+    assert 'result.status === "updated"' in javascript
+    assert 'Object.prototype.hasOwnProperty.call(result, "result")' in javascript
+    assert "function closeSlashPalette()" in javascript
+    assert 'closeButton.addEventListener("click", closeSlashPalette)' in javascript
+    assert 'event.key === "Escape") { closeSlashPalette()' in javascript
+    assert 'document.addEventListener("pointerdown"' in javascript
+    assert ".slash-palette-close" in stylesheet
 
 
 def test_modern_workbench_readable_layout_does_not_shrink_sections_into_each_other() -> None:
@@ -1918,6 +2107,44 @@ def test_room_controls_call_only_the_explicit_human_client_methods(
             )
             assert status == 200, body.decode("utf-8")
     assert [name for name, _ in calls] == ["automation", "role", "discussion"]
+
+
+def test_goal_room_automation_normalizes_limits_to_unbounded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        McpHumanClient,
+        "set_room_automation",
+        lambda _self, **kwargs: calls.append(kwargs) or {"ok": True},
+    )
+    with running_server(tmp_path, db) as (port, _server):
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/room/automation",
+            headers=auth_headers(port),
+            payload={
+                "request_id": "goalautomation0123456789",
+                "room_id": "alpha",
+                "mode": "goal",
+                "max_rounds": 999,
+                "max_messages": 99999,
+                "stagnation_rounds": 3,
+            },
+        )
+    assert status == 200, body.decode("utf-8")
+    assert calls == [
+        {
+            "room_id": "alpha",
+            "mode": "goal",
+            "max_rounds": 0,
+            "max_messages": 0,
+            "stagnation_rounds": 3,
+        }
+    ]
 
 
 def test_workbench_room_workflow_and_managed_session_actions_are_bounded(

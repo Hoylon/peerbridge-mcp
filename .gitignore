@@ -53,3 +53,4 @@ test-results/
 .dev.vars
 support/cloudflare-edge/wrangler.jsonc
 /.qa_*.png
+/context_imports/

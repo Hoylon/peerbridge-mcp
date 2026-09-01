@@ -46,11 +46,21 @@ def config(tmp_path: Path, *, model: str = "gpt-5.6-luna") -> RunnerConfig:
     )
     assert base.db_path is not None
     Bridge(tmp_path, base.db_path, "test-identity-authority", base.scope)
+    capability_args = {}
+    if "[" not in base.model:
+        capability_args["route_binding"] = {
+            "client_name": "openai-compatible-runner",
+            "provider_id": base.provider_id,
+            "model_id": base.model,
+            "reasoning_mode": base.reasoning_mode,
+            "route_class": base.route_class,
+        }
     capability = ensure_agent_identity_capability(
         tmp_path,
         base.db_path,
         base.scope,
         base.agent_id,
+        **capability_args,
     )
     return replace(base, identity_capability_path=capability.path)
 
@@ -461,6 +471,7 @@ def test_runner_uses_stdin_and_emits_sanitized_identity_receipt(tmp_path: Path) 
     payload = json.loads(mcp_config.read_text(encoding="utf-8"))
     server = payload["mcpServers"][0]
     assert server["name"] == "peerbridge"
+    assert server["args"][server["args"].index("--client-name") + 1] == "openai-compatible-runner"
     assert "send_message" not in server["args"]
     assert "bridge_status" in server["args"]
     assert "room prompt" not in json.dumps(result.receipt)

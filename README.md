@@ -429,12 +429,13 @@ Claude Code, Grok, Kimi, DeepSeek, or a local model without gaining permission t
 project-wide memory. Every room keeps an independent model session and cursor even when the
 same global Agent has a seat in several rooms.
 
-## Private mobile control
+## Private remote desktop and mobile control
 
-The optional **Experimental** remote page exposes a deliberately narrow human interface through
+The optional **Experimental** remote workspace adapts to desktop and phone viewports through
 Tailscale Serve. The backend binds only to `127.0.0.1`; the tailnet proxy supplies the
-authenticated user identity. It supports scope-bound observation and audited human MCP
-messages, not shell execution or file mutation.
+authenticated user identity. It exposes rooms, conversations, tasks, Agents, dispatch/tool
+activity, audited human MCP messages, and bounded pause/resume/continue/stop controls for an
+active room discussion. It does not turn the browser into an arbitrary shell or file editor.
 
 ```powershell
 .\scripts\launch_remote_control.cmd -Port 8765 -Scope your-project
@@ -442,6 +443,13 @@ messages, not shell execution or file mutation.
 
 See [private remote and mobile control](docs/remote-mobile.md) for the security boundary,
 tests, phone setup, and the explicit prohibition on public Tailscale Funnel exposure.
+
+An optional [Tailcat remote toolkit](docs/tailcat-remote.md) wraps the official Tailcat CLI
+for ephemeral port forwarding, protected SSH proxying, file transfer, SOCKS5 commands, and
+an explicitly gated exit-node experiment. Tailcat remains a separate, default-off transport
+tool; it does not replace PeerBridge room authorization or the production browser path.
+The exact mapping from the three design/remote references to implemented PeerBridge
+features is recorded in [interface and remote research sources](docs/interface-research-sources.md).
 
 ## Product status and opt-in metrics
 

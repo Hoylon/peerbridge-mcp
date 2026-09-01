@@ -14,6 +14,7 @@ SUPPORTED_RECEIPT_SCHEMAS = frozenset(
     {
         "peerbridge.openai-compatible-run.v1",
         "peerbridge.acpx-inference-receipt.v1",
+        "peerbridge.claude-native-wcm-inference-receipt.v1",
         "peerbridge.ccswitch-inference-receipt.v1",
     }
 )
@@ -142,7 +143,7 @@ def validate_inference_receipt(
             sha256_bytes(content.encode("utf-8")),
             "response_sha256",
         )
-    else:
+    elif schema == "peerbridge.ccswitch-inference-receipt.v1":
         _expect(receipt.get("secret_backend"), "cc-switch", "secret_backend")
         for field, expected in (
             ("route_profile_id", route_profile_id),
@@ -150,6 +151,33 @@ def validate_inference_receipt(
             ("route_class", route_class),
             ("requested_model", model_id),
             ("connection_id", connection_id),
+            ("message_id", message_id),
+        ):
+            _expect(receipt.get(field), expected, field)
+        _expect(
+            receipt.get("response_sha256"),
+            sha256_bytes(content.encode("utf-8")),
+            "response_sha256",
+        )
+    else:
+        _expect(
+            receipt.get("secret_backend"),
+            "windows-credential-manager",
+            "secret_backend",
+        )
+        for field, expected in (
+            ("route_profile_id", route_profile_id),
+            ("route_profile_sha256", route_profile_sha256),
+            ("route_class", route_class),
+            ("requested_provider_id", provider_id),
+            ("requested_model", model_id),
+            ("requested_reasoning_mode", reasoning_mode),
+            ("connection_id", connection_id),
+            ("endpoint_sha256", expected_route.get("endpoint_sha256")),
+            (
+                "credential_version_sha256",
+                expected_route.get("credential_version_sha256"),
+            ),
             ("message_id", message_id),
         ):
             _expect(receipt.get(field), expected, field)

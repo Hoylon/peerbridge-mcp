@@ -478,6 +478,13 @@ def test_native_acp_route_is_exactly_bound_and_uses_acpx_runner(
         model_id="gpt-5.6-luna",
         backend="native-acp",
     )
+    human.join_room(
+        {
+            "room_id": "lobby",
+            "agent_id": "codex-native",
+            "route_profile_id": "acpx-codex-luna",
+        }
+    )
 
     routes = discover_runnable_routes(human, credential_probe=lambda _route: True)
 
@@ -496,6 +503,8 @@ def test_native_acp_route_is_exactly_bound_and_uses_acpx_runner(
     )
     assert isinstance(runner, AcpxRunner)
     assert runner.config.timeout_seconds == 180.0
+    assert "read_memory" not in runner.config.allowed_tools
+    assert "poll_messages" in runner.config.allowed_tools
     supervisor.close()
 
 
@@ -2208,6 +2217,103 @@ class ConsensusRunner:
                 "PEERBRIDGE_SIGNAL: CONSENSUS"
             ),
         )
+
+
+class FreeTimingRunner:
+    fast_done = threading.Event()
+    release_slow = threading.Event()
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def run(self, messages, *, message_id=None) -> InferenceResult:
+        assert message_id
+        if self.config.agent_id == "peer-slow":
+            assert self.__class__.release_slow.wait(timeout=5)
+        else:
+            self.__class__.fast_done.set()
+        return successful_inference_result(
+            self.config,
+            message_id=str(message_id),
+            content=(
+                f"{self.config.agent_id} contributes new evidence.\n"
+                "PEERBRIDGE_SIGNAL: CONTINUE"
+            ),
+        )
+
+
+def test_supervisor_enqueues_free_peer_event_before_slow_peer_finishes(
+    tmp_path: Path,
+) -> None:
+    FreeTimingRunner.fast_done = threading.Event()
+    FreeTimingRunner.release_slow = threading.Event()
+    human = make_bridge(tmp_path, "human-operator")
+    human.create_room({"room_id": "free-live", "name": "Free live"})
+    for index, agent_id in enumerate(("peer-fast", "peer-slow"), start=1):
+        register_route(
+            human,
+            agent_id=agent_id,
+            connection_id=f"relay-free-{index}",
+            route_id=f"free-route-{index}",
+            model_id=f"free-model-{index}",
+        )
+        human.join_room(
+            {
+                "room_id": "free-live",
+                "agent_id": agent_id,
+                "route_profile_id": f"free-route-{index}",
+            }
+        )
+    human.set_room_automation(
+        {
+            "room_id": "free-live",
+            "mode": "free",
+            "max_rounds": 10,
+            "max_messages": 40,
+            "stagnation_rounds": 3,
+        }
+    )
+    posted = human.post_room_message(
+        {
+            "room_id": "free-live",
+            "task_id": "free-live-task",
+            "subject": "No barrier",
+            "body": "Queue peer reactions without interrupting active work.",
+        }
+    )
+    supervisor = MailboxSupervisor(
+        tmp_path,
+        human.db_path,
+        "test",
+        runner_factory=FreeTimingRunner,
+        credential_probe=lambda _route: True,
+    )
+    result: list[object] = []
+    worker = threading.Thread(target=lambda: result.append(supervisor.run_cycle()))
+    worker.start()
+    assert FreeTimingRunner.fast_done.wait(timeout=3)
+
+    followup = None
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        with sqlite3.connect(human.db_path) as connection:
+            followup = connection.execute(
+                """SELECT message_id FROM messages
+                     WHERE discussion_id=? AND discussion_role='prompt'
+                       AND recipient='peer-slow' AND reply_to IS NOT NULL""",
+                (posted["discussion_id"],),
+            ).fetchone()
+        if followup is not None:
+            break
+        time.sleep(0.02)
+    assert followup is not None
+    assert worker.is_alive(), "slow peer should still be working when follow-up is queued"
+
+    FreeTimingRunner.release_slow.set()
+    worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert result and result[0].discussions_advanced >= 1
+    supervisor.close()
 
 
 def test_supervisor_completes_parallel_discussion_and_stops_on_consensus(

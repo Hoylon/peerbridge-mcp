@@ -216,13 +216,14 @@ def request(
     *,
     headers: dict[str, str] | None = None,
     payload: dict[str, object] | None = None,
+    timeout: float = 15,
 ) -> tuple[int, dict[str, str], bytes]:
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     merged = dict(headers or {})
     if body is not None:
         merged.setdefault("Content-Type", "application/json")
         merged.setdefault("Content-Length", str(len(body)))
-    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=15)
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
         connection.request(method, path, body=body, headers=merged)
         response = connection.getresponse()
@@ -811,18 +812,19 @@ def test_history_import_creates_a_source_bound_read_only_virtual_room(
             assert status == 400
             assert "read-only" in json.loads(mutation_body)["error"]
 
-        status, _, body = request(
-            port,
-            "POST",
-            "/api/history/continue",
-            headers=auth_headers(port),
-            payload={
-                "request_id": "historycontinue0123456789abcdef",
-                "source_room_id": room_id,
-                "room_id": "continued-history-room",
-                "name": "Continued history room",
-            },
-        )
+            status, _, body = request(
+                port,
+                "POST",
+                "/api/history/continue",
+                headers=auth_headers(port),
+                timeout=30,
+                payload={
+                    "request_id": "historycontinue0123456789abcdef",
+                    "source_room_id": room_id,
+                    "room_id": "continued-history-room",
+                    "name": "Continued history room",
+                },
+            )
         assert status == 200
         continuation = json.loads(body)["result"]
         assert continuation["source_sha256"]

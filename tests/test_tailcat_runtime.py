@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -96,6 +97,7 @@ def test_tailcat_preference_defaults_on_and_persists_master_switch(
     assert started == [True]
 
 
+@pytest.mark.skipif(os.name != "nt", reason="managed launcher uses Windows PowerShell")
 def test_managed_launch_owns_one_allowlisted_port_ssh_exit_node_process(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -71,6 +71,7 @@ def test_claude_native_runner_keeps_wcm_secret_out_of_command_and_receipt(
         config,
         executable=executable,
         process_runner=process_runner,
+        runtime_admitted=True,
     ).run([{"role": "user", "content": "Review this."}], message_id="message-a")
 
     assert result.content == "FABLE_OK"

@@ -1,6 +1,6 @@
 {
   "schema": "peerbridge-continuity-manifest/v1",
-  "generated_at_utc": "2026-09-02T12:26:53Z",
+  "generated_at_utc": "2026-09-02T12:50:06Z",
   "claims": {
     "automatic_provider_reply_ready": true,
     "local_alpha_acceptance_ready": true,
@@ -12,17 +12,17 @@
     "tests_failed": 0,
     "tests_passed": 1257,
     "tests_skipped": 6,
-    "release_certified_payload_root_sha256": "3c872a1147f415fde88d34c5113eaf62470dfdd829da54493e3c21804d0f1733",
+    "release_certified_payload_root_sha256": "f7a2ecffc9a63cd29017f9d87e85c8b447a6cc0983dc76e7e47dbf70ac262a36",
     "test_evidence": {
       "command": ".\\.venv\\Scripts\\python.exe -m pytest -q --basetemp <fresh-alpha6-temp> --junitxml .peerbridge\\receipts\\alpha6-full-pytest.xml",
-      "created_at_utc": "2026-09-02T12:26:53Z",
+      "created_at_utc": "2026-09-02T12:50:05Z",
       "schema": "peerbridge.test-evidence.v1",
       "status": "PASS",
       "tests_collected": 1263,
       "tests_failed": 0,
       "tests_passed": 1257,
       "tests_skipped": 6,
-      "tracked_payload_root_sha256": "3c872a1147f415fde88d34c5113eaf62470dfdd829da54493e3c21804d0f1733"
+      "tracked_payload_root_sha256": "f7a2ecffc9a63cd29017f9d87e85c8b447a6cc0983dc76e7e47dbf70ac262a36"
     }
   },
   "peerbridge": {
@@ -32,7 +32,7 @@
     "release_profile": "local-alpha",
     "manifest_excludes_self": "docs/continuity-manifest.json",
     "payload_root_algorithm": "sha256(path\\0bytes\\0sha256\\n for sorted entries)",
-    "tracked_payload_root_sha256": "3c872a1147f415fde88d34c5113eaf62470dfdd829da54493e3c21804d0f1733",
+    "tracked_payload_root_sha256": "f7a2ecffc9a63cd29017f9d87e85c8b447a6cc0983dc76e7e47dbf70ac262a36",
     "tracked_payload_file_count": 295,
     "source_files": [
       {
@@ -1061,9 +1061,9 @@
         "sha256": "68d3e321fc89d545cb814a351f69ede906e8e7b5c997a121672d7e30c560bd38"
       },
       {
-        "bytes": 84263,
+        "bytes": 84271,
         "path": "tests/test_mailbox_supervisor.py",
-        "sha256": "b0aa4bd7992be1d6708942caa91cb29c5561927bdd16982f33e026b96c1941d4"
+        "sha256": "ee013ee64fb74d9d4fca66e6ed063bb90650e04292e0a42df93d10cc5033a52b"
       },
       {
         "bytes": 27465,

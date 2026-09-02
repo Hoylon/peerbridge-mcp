@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import json
 import os
@@ -236,6 +237,325 @@ def auth_headers(port: int, **extra: str) -> dict[str, str]:
         "Origin": f"http://127.0.0.1:{port}",
         **extra,
     }
+
+
+def test_tailcat_master_switch_is_default_on_and_calls_the_local_runtime(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    with running_server(tmp_path, db) as (port, _server):
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/remote/status",
+            headers=auth_headers(port),
+        )
+        assert status == 200
+        remote = json.loads(body)
+        assert remote["tailcat"]["enabled"] is True
+        assert remote["tailcat"]["management_available"] is True
+
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/tailcat/enabled",
+            headers=auth_headers(port),
+            payload={"request_id": "tailcat-disable-0001", "enabled": False},
+        )
+        assert status == 200
+        result = json.loads(body)["result"]
+        assert result["enabled"] is False
+        assert result["phase"] == "disabled"
+
+
+@pytest.mark.parametrize(
+    "disconnect_error",
+    (BrokenPipeError(), ConnectionAbortedError(), ConnectionResetError()),
+)
+def test_workbench_response_treats_client_disconnect_as_normal(
+    disconnect_error: OSError,
+) -> None:
+    class ClosedWriter:
+        def write(self, _body: bytes) -> None:
+            raise disconnect_error
+
+    handler = SimpleNamespace(
+        send_response=lambda _status: None,
+        send_header=lambda _key, _value: None,
+        end_headers=lambda: None,
+        _security_headers=lambda: {},
+        wfile=ClosedWriter(),
+    )
+
+    workbench_module.WorkbenchHandler._send(
+        handler,
+        200,
+        b"response",
+        "text/plain",
+    )
+    server = object.__new__(workbench_module.WorkbenchServer)
+    try:
+        raise disconnect_error
+    except OSError:
+        server.handle_error(None, ("127.0.0.1", 1))
+
+
+def test_full_remote_workbench_requires_tailnet_identity_and_private_token(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    public_origin = "https://peerbridge-fixture.example.ts.net"
+    login = "operator@example.test"
+    server = make_server(
+        tmp_path,
+        db,
+        "scope-a",
+        port=0,
+        token=TOKEN,
+        initial_room_id="alpha",
+        instance_id="remote-workbench-test",
+        remote_public_origin=public_origin,
+        remote_allowed_logins={login},
+        remote_evidence_run_id="mobile-e2e-test",
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    port = int(server.server_address[1])
+    try:
+        status, _, body = request(port, "GET", "/healthz")
+        assert status == 200
+        assert json.loads(body) == {
+            "status": "ok",
+            "transport": "tailscale-workbench",
+            "instance_id": "remote-workbench-test",
+            "token_sha256": hashlib.sha256(TOKEN.encode()).hexdigest(),
+            "process_id": os.getpid(),
+            "proxy_credential_sha256": hashlib.sha256(TOKEN.encode()).hexdigest(),
+            "surface": "full-workspace",
+            "evidence_run_id": "mobile-e2e-test",
+        }
+
+        base = {
+            "Host": "peerbridge-fixture.example.ts.net",
+            "Authorization": f"Bearer {TOKEN}",
+        }
+        pair_url = workbench_module._issue_remote_pair_url(
+            tmp_path,
+            public_origin=public_origin,
+            scope="scope-a",
+            instance_id="remote-workbench-test",
+            credential_sha256=hashlib.sha256(TOKEN.encode()).hexdigest(),
+        )
+        pair_code = urllib.parse.parse_qs(
+            urllib.parse.urlsplit(pair_url).query
+        )["pair_code"][0]
+        pair_headers = {
+            "Host": "peerbridge-fixture.example.ts.net",
+            "Origin": public_origin,
+            "Tailscale-User-Login": login,
+        }
+        status, headers, _ = request(
+            port,
+            "GET",
+            f"/?view=remote&pair_code={urllib.parse.quote(pair_code)}",
+            headers={
+                "Host": "peerbridge-fixture.example.ts.net",
+                "Tailscale-User-Login": login,
+            },
+        )
+        assert status == 200
+        assert headers["Referrer-Policy"] == "no-referrer"
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/remote/exchange",
+            headers=pair_headers,
+            payload={"pair_code": pair_code},
+        )
+        assert status == 200
+        assert json.loads(body) == {"access_token": TOKEN}
+        status, _, _ = request(
+            port,
+            "POST",
+            "/api/remote/exchange",
+            headers=pair_headers,
+            payload={"pair_code": pair_code},
+        )
+        assert status == 400
+        status, _, _ = request(
+            port, "GET", "/api/bootstrap?room_id=alpha", headers=base
+        )
+        assert status == 401
+        status, _, _ = request(
+            port,
+            "GET",
+            "/api/bootstrap?room_id=alpha",
+            headers={**base, "Tailscale-User-Login": "other@example.test"},
+        )
+        assert status == 403
+        status, _, body = request(
+            port,
+            "GET",
+            "/api/bootstrap?room_id=alpha",
+            headers={**base, "Tailscale-User-Login": login},
+        )
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["room_id"] == "alpha"
+        assert any(room["room_id"] == "alpha" for room in payload["rooms"])
+        assert payload["client_surface"] == "remote"
+        assert "/api/message" in payload["allowed_remote_actions"]
+        assert "/api/provider/save" not in payload["allowed_remote_actions"]
+
+        write_headers = {
+            **base,
+            "Tailscale-User-Login": login,
+            "Origin": public_origin,
+        }
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/provider/save",
+            headers=write_headers,
+            payload={"request_id": "remoteproviderdeny0001"},
+        )
+        assert status == 403
+        assert json.loads(body)["error"] == (
+            "this action is available only in the local control room"
+        )
+
+        message_payload = {
+            "request_id": "remotemessageallow0001",
+            "room_id": "alpha",
+            "recipient": "*",
+            "task_id": "remote-message-test",
+            "subject": "Remote message",
+            "body": "Bounded remote message",
+            "priority": "normal",
+            "attachments": [],
+        }
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/message",
+            headers=write_headers,
+            payload=message_payload,
+        )
+        assert status == 201
+        assert json.loads(body)["status"] == "sent"
+
+        status, _, body = request(
+            port,
+            "POST",
+            "/api/message",
+            headers=write_headers,
+            payload={
+                **message_payload,
+                "request_id": "remoteattachmentdeny01",
+                "attachments": [{"name": "note.txt", "content_base64": "eA=="}],
+            },
+        )
+        assert status == 400
+        assert json.loads(body)["error"] == "remote message attachments are not enabled"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+        assert not thread.is_alive()
+
+
+def test_remote_identity_settings_require_valid_tsnet_origin(tmp_path: Path) -> None:
+    db = tmp_path / "bridge.sqlite3"
+    seed(tmp_path, db)
+    with pytest.raises(WorkbenchError, match="remote origin"):
+        make_server(
+            tmp_path,
+            db,
+            "scope-a",
+            token=TOKEN,
+            remote_public_origin="http://127.0.0.1:8765",
+            remote_allowed_logins={"operator@example.test"},
+        )
+
+
+@pytest.mark.parametrize(
+    ("ownership_name", "legacy_primary"),
+    (("remote-control.pid", False), ("remote-control-v2.pid", True)),
+)
+def test_private_remote_link_requires_transitive_launcher_binding(
+    tmp_path: Path,
+    ownership_name: str,
+    legacy_primary: bool,
+) -> None:
+    state = tmp_path / ".peerbridge"
+    state.mkdir()
+    token = TOKEN + "-remote-link-fixture"
+    token_sha256 = hashlib.sha256(token.encode("ascii")).hexdigest()
+    ownership = {
+        "pid": 1234,
+        "start_time_utc_ticks": 5678,
+        "port": 8765,
+        "scope": "scope-a",
+        "instance_id": "remote-link-test",
+        "proxy_credential_sha256": token_sha256,
+    }
+    if legacy_primary:
+        (state / "remote-control.pid").write_text("1234", encoding="ascii")
+    (state / ownership_name).write_text(json.dumps(ownership), encoding="ascii")
+    serve = {
+        "public_origin": "https://peerbridge-fixture.example.ts.net",
+        "local_backend": "http://127.0.0.1:8765",
+        "scope": "scope-a",
+        "transport": "tailscale-serve",
+        "tailnet_only": True,
+        "funnel_enabled": False,
+        "proxy_credential_sha256": token_sha256,
+    }
+    (state / "remote-control-serve.json").write_text(
+        json.dumps(serve), encoding="utf-8"
+    )
+    expected = f"https://peerbridge-fixture.example.ts.net/#access_token={token}"
+    access = state / "remote-control-access-url.txt"
+    access.write_text(expected, encoding="utf-8")
+
+    pair_url = workbench_module._remote_access_url(tmp_path)
+    parsed = urllib.parse.urlsplit(pair_url)
+    query = urllib.parse.parse_qs(parsed.query)
+    assert f"{parsed.scheme}://{parsed.netloc}" == serve["public_origin"]
+    assert query["view"] == ["remote"]
+    assert "access_token" not in pair_url
+    pair_code = query["pair_code"][0]
+    assert workbench_module._consume_remote_pair_code(
+        tmp_path,
+        pair_code,
+        scope="scope-a",
+        instance_id="remote-link-test",
+        public_origin=serve["public_origin"],
+        token=token,
+    ) == token
+    with pytest.raises(WorkbenchError, match="invalid or expired"):
+        workbench_module._consume_remote_pair_code(
+            tmp_path,
+            pair_code,
+            scope="scope-a",
+            instance_id="remote-link-test",
+            public_origin=serve["public_origin"],
+            token=token,
+        )
+
+    access.write_text(expected + "changed", encoding="utf-8")
+    with pytest.raises(WorkbenchError, match="binding failed"):
+        workbench_module._remote_access_url(tmp_path)
+
+    access.write_text(expected, encoding="utf-8")
+    serve["funnel_enabled"] = True
+    (state / "remote-control-serve.json").write_text(
+        json.dumps(serve), encoding="utf-8"
+    )
+    with pytest.raises(WorkbenchError, match="binding failed"):
+        workbench_module._remote_access_url(tmp_path)
 
 
 def test_workbench_exposes_read_only_update_check(
@@ -962,8 +1282,8 @@ def test_workbench_is_loopback_only_and_static_assets_are_hardened(tmp_path: Pat
         assert b'id="history-dialog"' in body
         assert b'id="import-history"' in body
         assert b'id="identity-authorize-form"' in body
-        assert b'/assets/app.css?v=alpha52-20260827-21' in body
-        assert b'/assets/app.js?v=alpha52-20260827-21' in body
+        assert b'/assets/app.css?v=alpha52-20260827-26' in body
+        assert b'/assets/app.js?v=alpha52-20260827-26' in body
         assert b'id="chat-focus-button"' in body
         assert b'id="room-search-button"' in body
         assert b'id="announcement-button"' in body
@@ -1076,6 +1396,7 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     )
     html = (asset_root / "index.html").read_text(encoding="utf-8")
     javascript = (asset_root / "app.js").read_text(encoding="utf-8")
+    stylesheet = (asset_root / "app.css").read_text(encoding="utf-8")
     expected = {
         "cockpit": "renderCockpit",
         "chat": "renderMessages",
@@ -1085,6 +1406,7 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
         "audit": "renderAudit",
         "trust": "renderTrust",
         "connect": "renderConnections",
+        "remote": "renderRemoteStatus",
         "memory": "renderMemory",
         "feedback": "renderSupport",
         "usage": "renderUsage",
@@ -1103,6 +1425,62 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     assert javascript.count("session_action_completed:") == 3
     assert 'byId("managed-session-status").textContent = `${t("session_action_completed")}' in javascript
     assert 'document.querySelector(".content-view.active-view")?.scrollTo({ top: 0' in javascript
+    assert "function navigateView(view" in javascript
+    assert 'window.addEventListener("popstate"' in javascript
+    assert 'id="mobile-tabbar"' in html
+    assert 'id="mobile-sidebar-backdrop"' in html
+    assert 'id="mobile-sidebar-close"' in html
+    assert 'data-view="chat"' in html
+    assert 'id="overview-toggle"' in html
+    assert 'id="composer-options-toggle"' in html
+    assert 'id="message-body" rows="1"' in html
+    assert 'id="remote-view"' in html
+    assert 'id="remote-share-link"' in html
+    assert 'data-remote-device="phone"' in html
+    assert 'data-remote-device="computer"' in html
+    assert 'class="action-panel remote-control-panel tailcat-panel"' in html
+    assert 'id="tailcat-enabled" type="checkbox" checked' in html
+    assert 'id="tailcat-restart"' in html
+    assert 'id="tailcat-copy-address"' in html
+    assert 'id="tailcat-open-pairing"' in html
+    assert "function renderTailcatStatus(" in javascript
+    assert 'postAction("/api/tailcat/enabled", { enabled })' in javascript
+    assert 'id="access-body"' in html
+    assert 'fetchWithTimeout("/api/remote/exchange"' in javascript
+    assert 'query.get("pair_code")' in javascript
+    assert 'sessionStorage.setItem(workbenchSessionStorageKey, state.token)' in javascript
+    assert 'byId("access-body").textContent = t("remote_pair_required")' in javascript
+    assert "function setMobileSidebar(" in javascript
+    assert "function setOverviewExpanded(" in javascript
+    assert "function setComposerOptionsOpen(" in javascript
+    assert "function resizeComposerInput(" in javascript
+    assert ".mobile-drawer-backdrop" in stylesheet
+    assert "overflow-y: auto" in stylesheet
+    assert ".composer.options-open" in stylesheet
+    assert ".tailcat-panel.is-disabled" in stylesheet
+    assert 'id="workbench-mode-label"' in html
+    assert 'const remoteReady = Boolean(' in javascript
+    assert 'node("details", "operation-detail")' in javascript
+    assert 'row.dataset.operationState = status' in javascript
+    assert "function renderAgentEventList(" in javascript
+    assert 'node("details", "agent-event-detail")' in javascript
+    assert "function applyClientSurfacePolicy()" in javascript
+    assert "function shareRemoteAccessLink()" in javascript
+    assert "function renderRemoteDevice()" in javascript
+    assert 'state.data?.client_surface === "remote"' in javascript
+    assert javascript.count('remote_workbench:') == 3
+    assert ".content-view { display: none; min-width: 0;" in stylesheet
+    assert "@media (max-width: 420px)" in stylesheet
+    assert ".operation-row.is-running::before" in stylesheet
+    assert ".agent-event-row.is-running .agent-event-dot" in stylesheet
+    assert "--sidebar: 248px" in stylesheet
+    assert "--inspector: 304px" in stylesheet
+    assert 'handle.addEventListener("dblclick"' in javascript
+    assert '"--sidebar", 200, 380' in javascript
+    assert '"--inspector", 260, 480' in javascript
+    assert 'peerbridge.workbenchPanelLayoutVersion' in javascript
+    assert ".review-workspace" in stylesheet
+    assert ".transient-change-card" in stylesheet
     assert 'id="locale-select"' in html
     assert '<span>文 / EN</span>' in html
     assert 'id="ccswitch-form"' in html
@@ -1117,14 +1495,20 @@ def test_workbench_navigation_panels_and_renderers_stay_in_sync() -> None:
     assert 'id="seat-reasoning"' in html
     assert 'id="agent-runtime-strip"' in html
     assert 'id="worktree-diff-view"' in html
+    assert 'class="review-workspace"' in html
+    assert 'class="work-change-ledger"' in html
     assert 'function agentRuntime(agentId)' in javascript
+    assert 'function renderTransientChanges(group)' in javascript
+    assert 'function renderRichMessageBody(value)' in javascript
+    assert 'function splitWorktreePatch(diff)' in javascript
+    assert 'node("span", "diff-line-number"' in javascript
     assert 'function syncAutomationLimitControls()' in javascript
     assert 'node("span", "dispatch-activity", `${t("doing_now")}: ${activity}`)' in javascript
     assert 'function renderAgentRuntimeStrip()' in javascript
     assert 'function fetchWorktreeDiff(force = false)' in javascript
     assert 'const MAX_DIFF_RENDER_LINES = 4000' in javascript
     assert 'const MAX_MODEL_OPTIONS = 500' in javascript
-    assert 'patchLines.slice(0, MAX_DIFF_RENDER_LINES)' in javascript
+    assert 'renderedLines >= MAX_DIFF_RENDER_LINES' in javascript
     assert 'permissionEvidence ? permissionTierLabel(permissionEvidence) : t("unknown")' in javascript
     assert 'recentObservable(latestObservableEvent, ["created_utc"], 180000)' in javascript
     assert workbench_module.PRIMARY_OFFICIAL_AGENT_IDS == frozenset(

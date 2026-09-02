@@ -7,6 +7,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 
 ## [Unreleased]
 
+## [0.1.0-alpha.6] - 2026-09-02
+
 ### Added
 
 - Added free-discussion and goal-until-complete room automation with bounded dispatch,
@@ -18,8 +20,14 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Added an agent-readable `DESIGN.md` contract and a responsive remote workspace with room
   navigation, Conversation / Work / Agent / Activity views, audited messages, and real
   pause/resume/continue/stop controls.
-- Added a default-off Tailcat CLI toolkit for ephemeral ports, protected SSH proxying,
-  file transfer, SOCKS5 commands, and an explicitly gated exit-node experiment.
+- Added a default-on Tailcat manager that downloads the pinned official Windows release,
+  verifies both archive and executable SHA-256, provisions protected project-local
+  identities, and auto-starts one owned Port, SSH, and Exit node service.
+- Added a small Tailcat master switch, live install/runtime states, connection-address
+  copy, pairing-folder access, and the existing on-demand file/SOCKS5 CLI tools.
+- Added short-lived, one-use remote pairing links. Messaging apps may preserve the query
+  code even when they drop URL fragments; the authenticated remote backend exchanges it
+  for a session-only token and removes it from browser history before loading room data.
 
 ### Changed
 
@@ -27,19 +35,48 @@ Alpha 5.1, Alpha 5.2, and so on.
   counts and SHA bindings instead of competing under an ambiguous combined total.
 - Expanded the remote experience from a phone-only narrow page to one shared desktop and
   mobile information model while retaining Tailscale Serve as the production browser path.
+- Unified observable Agent activity across local desktop, remote desktop, and phone views
+  with expandable operation/session evidence and explicit running, waiting, completion,
+  failure, retry, and cancellation states.
+- Integrated code review into a dedicated responsive workspace with selectable files,
+  sticky file headers, line numbers, bounded per-file diffs, and a compact permanent Work
+  ledger instead of a detached patch panel.
+- Added safe rich Agent responses for fenced code, links, lists, and Markdown tables without
+  rendering untrusted HTML. In-progress file changes appear in their chat turn and move out
+  of chat at the task terminal boundary while remaining in Work.
+- Added a three-step Phone / Another computer remote setup flow. The other device needs only
+  Tailscale and a browser; Tailcat is now fully visible and enabled by default.
+- Made the mobile conversation primary: the collaboration summary and composer now default
+  to one compact row, with metrics and message settings available through explicit toggles.
 
 ### Fixed
 
 - Applied the stable Windows AppUserModelID before Modern WebView creation and reapplied
-  the packaged large/small icons to the real top-level HWND, fixing missing taskbar branding.
+  the packaged large/small icons to the real top-level HWND. The WebView window now also
+  sets its own AppUserModelID and relaunch icon property, fixing host-process taskbar branding.
 - Preserved actionable dispatch subjects and terminal activity while distinguishing stale,
   retryable, failed, completed, and active Agent state.
+- Removed narrow-phone clipping in the composer, header, remote controls, and status bands;
+  browser Back now restores the prior room/view instead of leaving a dead page.
+- Made the full mobile navigation drawer vertically scrollable, added a dimmed outside
+  backdrop and close button, and added Chat as a direct drawer destination.
+- Compacted the vertical workspace/governance/system navigation rhythm while keeping room
+  rows readable. Both desktop side panels now have visible drag handles, keyboard resizing,
+  persisted widths, and double-click reset; mobile retains 44px touch targets.
+- Moved resize handles inside their clipped panels so their full hit targets actually receive
+  pointer input instead of appearing draggable without changing the layout.
+- Bound every copyable remote URL to the live launcher ownership, full-workspace health,
+  Tailscale Serve scope/port, Funnel-off state, and private credential SHA-256.
+- Made the Windows PowerShell 5.1 launcher load its signature-verification module from
+  `$PSHOME`, fixing fail-closed desktop revalidation when PowerShell 7 supplied a different
+  inherited module search path.
 
 ### Security
 
-- Kept Tailcat experimental and independently gated: every server run is foreground and
-  ephemeral, requires a caller-verified binary SHA-256 and allowed client key, rejects
-  reparse points, and never launches `no-auth-ssh`.
+- Kept Tailcat independently gated despite default-on discovery: the managed server has a
+  non-empty client-key allow-list, protected persistent identities, a pinned executable
+  hash, and a kill-on-close Job Object. Standalone runs remain foreground and SHA-bound;
+  neither path launches `no-auth-ssh`.
 - Excluded local context imports and provider-specific route helpers from the public Git
   payload; no remote transport token is treated as PeerBridge authorization.
 
@@ -380,7 +417,8 @@ Alpha 5.1, Alpha 5.2, and so on.
 - Arbitrary agent identities, configurable N-peer review quorum, and multi-agent monitor tiles.
 - Additive schema v1/v2-to-v4 migration and subprocess stdio interoperability tests.
 
-[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.5.6...HEAD
+[Unreleased]: https://github.com/hoylon/peerbridge-mcp/compare/v0.1.0-alpha.6...HEAD
+[0.1.0-alpha.6]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.6
 [0.1.0-alpha.5.6]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.6
 [0.1.0-alpha.5.5]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.5
 [0.1.0-alpha.5.4]: https://github.com/hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.4

@@ -830,6 +830,7 @@ def run_remote(
     instance_id: str | None = None,
     evidence_run_id: str | None = None,
     evidence_minimum_gap_seconds: int = 10,
+    full_workspace: bool = False,
     proxy_credential: str | None = None,
 ) -> int:
     if not 1 <= int(port) <= 65535:
@@ -840,19 +841,36 @@ def run_remote(
         PROXY_CREDENTIAL_ENV,
         "",
     )
-    server = make_server(
-        project_root,
-        db_path,
-        scope,
-        host,
-        port,
-        allowed_logins,
-        proxy_credential=runtime_proxy_credential,
-        public_origin=public_origin,
-        instance_id=instance_id,
-        evidence_run_id=evidence_run_id,
-        evidence_minimum_gap_seconds=evidence_minimum_gap_seconds,
-    )
+    if full_workspace:
+        if not _is_loopback(host):
+            raise RemoteControlError("full remote workspace must bind to loopback")
+        from .local_workbench import make_server as make_workbench_server
+
+        server = make_workbench_server(
+            project_root,
+            db_path,
+            scope,
+            port=port,
+            token=runtime_proxy_credential,
+            instance_id=instance_id,
+            remote_public_origin=public_origin,
+            remote_allowed_logins=allowed_logins,
+            remote_evidence_run_id=evidence_run_id,
+        )
+    else:
+        server = make_server(
+            project_root,
+            db_path,
+            scope,
+            host,
+            port,
+            allowed_logins,
+            proxy_credential=runtime_proxy_credential,
+            public_origin=public_origin,
+            instance_id=instance_id,
+            evidence_run_id=evidence_run_id,
+            evidence_minimum_gap_seconds=evidence_minimum_gap_seconds,
+        )
     try:
         server.serve_forever(poll_interval=0.25)
     except KeyboardInterrupt:
@@ -874,6 +892,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--instance-id")
     parser.add_argument("--evidence-run-id")
     parser.add_argument("--evidence-minimum-gap-seconds", type=int, default=10)
+    parser.add_argument("--full-workspace", action="store_true")
     args = parser.parse_args(argv)
     root = args.project_root.resolve()
     db = args.db.resolve() if args.db else root / ".peerbridge" / "peerbridge.sqlite3"
@@ -889,6 +908,7 @@ def main(argv: list[str] | None = None) -> int:
             args.instance_id,
             args.evidence_run_id,
             args.evidence_minimum_gap_seconds,
+            args.full_workspace,
         )
     except (OSError, RemoteControlError, subprocess.TimeoutExpired, ValueError) as exc:
         print(f"peerbridge-remote: {exc}")

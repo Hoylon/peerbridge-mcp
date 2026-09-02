@@ -88,5 +88,6 @@
 - Export audit-chain heads to a separate append-only store for higher assurance.
 - Configure MCP client approval prompts for state-changing tools.
 - Run `peerbridge doctor` and project tests before release or handoff.
-- Use Tailscale Serve only. Never use Funnel or expose the loopback backend through a
-  public reverse proxy.
+- Use Tailscale Serve for browser access. The default-on Tailcat CLI service must retain its
+  generated client-key allow-list and may forward only the authenticated remote backend,
+  system SSH port, and exit-node service. Never use Funnel or a public reverse proxy.

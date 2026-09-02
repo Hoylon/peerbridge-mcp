@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PeerBridge Workbench</title>
-  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260827-21">
+  <link rel="stylesheet" href="/assets/app.css?v=alpha52-20260827-26">
 </head>
 <body>
   <div id="access-gate" class="access-gate" hidden>
     <div class="access-panel">
       <div class="brand-mark" aria-hidden="true">PB</div>
       <h1 data-i18n="access_title">無法連接本機工作台</h1>
-      <p data-i18n="access_body">請由 PeerBridge 桌面程式重新開啟 Modern Workbench。</p>
+      <p id="access-body" data-i18n="access_body">請由 PeerBridge 桌面程式重新開啟 Modern Workbench。</p>
     </div>
   </div>
 
@@ -21,9 +21,10 @@
         <img class="bridge-logo" src="/assets/peerbridge-icon.png" alt="" aria-hidden="true">
         <div>
           <strong>PeerBridge</strong>
-          <span data-i18n="local_workbench">本機工作台</span>
+          <span id="workbench-mode-label" data-i18n="local_workbench">本機工作台</span>
         </div>
         <span id="scope-chip" class="scope-chip">LOCAL</span>
+        <button id="mobile-sidebar-close" class="icon-button mobile-only mobile-sidebar-close" type="button" data-i18n-title="close" title="關閉" aria-label="Close">×</button>
       </header>
       <div id="connection-error" class="connection-error" role="alert" hidden></div>
 
@@ -38,6 +39,7 @@
 
       <nav class="primary-nav" aria-label="Workspace">
         <span class="nav-group-label" data-i18n="nav_workspace">工作區</span>
+        <button class="nav-item" type="button" data-view="chat"><span aria-hidden="true">◌</span><span data-i18n="chat">對話</span></button>
         <button class="nav-item" type="button" data-view="cockpit"><span aria-hidden="true">⌁</span><span data-i18n="cockpit">多智能體控制台</span></button>
         <button class="nav-item" type="button" data-view="work"><span aria-hidden="true">✓</span><span data-i18n="tasks">工作板</span><span id="task-count" class="nav-count">0</span></button>
         <span class="nav-group-label" data-i18n="nav_governance">治理與證據</span>
@@ -47,6 +49,7 @@
         <button class="nav-item" type="button" data-view="trust"><span aria-hidden="true">◫</span><span data-i18n="trust">信任與證據</span></button>
         <span class="nav-group-label" data-i18n="nav_system">系統支援</span>
         <button class="nav-item" type="button" data-view="connect"><span aria-hidden="true">⌘</span><span data-i18n="connect">接入</span></button>
+        <button class="nav-item" type="button" data-view="remote"><span aria-hidden="true">⌁</span><span data-i18n="remote_control">遠端控制</span><span id="remote-nav-status" class="nav-count">--</span></button>
         <button class="nav-item" type="button" data-view="memory"><span aria-hidden="true">◉</span><span data-i18n="memory">記憶</span></button>
         <button class="nav-item" type="button" data-view="feedback"><span aria-hidden="true">↗</span><span data-i18n="feedback">意見回饋</span></button>
         <button class="nav-item" type="button" data-view="usage"><span aria-hidden="true">▥</span><span data-i18n="token_usage">Token 使用量</span></button>
@@ -79,8 +82,9 @@
         <button id="appearance-button" class="appearance-button" type="button"><span aria-hidden="true">◐</span><span data-i18n="appearance">外觀</span><small id="appearance-current">Modern</small></button>
         <button id="tutorial-button" class="appearance-button" type="button"><span aria-hidden="true">?</span><span data-i18n="tutorial_title">快速教學</span><small data-i18n="tutorial_short">開始</small></button>
       </footer>
-      <div id="sidebar-resizer" class="panel-resizer panel-resizer-right" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize navigation" aria-valuemin="190" aria-valuemax="320"></div>
+      <div id="sidebar-resizer" class="panel-resizer panel-resizer-right" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize navigation" aria-valuemin="200" aria-valuemax="380" title="拖曳調整；雙擊重設"></div>
     </aside>
+    <button id="mobile-sidebar-backdrop" class="mobile-drawer-backdrop" type="button" data-i18n-title="close" title="關閉選單" aria-label="Close navigation" hidden></button>
 
     <main class="workspace">
       <header class="workspace-header">
@@ -118,6 +122,7 @@
             <div><span data-i18n="dispatch_progress">派送狀態</span><strong id="overview-dispatches">0 / 0</strong></div>
             <div><span data-i18n="audit_events">審計事件</span><strong id="overview-events">0</strong></div>
           </div>
+          <button id="overview-toggle" class="icon-button mobile-only overview-toggle" type="button" data-i18n-title="show_details" title="顯示詳情" aria-label="Show details" aria-expanded="false">⌄</button>
         </section>
         <div id="timeline" class="timeline" aria-live="polite">
           <button id="load-older" class="load-older" type="button" hidden data-i18n="load_older">載入較早訊息</button>
@@ -151,13 +156,14 @@
               </div>
             </details>
           </div>
-          <textarea id="message-body" rows="2" maxlength="20000" data-i18n-placeholder="composer_placeholder" placeholder="向房間發送訊息"></textarea>
+          <textarea id="message-body" rows="1" maxlength="20000" data-i18n-placeholder="composer_placeholder" placeholder="向房間發送訊息"></textarea>
           <div id="slash-palette" class="slash-palette" role="listbox" hidden></div>
           <div id="attachment-list" class="attachment-list" aria-live="polite"></div>
           <div class="composer-toolbar">
             <div class="composer-options">
               <input id="attachment-input" type="file" multiple hidden>
               <button id="attachment-button" class="icon-button" type="button" data-i18n-title="attach" title="附件" aria-label="Attach">＋</button>
+              <button id="composer-options-toggle" class="icon-button mobile-only composer-options-toggle" type="button" data-i18n-title="message_options" title="訊息選項" aria-label="Message options" aria-expanded="false">⋯</button>
               <select id="recipient" aria-label="Recipient"><option value="*" data-i18n="all_agents">全體 Agent</option></select>
               <select id="composer-permission" aria-label="Permission mode" data-i18n-title="permission_mode">
                 <option value="approval-required" data-i18n="mode_approval_required">要求核准</option>
@@ -230,6 +236,14 @@
       <section id="work-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="workspace">工作區</span><h2 data-i18n="tasks">工作板</h2></div><span id="tasks-summary">--</span></div>
         <div id="operation-metrics" class="metric-strip"></div>
+        <div class="split-workspace work-ledger-overview">
+          <section><div class="section-heading"><h3 data-i18n="tasks">工作板</h3><span id="board-task-count">0</span></div><div id="tasks-list" class="summary-list"></div></section>
+          <section><div class="section-heading"><h3 data-i18n="operations">執行佇列</h3><span id="operation-count">0</span></div><div id="operation-list" class="record-list"></div></section>
+        </div>
+        <section class="work-change-ledger">
+          <div class="section-heading"><h3 data-i18n="recorded_changes">已完成變更</h3><span id="recorded-change-count">0</span></div>
+          <div id="change-list" class="record-list wide-record-list"></div>
+        </section>
         <section class="action-panel" aria-labelledby="workflow-heading">
           <div class="section-heading action-panel-heading"><div><h3 id="workflow-heading" data-i18n="enqueue_workflow">派發協作工作流程</h3><p data-i18n="workflow_hint">選擇受治理的工作流程，PeerBridge 會建立可追蹤的執行記錄。</p></div></div>
           <form id="workflow-form" class="action-form workflow-form">
@@ -255,10 +269,6 @@
           <div class="section-heading"><h3 data-i18n="saved_schedules">已儲存排程</h3><span id="schedule-count">0</span></div>
           <div id="schedule-list" class="record-list schedule-list"></div>
         </section>
-        <div class="split-workspace">
-          <section><div class="section-heading"><h3 data-i18n="tasks">工作板</h3><span id="board-task-count">0</span></div><div id="tasks-list" class="summary-list"></div></section>
-          <section><div class="section-heading"><h3 data-i18n="operations">執行佇列</h3><span id="operation-count">0</span></div><div id="operation-list" class="record-list"></div></section>
-        </div>
       </section>
 
       <section id="review-view" class="content-view summary-view">
@@ -276,11 +286,16 @@
             <div><h3 id="worktree-diff-heading" data-i18n="current_code_diff">目前程式碼變更</h3><p data-i18n="current_code_diff_hint">只讀取本專案 Git 工作樹；秘密內容會遮蔽，輸出有大小上限。</p></div>
             <div class="section-actions"><span id="worktree-diff-summary">--</span><button id="worktree-diff-refresh" class="secondary-button" type="button" data-i18n="refresh">重新整理</button></div>
           </div>
-          <div id="worktree-diff-files" class="diff-file-list"></div>
-          <div id="worktree-diff-view" class="diff-view" aria-live="polite"></div>
+          <div class="review-workspace">
+            <aside class="review-file-pane" aria-label="Changed files">
+              <div class="review-file-pane-heading"><span data-i18n="code_files">檔案</span><span id="review-file-count">0</span></div>
+              <div id="worktree-diff-files" class="diff-file-list"></div>
+            </aside>
+            <section class="review-diff-pane">
+              <div id="worktree-diff-view" class="diff-view" aria-live="polite"></div>
+            </section>
+          </div>
         </section>
-        <div class="section-heading"><h3 data-i18n="recorded_changes">已記錄變更</h3><span id="recorded-change-count">0</span></div>
-        <div id="change-list" class="record-list wide-record-list"></div>
       </section>
 
       <section id="audit-view" class="content-view summary-view">
@@ -425,6 +440,78 @@
         </div>
       </section>
 
+      <section id="remote-view" class="content-view summary-view">
+        <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="remote_control">遠端控制</h2></div><span id="remote-summary">--</span></div>
+        <div class="remote-status-band">
+          <div><span data-i18n="tailscale_status">Tailscale</span><strong id="remote-tailscale">--</strong></div>
+          <div><span data-i18n="remote_backend">遠端工作台</span><strong id="remote-backend">--</strong></div>
+          <div><span data-i18n="remote_surface">功能介面</span><strong id="remote-surface">--</strong></div>
+          <div><span data-i18n="tailcat_status">Tailcat</span><strong id="remote-tailcat">--</strong></div>
+        </div>
+        <section class="action-panel remote-control-panel" aria-labelledby="remote-workspace-heading">
+          <div class="section-heading action-panel-heading"><div><h3 id="remote-workspace-heading" data-i18n="remote_workspace">完整遠端工作台</h3><p data-i18n="remote_workspace_hint">手機及遠端電腦使用與桌面相同的房間、工作、Agent、工具活動、審計、記憶和用量介面。</p></div></div>
+          <div class="remote-device-switch segmented-control" role="group" aria-label="Remote device type">
+            <button type="button" class="active" data-remote-device="phone" data-i18n="phone">手機</button>
+            <button type="button" data-remote-device="computer" data-i18n="another_computer">另一部電腦</button>
+          </div>
+          <div class="remote-setup-steps">
+            <section class="remote-setup-step" data-step="network">
+              <span class="remote-step-number">1</span>
+              <div><strong data-i18n="same_tailnet">登入同一個 Tailscale 網絡</strong><p id="remote-device-hint" data-i18n="phone_tailnet_hint">手機開啟 Tailscale 後，不需要安裝 PeerBridge。</p></div>
+            </section>
+            <section class="remote-setup-step" data-step="server">
+              <span class="remote-step-number">2</span>
+              <div><strong data-i18n="enable_remote_step">啟動安全遠端工作台</strong><p data-i18n="enable_remote_hint">只在本機按一次；PeerBridge 會核對 HTTPS、Funnel 關閉及私人憑證。</p>
+                <div class="remote-control-actions remote-server-actions">
+                  <label class="field"><span data-i18n="remote_port">本機連接埠</span><input id="remote-port" type="number" min="1" max="65535" value="8765"></label>
+                  <button id="remote-start" class="primary-button" type="button" data-i18n="start_remote">啟動／重新驗證</button>
+                  <button id="remote-refresh" class="secondary-button" type="button" data-i18n="refresh">重新整理</button>
+                </div>
+              </div>
+            </section>
+            <section class="remote-setup-step" data-step="share">
+              <span class="remote-step-number">3</span>
+              <div><strong data-i18n="open_private_link">在裝置開啟私人連結</strong><p id="remote-open-hint" data-i18n="open_phone_hint">使用系統分享或複製連結到手機。</p>
+                <div class="remote-control-actions remote-share-actions">
+                  <button id="remote-copy-link" class="secondary-button" type="button" data-i18n="copy_private_link">複製私人連結</button>
+                  <button id="remote-share-link" class="secondary-button" type="button" data-i18n="share_private_link">分享到手機</button>
+                </div>
+              </div>
+            </section>
+          </div>
+          <p id="remote-status" class="remote-status-message" role="status"></p>
+          <dl class="remote-facts">
+            <dt data-i18n="public_origin">私人網址</dt><dd id="remote-origin">--</dd>
+            <dt data-i18n="local_backend">本機 Backend</dt><dd id="remote-local-backend">--</dd>
+            <dt data-i18n="remote_security">安全邊界</dt><dd data-i18n="remote_security_value">Tailscale identity + 私人 fragment token；Funnel 必須關閉</dd>
+          </dl>
+        </section>
+        <section class="action-panel remote-control-panel tailcat-panel" aria-labelledby="tailcat-heading">
+          <div class="tailcat-panel-heading">
+            <div><strong id="tailcat-heading" data-i18n="tailcat_advanced">Tailcat 遠端工具</strong><small data-i18n="tailcat_hint">預設自動啟動 Port、SSH 和 Exit node；可隨時關閉。</small></div>
+            <label class="compact-switch" for="tailcat-enabled">
+              <input id="tailcat-enabled" type="checkbox" checked>
+              <span class="switch-track" aria-hidden="true"><span></span></span>
+              <span id="tailcat-toggle-label" data-i18n="enabled">已啟用</span>
+            </label>
+          </div>
+          <p id="tailcat-status-message" class="tailcat-status-message" role="status" data-i18n="tailcat_preparing">正在準備安全連線...</p>
+          <div class="tailcat-boundary"><p data-i18n="tailcat_requires_cli">PeerBridge 會安裝經 SHA 驗證的官方 Tailcat，並建立只供已配對裝置使用的 client key。</p><p data-i18n="tailcat_persistent">重新開啟 PeerBridge 後會自動恢復；關閉主開關會停止整個受管程序。</p></div>
+          <div class="remote-capability-list">
+            <div data-tailcat-service="port"><strong>Port</strong><span id="tailcat-port-status" data-i18n="tailcat_auto_start">自動啟動</span></div>
+            <div><strong data-i18n="files">檔案</strong><span data-i18n="tailcat_on_demand">按需要使用</span></div>
+            <div data-tailcat-service="ssh"><strong>SSH</strong><span id="tailcat-ssh-status" data-i18n="tailcat_auto_start">自動啟動</span></div>
+            <div><strong>SOCKS5</strong><span data-i18n="tailcat_client_side">在連接裝置按需要使用</span></div>
+            <div data-tailcat-service="exit_node"><strong>Exit node</strong><span id="tailcat-exit-status" data-i18n="tailcat_auto_start">自動啟動</span></div>
+          </div>
+          <div class="tailcat-actions">
+            <button id="tailcat-restart" class="secondary-button" type="button" data-i18n="tailcat_restart">重新啟動</button>
+            <button id="tailcat-copy-address" class="secondary-button" type="button" data-i18n="tailcat_copy_address">複製連接地址</button>
+            <button id="tailcat-open-pairing" class="secondary-button" type="button" data-i18n="tailcat_open_pairing">開啟配對資料夾</button>
+          </div>
+        </section>
+      </section>
+
       <section id="memory-view" class="content-view summary-view">
         <div class="summary-header"><div><span data-i18n="nav_system">系統支援</span><h2 data-i18n="memory">記憶</h2></div><span id="memory-summary">--</span></div>
         <div class="split-workspace">
@@ -484,8 +571,16 @@
       </section>
     </main>
 
+    <nav id="mobile-tabbar" class="mobile-tabbar" aria-label="Mobile workspace">
+      <button type="button" data-mobile-view="chat"><span aria-hidden="true">◌</span><span data-i18n="chat">對話</span></button>
+      <button type="button" data-mobile-view="cockpit"><span aria-hidden="true">⌁</span><span data-i18n="agents">Agent</span></button>
+      <button type="button" data-mobile-view="work"><span aria-hidden="true">✓</span><span data-i18n="work">工作</span></button>
+      <button type="button" data-mobile-view="remote"><span aria-hidden="true">⌁</span><span data-i18n="remote_short">遠端</span></button>
+      <button id="mobile-more" type="button"><span aria-hidden="true">•••</span><span data-i18n="more">更多</span></button>
+    </nav>
+
     <aside id="inspector" class="inspector">
-      <div id="inspector-resizer" class="panel-resizer panel-resizer-left" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize inspector" aria-valuemin="260" aria-valuemax="420"></div>
+      <div id="inspector-resizer" class="panel-resizer panel-resizer-left" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize inspector" aria-valuemin="260" aria-valuemax="480" title="拖曳調整；雙擊重設"></div>
       <header class="inspector-header"><strong data-i18n="room_status">房間狀態</strong><button id="inspector-close" class="icon-button" type="button" aria-label="Close">×</button></header>
       <div class="inspector-tabs" role="tablist"><button class="active" type="button" data-inspector="agents" data-i18n="agents">Agent</button><button type="button" data-inspector="work" data-i18n="work">工作</button><button type="button" data-inspector="evidence" data-i18n="evidence">證據</button></div>
       <section id="agents-panel" class="inspector-panel active-panel">
@@ -587,6 +682,6 @@
   </dialog>
 
   <div id="toast" class="toast" role="status" hidden></div>
-  <script src="/assets/app.js?v=alpha52-20260827-21" defer></script>
+  <script src="/assets/app.js?v=alpha52-20260827-26" defer></script>
 </body>
 </html>

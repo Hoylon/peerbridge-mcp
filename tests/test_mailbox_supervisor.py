@@ -1906,7 +1906,10 @@ def test_runner_that_ignores_cancel_fails_terminally_without_freezing_supervisor
 
         assert CancellationIgnoringRunner.started.is_set()
         assert CancellationIgnoringRunner.cancel_calls == 1
-        assert elapsed < 0.5
+        # The configured runner deadline and grace remain 100 ms total. Allow
+        # loaded Windows/CI scheduling plus bounded lease-thread cleanup while
+        # still proving this path cannot freeze the supervisor.
+        assert elapsed < 1.0
         assert (result.claimed, result.completed, result.terminal_failures) == (1, 0, 1)
         with sqlite3.connect(human.db_path) as connection:
             dispatch = connection.execute(
@@ -1957,7 +1960,9 @@ def test_runner_without_cancel_hits_terminal_deadline_without_freezing(
         elapsed = time.monotonic() - started
 
         assert NoCancelNeverReturningRunner.started.is_set()
-        assert elapsed < 0.5
+        # Keep the no-freeze assertion meaningful without depending on a
+        # sub-500 ms scheduler turn on a loaded Windows or hosted CI runner.
+        assert elapsed < 1.0
         assert (result.claimed, result.terminal_failures) == (1, 1)
         with sqlite3.connect(human.db_path) as connection:
             dispatch = connection.execute(

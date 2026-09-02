@@ -60,6 +60,9 @@ def test_windows_launcher_handles_empty_external_output_safely() -> None:
     assert 'Invoke-Tailscale -ArgumentList @("serve", "status", "--json")' in launcher
     assert "Tailscale Serve status is empty after configuration" in launcher
     assert "Write-ServeState" in launcher
+    assert "$LegacySetter = [IO.File].GetMethods()" in launcher
+    assert "[IO.File]::SetAccessControl($Path, $Security)" in launcher
+    assert "[IO.FileSystemAclExtensions]::SetAccessControl($FileInfo, $Security)" in launcher
     assert launcher.index("Assert-ServeConfiguration -ExpectedTarget $TargetBackend") < launcher.rindex("Write-ServeState")
 
 
@@ -350,7 +353,7 @@ def test_remote_main_reports_tailscale_timeout(monkeypatch: pytest.MonkeyPatch) 
     assert main() == 2
 
 
-def test_cli_remote_forwards_mobile_evidence_contract(
+def test_cli_remote_forwards_full_workspace_and_mobile_evidence_contract(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     captured: dict[str, object] = {}
@@ -374,6 +377,7 @@ def test_cli_remote_forwards_mobile_evidence_contract(
                 "mobile-e2e-test",
                 "--evidence-minimum-gap-seconds",
                 "17",
+                "--full-workspace",
             ]
         )
         == 0
@@ -382,6 +386,7 @@ def test_cli_remote_forwards_mobile_evidence_contract(
     assert isinstance(forwarded, tuple)
     assert forwarded[8] == "mobile-e2e-test"
     assert forwarded[9] == 17
+    assert forwarded[10] is True
 
 
 def test_snapshot_is_scope_bound_and_redacts_secret_metadata(tmp_path: Path) -> None:

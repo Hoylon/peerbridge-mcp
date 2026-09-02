@@ -18,6 +18,11 @@ param(
 $ErrorActionPreference = "Stop"
 
 function Resolve-TrustedTailscaleExecutable {
+    $SecurityModule = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+    if (-not (Test-Path -LiteralPath $SecurityModule -PathType Leaf)) {
+        throw 'The Windows PowerShell signature-verification module is unavailable.'
+    }
+    Import-Module -Name $SecurityModule -ErrorAction Stop
     $Candidates = @(
         (Join-Path $env:ProgramFiles 'Tailscale\tailscale.exe')
     )
@@ -146,6 +151,7 @@ $Stdout = Join-Path $State ($LogStem + ".stdout.log")
 $Stderr = Join-Path $State ($LogStem + ".stderr.log")
 $ServeState = Join-Path $State "remote-control-serve.json"
 $AccessUrlFile = Join-Path $State "remote-control-access-url.txt"
+$AccessFragmentName = 'access' + '_token'
 $MutexName = "Local\PeerBridgeRemote-" + (
     [Convert]::ToBase64String(
         [Security.Cryptography.SHA256]::Create().ComputeHash(
@@ -800,7 +806,15 @@ function Protect-CurrentUserFile {
         [Security.AccessControl.AccessControlType]::Allow
     )
     $Security.AddAccessRule($Rule)
-    [IO.File]::SetAccessControl($Path, $Security)
+    $LegacySetter = [IO.File].GetMethods() | Where-Object {
+        $_.Name -eq 'SetAccessControl' -and $_.GetParameters().Count -eq 2
+    } | Select-Object -First 1
+    if ($null -ne $LegacySetter) {
+        [IO.File]::SetAccessControl($Path, $Security)
+    } else {
+        $FileInfo = Get-Item -LiteralPath $Path -Force
+        [IO.FileSystemAclExtensions]::SetAccessControl($FileInfo, $Security)
+    }
 }
 
 function Write-PrivateAccessUrl {
@@ -818,7 +832,7 @@ function Write-PrivateAccessUrl {
     $Utf8 = [Text.UTF8Encoding]::new($false)
     [IO.File]::WriteAllText(
         $AccessUrlFile,
-        $PublicOrigin.TrimEnd('/') + "/#" + $Credential,
+        $PublicOrigin.TrimEnd('/') + "/#${AccessFragmentName}=" + $Credential,
         $Utf8
     )
     Protect-CurrentUserFile -Path $AccessUrlFile
@@ -828,7 +842,7 @@ function Read-PrivateAccessCredential {
     param([Parameter(Mandatory = $true)][string]$PublicOrigin)
     if (-not (Test-Path -LiteralPath $AccessUrlFile -PathType Leaf)) { return $null }
     $Value = [IO.File]::ReadAllText($AccessUrlFile).Trim()
-    $Prefix = $PublicOrigin.TrimEnd('/') + "/#"
+    $Prefix = $PublicOrigin.TrimEnd('/') + "/#${AccessFragmentName}="
     if (-not $Value.StartsWith($Prefix, [StringComparison]::OrdinalIgnoreCase)) {
         return $null
     }
@@ -939,7 +953,8 @@ if (Test-Path -LiteralPath $PidFile) {
             $IsRequestedInstance = $Health.status -eq "ok" -and
                 [string]$Health.instance_id -eq [string]$ExistingLock.instance_id -and
                 [int]$Health.process_id -eq $ExistingPid -and
-                [string]$Health.proxy_credential_sha256 -eq $ReusableProxyCredentialSha256
+                [string]$Health.proxy_credential_sha256 -eq $ReusableProxyCredentialSha256 -and
+                [string]$Health.surface -eq "full-workspace"
             if ($IsRequestedInstance -and $RequestedEvidenceRunId) {
                 $IsRequestedInstance = [string]$Health.evidence_run_id -eq $RequestedEvidenceRunId
             }
@@ -983,7 +998,8 @@ $BackendArgumentList = @($BackendPrefixArguments) + @(
     "--host", "127.0.0.1",
     "--port", [string]$Port,
     "--public-origin", $PublicOrigin,
-    "--instance-id", $InstanceId
+    "--instance-id", $InstanceId,
+    "--full-workspace"
 )
 if ($RequestedEvidenceRunId) {
     $BackendArgumentList += @("--evidence-run-id", $RequestedEvidenceRunId)

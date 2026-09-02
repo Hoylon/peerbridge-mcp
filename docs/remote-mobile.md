@@ -1,6 +1,6 @@
 # Private remote and mobile control
 
-PeerBridge can expose a narrow human control page to devices in the same Tailscale
+PeerBridge can expose its complete responsive human control room to devices in the same Tailscale
 tailnet without renting a server. This is **not** a public MCP endpoint and it is not a
 multi-tenant cloud service.
 
@@ -28,11 +28,16 @@ The responsive desktop/mobile page can:
   providers, Agent presence, and dispatch/tool activity;
 - send an explicit human message through the same MCP `send_message` tool as the desktop
   control room;
+- create a bounded room, cancel a queued/running governed operation, verify the audit
+  chain, and keep browser language/tutorial preferences;
 - pause, resume, continue, or stop an already active room discussion through the existing
   audited `control_discussion` MCP tool.
 
-It cannot run a shell, read arbitrary files, edit provider credentials, apply a patch,
-claim a task, approve a review, or modify project files.
+The same navigation and status components remain visible remotely, but local-authority
+controls are disabled in the browser and rejected again by a server-side allowlist. Remote
+access cannot run a shell, launch or install an Agent, upload an attachment, import history,
+edit provider credentials, switch CC Switch, enqueue new execution workflows, change room
+membership, apply a patch, approve a review, or modify project files.
 
 The interface follows the same information model on a wide desktop and a phone. Desktop uses
 a persistent room rail, work timeline, and inspector. Phone uses a room drawer, compact
@@ -40,13 +45,17 @@ Conversation / Work switch, fixed composer, and safe-area-aware controls. No voi
 button is shown because the current remote backend deliberately denies microphone, camera,
 and arbitrary file permissions.
 
-## Optional Tailcat companion
+## Default-on Tailcat companion
 
-Tailcat support is a default-off CLI companion, not a replacement for this authenticated
-browser path. It covers ephemeral port forwarding, protected SSH proxying, file transfer,
-SOCKS5 commands, and an explicitly gated exit-node experiment. Its current browser WASM demo
-does not provide a production PeerBridge HTTP tunnel and remains DERP-relayed. See
-[experimental Tailcat remote toolkit](tailcat-remote.md) for the exact boundary and launcher.
+Tailcat is visible and enabled by default, not hidden behind an advanced disclosure. The
+local desktop installs the pinned official Windows release after verifying its archive and
+executable SHA-256, creates protected project-local identities, and starts one owned server
+for the PeerBridge port, authenticated SSH forwarding, and exit-node access. A small master
+switch stops or restores that process. File transfer and client-side SOCKS5 remain on-demand.
+
+Tailcat does not replace the authenticated browser path. Its browser WASM demo is not a
+production PeerBridge HTTP tunnel and remains DERP-relayed. See the
+[Tailcat remote toolkit](tailcat-remote.md) for the exact boundary and launcher.
 
 ## Start on Windows
 
@@ -71,13 +80,37 @@ Run:
 ```
 
 The launcher starts a hidden loopback process, waits for `/healthz`, and configures
-Tailscale Serve. It writes the complete private URL, including a browser-only URL-fragment
-credential, to `.peerbridge/remote-control-access-url.txt`. Windows ACLs restrict that file
-to the current operating-system account. Copy the URL from that file to the phone; do not
-paste it into logs, issues, screenshots, or release evidence. The browser removes the
-fragment from its address bar and keeps it in session storage while sending a dedicated
-authorization header to the API. Do not use Tailscale Funnel; Funnel is public internet
-exposure and is outside this design.
+Tailscale Serve. Its internal recovery file retains the launcher credential under a
+current-user Windows ACL, but users should not share that file or copy its URL manually.
+Use **Copy private link** or **Share to phone** in the local Remote page. Each click creates
+a new 15-minute, one-use pairing URL. Messaging applications may carry its query code
+without receiving the real workbench bearer. A link-preview GET cannot consume it; the
+browser performs a same-origin POST, the backend verifies the Tailscale login, exchanges
+the code for a session-only token, and removes the code from browser history before loading
+room data. Do not put either link in logs, issues, screenshots, or release evidence.
+
+Do not use Tailscale Funnel; Funnel is public internet exposure and is outside this design.
+
+The local Remote page provides Copy and Share-to-phone commands only after the launcher,
+Serve mapping, Funnel-off state, ownership record, and credential hash all bind to the same
+healthy instance. Share uses the operating system's Web Share sheet when available and
+falls back to copying the private link; PeerBridge never sends the link to a cloud broker.
+Its guided setup has separate Phone and Another computer modes. Both use the same three
+checks: join the same tailnet, start/verify the local remote workspace once, then open the
+private link. The second computer needs Tailscale and a browser but no PeerBridge install.
+Tailcat remains visible in this page. Its status says installing, provisioning, starting,
+running, stopped, or failed rather than treating a launcher script as a ready service. The
+generated pairing folder contains the private client identity and bounded connection
+commands; copy it only to a device you control.
+
+The `.ts.net` origin normally stays stable for the same machine in the same tailnet, but it
+is not a universal PeerBridge address and different machines/tailnets receive different
+origins. The private fragment credential belongs to one launcher instance and may rotate
+after restart, recovery, or reconfiguration. Multiple approved people can reach the same
+origin only when each person's Tailscale login is explicitly allowed; the private link must
+still be handled as a secret. Managed Tailcat uses a protected persistent server identity so
+its address survives normal PeerBridge restarts. Standalone launcher modes still use
+`--key=new` unless the caller selects `ManagedServer` with an explicit key file.
 
 By default, only the owner identity of the local Tailscale node is authorized. Advanced
 operators can launch `peerbridge remote` directly with repeated `--allow-login` values.

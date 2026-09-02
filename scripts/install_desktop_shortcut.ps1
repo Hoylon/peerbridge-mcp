@@ -20,7 +20,7 @@ if ($ExecutablePath) {
     $shortcutTarget = $ExecutablePath
     $shortcutArguments = "--workspace-launch --project-root `"$projectRoot`" --db `"$database`" --scope `"peerbridge-main`""
     $shortcutWorkingDirectory = $projectRoot
-    $shortcutIcon = $ExecutablePath
+    $shortcutIcon = if (Test-Path -LiteralPath $icon -PathType Leaf) { $icon } else { $ExecutablePath }
 }
 else {
     if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {

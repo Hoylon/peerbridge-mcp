@@ -10,7 +10,8 @@ param(
         "CopyToServer",
         "CopyFromServer",
         "SocksCommand",
-        "ExitNode"
+        "ExitNode",
+        "ManagedServer"
     )]
     [string]$Mode,
 
@@ -24,7 +25,11 @@ param(
     [ValidateRange(1, 65535)]
     [int]$Port = 8765,
 
+    [ValidateRange(1, 65535)]
+    [int]$SshPort = 22,
+
     [string[]]$AllowClientKey = @(),
+    [string]$ServerKeyFile,
     [string]$TokenFile,
     [string]$Directory,
     [string]$Source,
@@ -38,6 +43,24 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [IO.File]::Open(
+        $Path,
+        [IO.FileMode]::Open,
+        [IO.FileAccess]::Read,
+        [IO.FileShare]::Read
+    )
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return ([BitConverter]::ToString($sha256.ComputeHash($stream))).Replace("-", "")
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Resolve-TrustedTailcat {
     param([string]$Path, [string]$Sha256)
 
@@ -50,7 +73,7 @@ function Resolve-TrustedTailcat {
         throw "TailcatPath must name an existing Windows executable."
     }
     $resolved = $item.FullName
-    $observed = (Get-FileHash -LiteralPath $resolved -Algorithm SHA256).Hash
+    $observed = Get-FileSha256 -Path $resolved
     if (-not [string]::Equals($observed, $Sha256, [StringComparison]::OrdinalIgnoreCase)) {
         throw "Tailcat executable SHA-256 does not match ExpectedSha256."
     }
@@ -100,6 +123,19 @@ function Resolve-RegularDirectory {
     $item = Get-Item -LiteralPath $Path -Force
     if (-not $item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         throw "Directory must be an existing non-reparse directory."
+    }
+    return $item.FullName
+}
+
+function Resolve-RegularFile {
+    param([string]$Path, [string]$Description)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Description requires a file path."
+    }
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw "$Description must be an existing non-reparse file."
     }
     return $item.FullName
 }
@@ -172,14 +208,23 @@ switch ($Mode) {
         $arguments += Get-AllowedClientArguments -Keys $AllowClientKey -Required
         $arguments += "exit-node"
     }
+    "ManagedServer" {
+        if (-not $EnableExitNode) {
+            throw "ManagedServer requires the explicit EnableExitNode switch."
+        }
+        $serverKey = Resolve-RegularFile -Path $ServerKeyFile -Description "ManagedServer"
+        $arguments = @("serve", "--full-address", "--key=$serverKey")
+        $arguments += Get-AllowedClientArguments -Keys $AllowClientKey -Required
+        $arguments += "${Port},${SshPort},exit-node"
+    }
 }
 
 if ($arguments -contains "no-auth-ssh") {
     throw "PeerBridge never launches Tailcat no-auth-ssh."
 }
 
-# Foreground execution is intentional: closing this process closes the ephemeral
-# Tailcat key and prevents a forgotten remote listener from surviving silently.
+# Foreground execution is intentional. The desktop's managed mode owns this
+# process tree in a kill-on-close Job Object; standalone modes end with this shell.
 & $tailcat @arguments
 if ($LASTEXITCODE -ne 0) {
     throw "Tailcat exited with code $LASTEXITCODE."

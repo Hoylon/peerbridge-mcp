@@ -5,6 +5,8 @@ $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $pythonw = Join-Path $projectRoot '.venv\Scripts\pythonw.exe'
 $entryScript = Join-Path $PSScriptRoot 'peerbridge_control_room_entry.py'
 $database = Join-Path $projectRoot '.peerbridge\peerbridge.sqlite3'
+$icon = Join-Path $projectRoot 'src\peerbridge_mcp\release_support\peerbridge-icon.ico'
+$appUserModelId = 'PeerBridge.MCP.ControlRoom'
 $scope = 'peerbridge-main'
 $startupTimeoutSeconds = 15
 
@@ -20,6 +22,37 @@ function Show-LaunchError {
     ) | Out-Null
 }
 
+function Register-PeerBridgeAppIdentity {
+    if (-not (Test-Path -LiteralPath $icon -PathType Leaf)) {
+        throw "PeerBridge application icon not found:`n$icon"
+    }
+    $registrationPath = "HKCU:\Software\Classes\AppUserModelId\$appUserModelId"
+    $currentIcon = Get-ItemPropertyValue -LiteralPath $registrationPath -Name 'IconUri' -ErrorAction SilentlyContinue
+    $currentName = Get-ItemPropertyValue -LiteralPath $registrationPath -Name 'DisplayName' -ErrorAction SilentlyContinue
+    $changed = (
+        -not [string]::Equals([string]$currentIcon, [string]$icon, [StringComparison]::OrdinalIgnoreCase) -or
+        [string]$currentName -ne 'PeerBridge MCP Control Room'
+    )
+    New-Item -Path $registrationPath -Force | Out-Null
+    New-ItemProperty -Path $registrationPath -Name 'DisplayName' -Value 'PeerBridge MCP Control Room' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $registrationPath -Name 'IconUri' -Value $icon -PropertyType String -Force | Out-Null
+    if ($changed) {
+        if (-not ('PeerBridge.ShellIdentityRefresh' -as [type])) {
+            Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace PeerBridge {
+    public static class ShellIdentityRefresh {
+        [DllImport("shell32.dll")]
+        public static extern void SHChangeNotify(uint eventId, uint flags, IntPtr item1, IntPtr item2);
+    }
+}
+'@
+        }
+        [PeerBridge.ShellIdentityRefresh]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero)
+    }
+}
+
 if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $pythonw)) {
     Show-LaunchError "PeerBridge Python runtime not found:`n$pythonw"
     exit 1
@@ -27,6 +60,13 @@ if (-not (Test-Path -LiteralPath $python) -or -not (Test-Path -LiteralPath $pyth
 
 if (-not (Test-Path -LiteralPath $entryScript -PathType Leaf)) {
     Show-LaunchError "PeerBridge source launcher not found:`n$entryScript"
+    exit 1
+}
+
+try {
+    Register-PeerBridgeAppIdentity
+} catch {
+    Show-LaunchError $_.Exception.Message
     exit 1
 }
 

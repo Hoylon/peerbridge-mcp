@@ -11,11 +11,13 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import contextlib
 import ctypes
 import hashlib
 import hmac
 import ipaddress
 import json
+import math
 import mimetypes
 import os
 import platform
@@ -151,6 +153,7 @@ from .monitor import (
 from .openai_compatible_runner import RunnerError, discover_provider_models
 from .operation_queue import WORKFLOW_TEMPLATES
 from .secret_scan import redact_secrets
+from .tailcat_runtime import TailcatRuntimeError, TailcatRuntimeManager
 from .updates import check_for_updates
 from .wsl_sandbox import clear_wsl_sandbox_probe_cache, probe_wsl_sandbox
 
@@ -169,15 +172,29 @@ MAX_WORKTREE_GIT_METADATA_BYTES = 512 * 1024
 MAX_PROVIDER_MODEL_OPTIONS = 500
 MAX_DISCOVERED_AGENT_CAPABILITIES = 240
 MAX_SKILL_MANIFEST_BYTES = 1024 * 1024
+REMOTE_PAIR_CODE_TTL_SECONDS = 15 * 60
+MAX_REMOTE_PAIR_CODES = 32
 SAFE_IDENTIFIER = re.compile(r"[A-Za-z0-9_.:-]{1,200}\Z")
 SAFE_ROUTE = re.compile(r"[A-Za-z0-9_.:/-]{1,200}\Z")
 SAFE_MODEL_ID = re.compile(r"[A-Za-z0-9_.:/-]{1,500}\Z")
 SAFE_REQUEST_ID = re.compile(r"[A-Za-z0-9_-]{16,128}\Z")
+SAFE_REMOTE_PAIR_CODE = re.compile(r"[A-Za-z0-9_-]{43,128}\Z")
 WINDOWS_PATH = re.compile(r"(?i)\b[A-Z]:[\\/][^\r\n]*")
 POSIX_PRIVATE_PATH = re.compile(
     r"(?<!\w)/(?:Users|home|var|tmp|etc|private/(?:var|tmp))/[^\s\"']+"
 )
 ALLOWED_PRIORITIES = frozenset({"low", "normal", "high", "critical"})
+REMOTE_ALLOWED_POST_PATHS = frozenset(
+    {
+        "/api/message",
+        "/api/room/create",
+        "/api/discussion/control",
+        "/api/operation/cancel",
+        "/api/audit/verify",
+        "/api/announcements/read",
+        "/api/preferences/save",
+    }
+)
 
 
 def _skill_frontmatter(path: Path) -> tuple[str, str, str] | None:
@@ -386,6 +403,13 @@ def _is_loopback(value: str) -> bool:
         return value.lower() == "localhost"
 
 
+def _normalize_remote_login(value: str) -> str:
+    login = str(value or "").strip().lower()
+    if not login or len(login) > 320 or any(ch in login for ch in "\r\n\x00"):
+        raise WorkbenchError("invalid remote login identity")
+    return login
+
+
 def _redact(value: Any) -> str:
     return redact_secrets("" if value is None else str(value), "[REDACTED CREDENTIAL]")
 
@@ -395,6 +419,421 @@ def _public_text(value: Any) -> str:
     text = _redact(value)
     text = WINDOWS_PATH.sub("[LOCAL PATH]", text)
     return POSIX_PRIVATE_PATH.sub("[LOCAL PATH]", text)
+
+
+def _read_small_remote_json(path: Path, *, encoding: str = "utf-8") -> dict[str, Any]:
+    if (
+        not path.is_file()
+        or _workbench_path_is_reparse(path)
+        or path.stat().st_size > 16 * 1024
+    ):
+        return {}
+    try:
+        value = json.loads(path.read_text(encoding=encoding))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _valid_private_remote_origin(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme.lower() == "https"
+        and parsed.hostname
+        and parsed.hostname.lower().endswith(".ts.net")
+        and parsed.username is None
+        and parsed.password is None
+        and port is None
+        and parsed.path in {"", "/"}
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+def _remote_ownership(project_root: Path) -> dict[str, Any]:
+    state = project_root / ".peerbridge"
+    required = {
+        "pid",
+        "start_time_utc_ticks",
+        "port",
+        "scope",
+        "instance_id",
+        "proxy_credential_sha256",
+    }
+    primary = _read_small_remote_json(state / "remote-control.pid", encoding="ascii")
+    if required.issubset(primary):
+        return primary
+    return _read_small_remote_json(state / "remote-control-v2.pid", encoding="ascii")
+
+
+def _bound_remote_access_url(
+    project_root: Path,
+    *,
+    public_origin: str,
+    credential_sha256: str,
+) -> str:
+    path = project_root / ".peerbridge" / "remote-control-access-url.txt"
+    if (
+        not path.is_file()
+        or _workbench_path_is_reparse(path)
+        or path.stat().st_size > 1024
+        or not _valid_private_remote_origin(public_origin)
+        or re.fullmatch(r"[0-9a-f]{64}", credential_sha256) is None
+    ):
+        raise WorkbenchError("private remote access link is unavailable")
+    value = path.read_text(encoding="utf-8").strip()
+    prefix = public_origin.rstrip("/") + "/#access_token="
+    if not value.startswith(prefix):
+        raise WorkbenchError("private remote access link is invalid")
+    credential = value[len(prefix) :]
+    if re.fullmatch(r"[A-Za-z0-9_-]{43,256}", credential) is None:
+        raise WorkbenchError("private remote access link is invalid")
+    actual_sha256 = hashlib.sha256(credential.encode("ascii")).hexdigest()
+    if not hmac.compare_digest(actual_sha256, credential_sha256):
+        raise WorkbenchError("private remote access link binding failed")
+    return value
+
+
+def _remote_control_status(project_root: Path) -> dict[str, Any]:
+    state = project_root / ".peerbridge"
+    serve_path = state / "remote-control-serve.json"
+    ownership = _remote_ownership(project_root)
+    try:
+        port = int(ownership.get("port") or 8765)
+        process_id = int(ownership.get("pid") or 0)
+    except (TypeError, ValueError):
+        port, process_id, ownership = 8765, 0, {}
+    if not 1 <= port <= 65535 or process_id < 0:
+        port, process_id, ownership = 8765, 0, {}
+    health: dict[str, Any] = {}
+    try:
+        connection = HTTPConnection("127.0.0.1", port, timeout=2)
+        try:
+            connection.request("GET", "/healthz")
+            response = connection.getresponse()
+            body = response.read(MAX_RESPONSE_BYTES)
+        finally:
+            connection.close()
+        if response.status == HTTPStatus.OK:
+            value = json.loads(body)
+            if isinstance(value, dict):
+                health = value
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+        pass
+    tailscale_path = Path(os.environ.get("ProgramFiles", "")) / "Tailscale" / "tailscale.exe"
+    tailscale: dict[str, Any] = {}
+    if tailscale_path.is_file() and not _workbench_path_is_reparse(tailscale_path):
+        try:
+            completed = subprocess.run(
+                [str(tailscale_path), "status", "--json"],
+                cwd=tailscale_path.parent,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=10,
+                creationflags=(subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0),
+                check=False,
+            )
+            if completed.returncode == 0:
+                value = json.loads(completed.stdout)
+                self_node = value.get("Self") if isinstance(value, dict) else {}
+                tailscale = {
+                    "installed": True,
+                    "backend_state": str(value.get("BackendState") or ""),
+                    "online": bool((self_node or {}).get("Online")),
+                    "dns_name": str((self_node or {}).get("DNSName") or "").rstrip("."),
+                    "https_ready": bool(value.get("CertDomains")),
+                }
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+            pass
+    if not tailscale:
+        tailscale = {"installed": tailscale_path.is_file(), "backend_state": "", "online": False, "dns_name": "", "https_ready": False}
+    credential_sha256 = str(ownership.get("proxy_credential_sha256") or "")
+    instance_id = str(ownership.get("instance_id") or "")
+    running = bool(
+        health.get("status") == "ok"
+        and process_id
+        and int(health.get("process_id") or 0) == process_id
+        and instance_id
+        and hmac.compare_digest(str(health.get("instance_id") or ""), instance_id)
+        and re.fullmatch(r"[0-9a-f]{64}", credential_sha256)
+        and hmac.compare_digest(
+            str(health.get("proxy_credential_sha256") or ""),
+            credential_sha256,
+        )
+        and str(health.get("surface") or "") == "full-workspace"
+    )
+    serve_value = _read_small_remote_json(serve_path, encoding="utf-8")
+    public_origin = str(serve_value.get("public_origin") or "")
+    local_backend = str(serve_value.get("local_backend") or "")
+    expected_backend = f"http://127.0.0.1:{port}"
+    serve_bound = bool(
+        serve_value.get("transport") == "tailscale-serve"
+        and serve_value.get("scope") == str(ownership.get("scope") or "")
+        and bool(serve_value.get("tailnet_only"))
+        and not bool(serve_value.get("funnel_enabled"))
+        and _valid_private_remote_origin(public_origin)
+        and local_backend == expected_backend
+        and re.fullmatch(r"[0-9a-f]{64}", credential_sha256)
+        and hmac.compare_digest(
+            str(serve_value.get("proxy_credential_sha256") or ""),
+            credential_sha256,
+        )
+    )
+    serve = {
+        "configured": serve_bound,
+        "tailnet_only": bool(serve_value.get("tailnet_only")),
+        "funnel_enabled": bool(serve_value.get("funnel_enabled")),
+        "public_origin": public_origin if serve_bound else "",
+        "local_backend": local_backend if serve_bound else "",
+    }
+    access_link_bound = False
+    if running and serve_bound:
+        try:
+            _bound_remote_access_url(
+                project_root,
+                public_origin=public_origin,
+                credential_sha256=credential_sha256,
+            )
+            access_link_bound = True
+        except (OSError, UnicodeError, WorkbenchError):
+            pass
+    return {
+        "tailscale": tailscale,
+        "backend": {
+            "running": running,
+            "process_id": process_id or None,
+            "port": port,
+            "surface": str(health.get("surface") or "narrow-control" if health else ""),
+            "instance_id": str(health.get("instance_id") or ""),
+        },
+        "serve": serve,
+        "private_access_file_available": access_link_bound,
+        "tailcat": {
+            "launcher_available": (project_root / "scripts" / "launch_tailcat_remote.ps1").is_file(),
+            "binary_managed_by_peerbridge": False,
+            "browser_transport_supported": False,
+        },
+        "management_local_only": True,
+    }
+
+
+def _start_remote_control(project_root: Path, scope: str, port: int) -> dict[str, Any]:
+    if os.name != "nt" or not 1 <= int(port) <= 65535:
+        raise WorkbenchError("remote launcher requires a valid Windows port")
+    launcher = project_root / "scripts" / "launch_remote_control.ps1"
+    powershell = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if not launcher.is_file() or _workbench_path_is_reparse(launcher) or not powershell.is_file():
+        raise WorkbenchError("trusted remote launcher is unavailable")
+    completed = subprocess.run(
+        [
+            str(powershell),
+            "-NoLogo",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(launcher),
+            "-Port",
+            str(int(port)),
+            "-Scope",
+            scope,
+        ],
+        cwd=project_root,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=90,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise WorkbenchError("remote launcher failed closed")
+    status = _remote_control_status(project_root)
+    if (
+        not status["backend"]["running"]
+        or status["backend"]["surface"] != "full-workspace"
+        or not status["serve"]["configured"]
+        or not status["private_access_file_available"]
+    ):
+        raise WorkbenchError("full remote workspace did not become healthy")
+    return status
+
+
+def _issue_remote_pair_url(
+    project_root: Path,
+    *,
+    public_origin: str,
+    scope: str,
+    instance_id: str,
+    credential_sha256: str,
+) -> str:
+    if (
+        not _valid_private_remote_origin(public_origin)
+        or not SAFE_IDENTIFIER.fullmatch(scope)
+        or not SAFE_IDENTIFIER.fullmatch(instance_id)
+        or re.fullmatch(r"[0-9a-f]{64}", credential_sha256) is None
+    ):
+        raise WorkbenchError("private remote pairing binding failed")
+    directory = project_root / ".peerbridge" / "remote-access-codes"
+    if _workbench_path_is_reparse(directory):
+        raise WorkbenchError("private remote pairing store is unavailable")
+    directory.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    records: list[tuple[float, Path]] = []
+    try:
+        for path in directory.glob("*.json"):
+            if (
+                not path.is_file()
+                or _workbench_path_is_reparse(path)
+                or re.fullmatch(r"[0-9a-f]{64}\.json", path.name) is None
+            ):
+                continue
+            try:
+                value = json.loads(path.read_text(encoding="utf-8"))
+                expires = float(value.get("expires_epoch") or 0)
+                modified = path.stat().st_mtime
+            except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                expires, modified = 0, 0
+            if expires <= now:
+                with contextlib.suppress(FileNotFoundError):
+                    path.unlink()
+            else:
+                records.append((modified, path))
+    except OSError as exc:
+        raise WorkbenchError("private remote pairing store is unavailable") from exc
+    for _, stale in sorted(records)[: max(0, len(records) - MAX_REMOTE_PAIR_CODES + 1)]:
+        with contextlib.suppress(FileNotFoundError):
+            stale.unlink()
+    for _attempt in range(4):
+        code = secrets.token_urlsafe(32)
+        digest = hashlib.sha256(code.encode("ascii")).hexdigest()
+        record_path = directory / f"{digest}.json"
+        record = {
+            "schema": "peerbridge.remote-pair-code.v1",
+            "scope": scope,
+            "instance_id": instance_id,
+            "public_origin": public_origin.rstrip("/"),
+            "proxy_credential_sha256": credential_sha256,
+            "expires_epoch": now + REMOTE_PAIR_CODE_TTL_SECONDS,
+        }
+        encoded = (
+            json.dumps(record, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
+            + "\n"
+        ).encode("ascii")
+        try:
+            with record_path.open("xb") as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except FileExistsError:
+            continue
+        return (
+            f"{public_origin.rstrip('/')}"
+            f"/?view=remote&pair_code={quote(code, safe='')}"
+        )
+    raise WorkbenchError("private remote pairing code could not be created")
+
+
+def _consume_remote_pair_code(
+    project_root: Path,
+    code: str,
+    *,
+    scope: str,
+    instance_id: str,
+    public_origin: str,
+    token: str,
+) -> str:
+    if SAFE_REMOTE_PAIR_CODE.fullmatch(code) is None:
+        raise WorkbenchError("private remote pairing link is invalid or expired")
+    digest = hashlib.sha256(code.encode("ascii")).hexdigest()
+    directory = project_root / ".peerbridge" / "remote-access-codes"
+    record_path = directory / f"{digest}.json"
+    lock_path = directory / f"{digest}.lock"
+    if _workbench_path_is_reparse(directory) or _workbench_path_is_reparse(record_path):
+        raise WorkbenchError("private remote pairing link is invalid or expired")
+    try:
+        descriptor = os.open(
+            lock_path,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o600,
+        )
+        os.close(descriptor)
+    except (FileExistsError, FileNotFoundError, OSError) as exc:
+        raise WorkbenchError("private remote pairing link is invalid or expired") from exc
+    try:
+        if not record_path.is_file() or record_path.stat().st_size > 16 * 1024:
+            raise WorkbenchError("private remote pairing link is invalid or expired")
+        record = json.loads(record_path.read_text(encoding="ascii"))
+        if not isinstance(record, dict):
+            raise WorkbenchError("private remote pairing link is invalid or expired")
+        expected_sha256 = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        expires_epoch = float(record.get("expires_epoch") or 0)
+        now = time.time()
+        if (
+            record.get("schema") != "peerbridge.remote-pair-code.v1"
+            or record.get("scope") != scope
+            or record.get("instance_id") != instance_id
+            or record.get("public_origin") != public_origin.rstrip("/")
+            or not hmac.compare_digest(
+                str(record.get("proxy_credential_sha256") or ""),
+                expected_sha256,
+            )
+            or not math.isfinite(expires_epoch)
+            or not now <= expires_epoch <= now + REMOTE_PAIR_CODE_TTL_SECONDS + 60
+        ):
+            raise WorkbenchError("private remote pairing link is invalid or expired")
+        return token
+    except (OSError, UnicodeError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise WorkbenchError("private remote pairing link is invalid or expired") from exc
+    finally:
+        for path in (record_path, lock_path):
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+
+
+def _remote_access_url(project_root: Path) -> str:
+    state = project_root / ".peerbridge"
+    ownership = _remote_ownership(project_root)
+    serve = _read_small_remote_json(state / "remote-control-serve.json", encoding="utf-8")
+    credential_sha256 = str(ownership.get("proxy_credential_sha256") or "")
+    try:
+        port = int(ownership.get("port") or 0)
+    except (TypeError, ValueError) as exc:
+        raise WorkbenchError("private remote access link binding failed") from exc
+    if (
+        not 1 <= port <= 65535
+        or re.fullmatch(r"[0-9a-f]{64}", credential_sha256) is None
+        or serve.get("transport") != "tailscale-serve"
+        or serve.get("scope") != ownership.get("scope")
+        or not bool(serve.get("tailnet_only"))
+        or bool(serve.get("funnel_enabled"))
+        or str(serve.get("local_backend") or "")
+        != f"http://127.0.0.1:{port}"
+        or not hmac.compare_digest(
+            str(serve.get("proxy_credential_sha256") or ""),
+            credential_sha256,
+        )
+    ):
+        raise WorkbenchError("private remote access link binding failed")
+    _bound_remote_access_url(
+        project_root,
+        public_origin=str(serve.get("public_origin") or ""),
+        credential_sha256=credential_sha256,
+    )
+    return _issue_remote_pair_url(
+        project_root,
+        public_origin=str(serve.get("public_origin") or ""),
+        scope=str(ownership.get("scope") or ""),
+        instance_id=str(ownership.get("instance_id") or ""),
+        credential_sha256=credential_sha256,
+    )
 
 
 def _path_is_within(path: Path, root: Path) -> bool:
@@ -2357,6 +2796,10 @@ class WorkbenchConfig:
     token: str
     initial_room_id: str
     instance_id: str
+    remote_public_origin: str | None = None
+    remote_allowed_logins: frozenset[str] = frozenset()
+    remote_evidence_run_id: str | None = None
+    tailcat_auto_bootstrap: bool = False
 
 
 @dataclass(frozen=True)
@@ -2385,6 +2828,7 @@ class WorkbenchServer(BoundedThreadingHTTPServer):
         self.config = config
         self.reader: BridgeReader | None = None
         self.managed_agents: ManagedAgentManager | HybridManagedAgentManager | None = None
+        self.tailcat_runtime: TailcatRuntimeManager | None = None
         self._session_authorization_lock = threading.Lock()
         self._session_authorizations: dict[str, dict[str, Any]] = {}
         super().__init__(address, WorkbenchHandler)
@@ -2397,10 +2841,30 @@ class WorkbenchServer(BoundedThreadingHTTPServer):
         self._history_selection_lock = threading.Lock()
         self._history_project_key = os.path.normcase(str(config.project_root.resolve()))
         self._history_selections: OrderedDict[str, _HistorySelection] = OrderedDict()
+        self.tailcat_runtime = TailcatRuntimeManager(
+            config.project_root,
+            auto_bootstrap=(
+                config.tailcat_auto_bootstrap and config.remote_public_origin is None
+            ),
+        )
+
+    def handle_error(
+        self,
+        request: Any,
+        client_address: tuple[str, int],
+    ) -> None:
+        error = sys.exc_info()[1]
+        if isinstance(error, (BrokenPipeError, ConnectionAbortedError, ConnectionResetError)):
+            return
+        super().handle_error(request, client_address)
 
     @property
     def origin(self) -> str:
         return f"http://127.0.0.1:{int(self.server_address[1])}"
+
+    @property
+    def browser_origin(self) -> str:
+        return self.config.remote_public_origin or self.origin
 
     def allow_write(self) -> bool:
         now = time.monotonic()
@@ -2571,6 +3035,8 @@ class WorkbenchServer(BoundedThreadingHTTPServer):
         return rows
 
     def server_close(self) -> None:
+        if self.tailcat_runtime is not None:
+            self.tailcat_runtime.close()
         with self._session_authorization_lock:
             self._session_authorizations.clear()
         if self.managed_agents is not None:
@@ -2620,7 +3086,10 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             self.send_header(key, value)
         self.end_headers()
         if body:
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                return
 
     def _json(
         self,
@@ -2646,10 +3115,13 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         return _is_loopback(str(self.client_address[0]))
 
     def _host_is_expected(self) -> bool:
-        expected = {
-            f"127.0.0.1:{int(self.server.server_address[1])}",
-            f"localhost:{int(self.server.server_address[1])}",
-        }
+        if self.server.config.remote_public_origin:
+            expected = {urlsplit(self.server.config.remote_public_origin).netloc.lower()}
+        else:
+            expected = {
+                f"127.0.0.1:{int(self.server.server_address[1])}",
+                f"localhost:{int(self.server.server_address[1])}",
+            }
         return self.headers.get("Host", "").lower() in expected
 
     def _authorized(self) -> bool:
@@ -2661,10 +3133,74 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
         if not hmac.compare_digest(supplied, expected):
             self._json(HTTPStatus.UNAUTHORIZED, {"error": "workbench access required"})
             return False
+        if self.server.config.remote_public_origin:
+            try:
+                login = _normalize_remote_login(
+                    self.headers.get("Tailscale-User-Login", "")
+                )
+            except WorkbenchError as exc:
+                self._json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+                return False
+            if login not in self.server.config.remote_allowed_logins:
+                self._json(HTTPStatus.FORBIDDEN, {"error": "remote identity not authorized"})
+                return False
         return True
 
     def _origin_is_expected(self) -> bool:
-        return self.headers.get("Origin", "").rstrip("/").lower() == self.server.origin.lower()
+        return (
+            self.headers.get("Origin", "").rstrip("/").lower()
+            == self.server.browser_origin.lower()
+        )
+
+    def _remote_pair_identity_authorized(self) -> bool:
+        if (
+            self.server.config.remote_public_origin is None
+            or not self._client_is_loopback()
+            or not self._host_is_expected()
+        ):
+            self._json(HTTPStatus.FORBIDDEN, {"error": "remote pairing rejected"})
+            return False
+        if not self._origin_is_expected():
+            self._json(HTTPStatus.FORBIDDEN, {"error": "origin check failed"})
+            return False
+        try:
+            login = _normalize_remote_login(
+                self.headers.get("Tailscale-User-Login", "")
+            )
+        except WorkbenchError as exc:
+            self._json(HTTPStatus.UNAUTHORIZED, {"error": str(exc)})
+            return False
+        if login not in self.server.config.remote_allowed_logins:
+            self._json(HTTPStatus.FORBIDDEN, {"error": "remote identity not authorized"})
+            return False
+        return True
+
+    def _handle_remote_pair_exchange(self) -> None:
+        if not self._remote_pair_identity_authorized():
+            return
+        if not self.server.allow_write():
+            self._json(
+                HTTPStatus.TOO_MANY_REQUESTS,
+                {"error": "pairing rate limit exceeded"},
+            )
+            return
+        try:
+            payload = self._read_json_request()
+            if set(payload) != {"pair_code"} or not isinstance(
+                payload.get("pair_code"), str
+            ):
+                raise WorkbenchError("private remote pairing link is invalid or expired")
+            access_token = _consume_remote_pair_code(
+                self.server.config.project_root,
+                payload["pair_code"],
+                scope=self.server.config.scope,
+                instance_id=self.server.config.instance_id,
+                public_origin=str(self.server.config.remote_public_origin),
+                token=self.server.config.token,
+            )
+            self._json(HTTPStatus.OK, {"access_token": access_token})
+        except (OSError, json.JSONDecodeError, WorkbenchError, ValueError) as exc:
+            self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
 
     def _asset(self, name: str) -> None:
         paths = {
@@ -2716,17 +3252,30 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             self._asset("peerbridge-pixel-preview.png")
             return
         if parsed.path == "/healthz":
-            self._json(
-                HTTPStatus.OK,
-                {
-                    "status": "ok",
-                    "transport": "loopback",
-                    "instance_id": self.server.config.instance_id,
-                    "token_sha256": hashlib.sha256(
-                        self.server.config.token.encode("utf-8")
-                    ).hexdigest(),
-                },
-            )
+            token_sha256 = hashlib.sha256(
+                self.server.config.token.encode("utf-8")
+            ).hexdigest()
+            payload = {
+                "status": "ok",
+                "transport": (
+                    "tailscale-workbench"
+                    if self.server.config.remote_public_origin
+                    else "loopback"
+                ),
+                "instance_id": self.server.config.instance_id,
+                "token_sha256": token_sha256,
+            }
+            if self.server.config.remote_public_origin:
+                payload.update(
+                    process_id=os.getpid(),
+                    proxy_credential_sha256=token_sha256,
+                    surface="full-workspace",
+                )
+                if self.server.config.remote_evidence_run_id:
+                    payload["evidence_run_id"] = (
+                        self.server.config.remote_evidence_run_id
+                    )
+            self._json(HTTPStatus.OK, payload)
             return
         if parsed.path == "/api/worktree/diff":
             if not self._authorized():
@@ -2740,6 +3289,22 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 )
                 return
             self._json(HTTPStatus.OK, payload)
+            return
+        if parsed.path == "/api/remote/status":
+            if not self._authorized():
+                return
+            payload = _remote_control_status(self.server.config.project_root)
+            payload["management_available"] = (
+                self.server.config.remote_public_origin is None
+            )
+            payload["tailcat"] = self.server.tailcat_runtime.status()
+            payload["tailcat"]["management_available"] = (
+                self.server.config.remote_public_origin is None
+            )
+            self._json(
+                HTTPStatus.OK,
+                payload,
+            )
             return
         if parsed.path != "/api/bootstrap":
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -2761,6 +3326,14 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
                 room_id=room_id,
                 before_sequence=before,
                 managed_sessions=self.server.managed_session_snapshots(),
+            )
+            payload["client_surface"] = (
+                "remote" if self.server.config.remote_public_origin else "local"
+            )
+            payload["allowed_remote_actions"] = (
+                sorted(REMOTE_ALLOWED_POST_PATHS)
+                if self.server.config.remote_public_origin
+                else []
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             self._json(
@@ -2873,7 +3446,58 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             )
             return
         client = self._human_client()
-        if path == "/api/room/create":
+        if path == "/api/remote/start":
+            if self.server.config.remote_public_origin:
+                raise WorkbenchError("remote lifecycle management is local-only")
+            allowed = {"request_id", "port"}
+            if set(payload) != allowed:
+                raise WorkbenchError("unsupported remote start fields")
+            try:
+                port = int(payload.get("port"))
+            except (TypeError, ValueError) as exc:
+                raise WorkbenchError("invalid remote port") from exc
+            result = _start_remote_control(
+                self.server.config.project_root,
+                self.server.config.scope,
+                port,
+            )
+            self.server.tailcat_runtime.set_forward_port(port)
+            result["tailcat"] = self.server.tailcat_runtime.status()
+        elif path == "/api/tailcat/enabled":
+            if self.server.config.remote_public_origin:
+                raise WorkbenchError("Tailcat lifecycle management is local-only")
+            if set(payload) != {"request_id", "enabled"} or not isinstance(
+                payload.get("enabled"), bool
+            ):
+                raise WorkbenchError("invalid Tailcat enabled preference")
+            result = self.server.tailcat_runtime.set_enabled(bool(payload["enabled"]))
+        elif path == "/api/tailcat/restart":
+            if self.server.config.remote_public_origin:
+                raise WorkbenchError("Tailcat lifecycle management is local-only")
+            if set(payload) != {"request_id"}:
+                raise WorkbenchError("unsupported Tailcat restart fields")
+            result = self.server.tailcat_runtime.restart()
+        elif path == "/api/tailcat/access":
+            if self.server.config.remote_public_origin:
+                raise WorkbenchError("Tailcat access retrieval is local-only")
+            if set(payload) != {"request_id"}:
+                raise WorkbenchError("unsupported Tailcat access fields")
+            result = {
+                "connection_address": self.server.tailcat_runtime.connection_address()
+            }
+        elif path == "/api/tailcat/open-pairing-folder":
+            if self.server.config.remote_public_origin:
+                raise WorkbenchError("Tailcat pairing is local-only")
+            if set(payload) != {"request_id"}:
+                raise WorkbenchError("unsupported Tailcat pairing fields")
+            result = self.server.tailcat_runtime.open_pairing_folder()
+        elif path == "/api/remote/access":
+            if self.server.config.remote_public_origin:
+                raise WorkbenchError("private access retrieval is local-only")
+            if set(payload) != {"request_id"}:
+                raise WorkbenchError("unsupported remote access fields")
+            result = {"access_url": _remote_access_url(self.server.config.project_root)}
+        elif path == "/api/room/create":
             allowed = {"request_id", "room_id", "name"}
             if set(payload) - allowed:
                 raise WorkbenchError("unsupported room fields")
@@ -4956,13 +5580,32 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             "/api/preferences/save",
             "/api/audit/verify",
             "/api/capabilities/discover",
+            "/api/remote/exchange",
+            "/api/remote/start",
+            "/api/remote/access",
+            "/api/tailcat/enabled",
+            "/api/tailcat/restart",
+            "/api/tailcat/access",
+            "/api/tailcat/open-pairing-folder",
         }:
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+            return
+        if path == "/api/remote/exchange":
+            self._handle_remote_pair_exchange()
             return
         if not self._authorized():
             return
         if not self._origin_is_expected():
             self._json(HTTPStatus.FORBIDDEN, {"error": "origin check failed"})
+            return
+        if (
+            self.server.config.remote_public_origin
+            and path not in REMOTE_ALLOWED_POST_PATHS
+        ):
+            self._json(
+                HTTPStatus.FORBIDDEN,
+                {"error": "this action is available only in the local control room"},
+            )
             return
         try:
             payload = self._read_json_request()
@@ -5043,6 +5686,8 @@ class WorkbenchHandler(BaseHTTPRequestHandler):
             body = str(payload.get("body") or "").strip()
             priority = str(payload.get("priority") or "normal")
             attachment_rows = payload.get("attachments") or []
+            if self.server.config.remote_public_origin and attachment_rows:
+                raise WorkbenchError("remote message attachments are not enabled")
             if not SAFE_REQUEST_ID.fullmatch(request_id):
                 raise WorkbenchError("invalid request ID")
             for key, value in (("room ID", room_id), ("task ID", task_id)):
@@ -5188,6 +5833,10 @@ def make_server(
     initial_room_id: str = DEFAULT_ROOM_ID,
     instance_id: str | None = None,
     managed_agent_manager: ManagedAgentManager | None = None,
+    remote_public_origin: str | None = None,
+    remote_allowed_logins: set[str] | frozenset[str] = frozenset(),
+    remote_evidence_run_id: str | None = None,
+    tailcat_auto_bootstrap: bool = False,
 ) -> WorkbenchServer:
     root = project_root.resolve()
     lexical_database = Path(db_path).absolute()
@@ -5219,6 +5868,37 @@ def make_server(
     access_token = token or secrets.token_urlsafe(32)
     if len(access_token) < 32:
         raise WorkbenchError("workbench token is too short")
+    normalized_remote_origin: str | None = None
+    normalized_remote_logins: frozenset[str] = frozenset()
+    if remote_public_origin:
+        parsed_origin = urlsplit(str(remote_public_origin))
+        try:
+            parsed_port = parsed_origin.port
+        except ValueError as exc:
+            raise WorkbenchError("remote origin has an invalid port") from exc
+        if (
+            parsed_origin.scheme.lower() != "https"
+            or not parsed_origin.netloc
+            or parsed_origin.username is not None
+            or parsed_origin.password is not None
+            or parsed_origin.path not in {"", "/"}
+            or parsed_origin.query
+            or parsed_origin.fragment
+            or parsed_origin.hostname is None
+            or not parsed_origin.hostname.lower().endswith(".ts.net")
+            or parsed_port is not None
+        ):
+            raise WorkbenchError(
+                "remote origin must be a no-port HTTPS Tailscale .ts.net authority"
+            )
+        normalized_remote_origin = f"https://{parsed_origin.netloc.lower()}"
+        normalized_remote_logins = frozenset(
+            _normalize_remote_login(item) for item in remote_allowed_logins
+        )
+        if not normalized_remote_logins:
+            raise WorkbenchError("at least one remote login must be authorized")
+    elif remote_allowed_logins or remote_evidence_run_id:
+        raise WorkbenchError("remote identity settings require a remote public origin")
     config = WorkbenchConfig(
         project_root=root,
         db_path=database,
@@ -5226,6 +5906,10 @@ def make_server(
         token=access_token,
         initial_room_id=initial_room_id,
         instance_id=instance_id or secrets.token_hex(12),
+        remote_public_origin=normalized_remote_origin,
+        remote_allowed_logins=normalized_remote_logins,
+        remote_evidence_run_id=remote_evidence_run_id,
+        tailcat_auto_bootstrap=bool(tailcat_auto_bootstrap),
     )
     return WorkbenchServer(
         ("127.0.0.1", int(port)),
@@ -5313,6 +5997,111 @@ def _workbench_icon() -> Path | None:
 WORKBENCH_WINDOW_TITLE = "PeerBridge MCP Control Room // LIVE"
 
 
+def _set_windows_window_identity(hwnd: int, ico_path: Path) -> bool:
+    """Bind the taskbar group and relaunch icon to the actual WebView window."""
+    if sys.platform != "win32" or not hwnd or not ico_path.is_file():
+        return False
+
+    class _Guid(ctypes.Structure):
+        _fields_ = (
+            ("data1", ctypes.c_uint32),
+            ("data2", ctypes.c_uint16),
+            ("data3", ctypes.c_uint16),
+            ("data4", ctypes.c_ubyte * 8),
+        )
+
+        @classmethod
+        def parse(cls, value: str) -> "_Guid":
+            parsed = uuid.UUID(value)
+            return cls(
+                parsed.time_low,
+                parsed.time_mid,
+                parsed.time_hi_version,
+                (ctypes.c_ubyte * 8)(*parsed.bytes[8:]),
+            )
+
+    class _PropertyKey(ctypes.Structure):
+        _fields_ = (("format_id", _Guid), ("property_id", ctypes.c_uint32))
+
+    class _PropVariantValue(ctypes.Union):
+        _fields_ = (("pointer", ctypes.c_void_p), ("raw", ctypes.c_ubyte * 16))
+
+    class _PropVariant(ctypes.Structure):
+        _anonymous_ = ("value",)
+        _fields_ = (
+            ("variant_type", ctypes.c_ushort),
+            ("reserved1", ctypes.c_ushort),
+            ("reserved2", ctypes.c_ushort),
+            ("reserved3", ctypes.c_ushort),
+            ("value", _PropVariantValue),
+        )
+
+    store = ctypes.c_void_p()
+    release = None
+    try:
+        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+        ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+        shell32.SHGetPropertyStoreForWindow.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(_Guid),
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        shell32.SHGetPropertyStoreForWindow.restype = ctypes.c_long
+        ole32.CoTaskMemAlloc.argtypes = (ctypes.c_size_t,)
+        ole32.CoTaskMemAlloc.restype = ctypes.c_void_p
+        ole32.PropVariantClear.argtypes = (ctypes.POINTER(_PropVariant),)
+        ole32.PropVariantClear.restype = ctypes.c_long
+
+        interface_id = _Guid.parse("886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99")
+        result = shell32.SHGetPropertyStoreForWindow(
+            ctypes.c_void_p(hwnd),
+            ctypes.byref(interface_id),
+            ctypes.byref(store),
+        )
+        if result < 0 or not store.value:
+            return False
+        vtable = ctypes.cast(
+            store,
+            ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)),
+        ).contents
+        set_value = ctypes.WINFUNCTYPE(
+            ctypes.c_long,
+            ctypes.c_void_p,
+            ctypes.POINTER(_PropertyKey),
+            ctypes.POINTER(_PropVariant),
+        )(vtable[6])
+        commit = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)(vtable[7])
+        release = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(vtable[2])
+        format_id = "9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"
+
+        def put(property_id: int, value: str) -> bool:
+            encoded = (value + "\0").encode("utf-16-le")
+            pointer = ole32.CoTaskMemAlloc(len(encoded))
+            if not pointer:
+                return False
+            ctypes.memmove(pointer, encoded, len(encoded))
+            variant = _PropVariant()
+            variant.variant_type = 31  # VT_LPWSTR
+            variant.pointer = pointer
+            key = _PropertyKey(_Guid.parse(format_id), property_id)
+            try:
+                return set_value(store, ctypes.byref(key), ctypes.byref(variant)) >= 0
+            finally:
+                ole32.PropVariantClear(ctypes.byref(variant))
+
+        icon_resource = f"{ico_path.resolve()},0"
+        if not put(3, icon_resource):  # PKEY_AppUserModel_RelaunchIconResource
+            return False
+        if not put(5, "PeerBridge.MCP.ControlRoom"):  # PKEY_AppUserModel_ID
+            return False
+        return commit(store) >= 0
+    except (AttributeError, OSError, TypeError, ValueError):
+        return False
+    finally:
+        if release is not None and store.value:
+            release(store)
+
+
 def _apply_windows_webview_icon(title: str, ico_path: Path) -> tuple[int, ...]:
     """Apply owned icon handles to this process's visible WebView top-level window."""
     if sys.platform != "win32" or not ico_path.is_file():
@@ -5372,6 +6161,8 @@ def _apply_windows_webview_icon(title: str, ico_path: Path) -> tuple[int, ...]:
         user32.EnumWindows(collect, None)
         if not windows:
             return ()
+        for hwnd in windows:
+            _set_windows_window_identity(hwnd, ico_path)
         handles: list[int] = []
         for size, icon_kind in ((32, 1), (16, 0)):
             handle = int(
@@ -5550,7 +6341,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     root = args.project_root.resolve()
     db = args.db or root / ".peerbridge" / "peerbridge.sqlite3"
-    server = make_server(root, db, args.scope, port=args.port, initial_room_id=args.room)
+    server = make_server(
+        root,
+        db,
+        args.scope,
+        port=args.port,
+        initial_room_id=args.room,
+        tailcat_auto_bootstrap=True,
+    )
     if not args.no_browser:
         native_webview = _load_native_webview()
         if native_webview is not None:

@@ -11,7 +11,8 @@ DOC = ROOT / "docs" / "tailcat-remote.md"
 def test_tailcat_launcher_is_opt_in_hash_bound_and_foreground() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "ExpectedSha256" in source
-    assert "Get-FileHash -LiteralPath $resolved -Algorithm SHA256" in source
+    assert "[Security.Cryptography.SHA256]::Create()" in source
+    assert "$sha256.ComputeHash($stream)" in source
     assert "ReparsePoint" in source
     assert '"--key=new"' in source
     assert "Get-AllowedClientArguments -Keys $AllowClientKey -Required" in source
@@ -30,6 +31,17 @@ def test_tailcat_high_risk_modes_need_separate_switches() -> None:
     assert "ExitNode requires the explicit EnableExitNode switch" in source
     assert '"--files=$served`:$access"' in source
     assert 'Get-Command -Name $CommandPath -CommandType Application' in source
+
+
+def test_tailcat_managed_server_combines_default_services_with_real_gates() -> None:
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert '"ManagedServer"' in source
+    assert "[string]$ServerKeyFile" in source
+    assert "[int]$SshPort = 22" in source
+    assert 'Resolve-RegularFile -Path $ServerKeyFile -Description "ManagedServer"' in source
+    assert 'Get-AllowedClientArguments -Keys $AllowClientKey -Required' in source
+    assert '"${Port},${SshPort},exit-node"' in source
+    assert "ManagedServer requires the explicit EnableExitNode switch" in source
 
 
 def test_tailcat_client_token_is_file_bound_not_a_raw_parameter() -> None:

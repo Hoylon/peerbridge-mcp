@@ -210,6 +210,11 @@ def build_parser() -> argparse.ArgumentParser:
     remote.add_argument("--evidence-run-id")
     remote.add_argument("--evidence-minimum-gap-seconds", type=int, default=10)
     remote.add_argument(
+        "--full-workspace",
+        action="store_true",
+        help="Serve the complete responsive Modern Workbench through Tailscale Serve.",
+    )
+    remote.add_argument(
         "--allow-login",
         action="append",
         default=[],
@@ -495,6 +500,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.instance_id,
                 args.evidence_run_id,
                 args.evidence_minimum_gap_seconds,
+                args.full_workspace,
             )
         if args.command == "supervise":
             root = Path(args.project_root).resolve()

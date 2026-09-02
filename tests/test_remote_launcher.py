@@ -78,6 +78,7 @@ parser.add_argument("--port", type=int)
 parser.add_argument("--public-origin")
 parser.add_argument("--instance-id")
 parser.add_argument("--evidence-run-id")
+parser.add_argument("--full-workspace", action="store_true")
 args = parser.parse_args()
 
 proxy_credential = os.environ.get("PEERBRIDGE_REMOTE_PROXY_CREDENTIAL", "")
@@ -141,6 +142,7 @@ class Handler(BaseHTTPRequestHandler):
             "instance_id": args.instance_id,
             "process_id": os.getpid(),
             "proxy_credential_sha256": proxy_credential_sha256,
+            "surface": "full-workspace",
         }
         if args.evidence_run_id is not None:
             health["evidence_run_id"] = args.evidence_run_id
@@ -630,7 +632,7 @@ def test_success_validates_serve_json_before_tailnet_only_state_write(
 
     access_path = launcher_harness.state / "remote-control-access-url.txt"
     access_url = access_path.read_text(encoding="utf-8")
-    prefix = "https://peerbridge-fixture.example.ts.net/#"
+    prefix = "https://peerbridge-fixture.example.ts.net/#access_token="
     assert access_url.startswith(prefix)
     proxy_credential = access_url[len(prefix) :]
     assert len(proxy_credential) == 64

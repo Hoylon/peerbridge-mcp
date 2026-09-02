@@ -38,9 +38,22 @@ def test_modern_webview_reapplies_windows_identity_and_native_icons() -> None:
     ).read_text(encoding="utf-8")
     assert "configure_windows_app_identity()" in source
     assert "def _apply_windows_webview_icon" in source
+    assert "def _set_windows_window_identity" in source
+    assert "SHGetPropertyStoreForWindow" in source
+    assert "PKEY_AppUserModel_RelaunchIconResource" in source
+    assert "PKEY_AppUserModel_ID" in source
+    assert source.index("PKEY_AppUserModel_RelaunchIconResource") < source.index(
+        "PKEY_AppUserModel_ID"
+    )
     assert "EnumWindows" in source
     assert "WM_SETICON" in source
     assert "release_windows_icon_handles(icon_handles)" in source
+    monitor = (
+        PROJECT_ROOT / "src" / "peerbridge_mcp" / "monitor.py"
+    ).read_text(encoding="utf-8")
+    assert '"IconUri"' in monitor
+    assert "peerbridge-icon.ico" in monitor
+    assert "SHChangeNotify" in monitor
 
 
 def test_portable_verifier_instance_mutex_is_bounded() -> None:
@@ -93,7 +106,7 @@ def test_desktop_shortcut_installer_binds_the_peerbridge_icon() -> None:
     assert '"--workspace-launch --project-root' in script
     assert '--db `"$database`" --scope `"peerbridge-main`"' in script
     assert "$shortcutWorkingDirectory = $projectRoot" in script
-    assert "$shortcutIcon = $ExecutablePath" in script
+    assert "$shortcutIcon = if (Test-Path -LiteralPath $icon" in script
 
 
 def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
@@ -121,6 +134,10 @@ def test_windows_desktop_build_and_launchers_bind_one_managed_runtime() -> None:
     assert "@dataArguments" in build_script
     assert "workbench\\app.js" in build_script
     assert "acpx_runtime_bridge.mjs" in build_script
+    assert "Register-PeerBridgeAppIdentity" in launcher
+    assert "peerbridge-icon.ico" in launcher
+    assert "New-ItemProperty -Path $registrationPath -Name 'IconUri'" in launcher
+    assert "SHChangeNotify" in launcher
     assert "--exclude-module cffi._shimmed_dist_utils" in build_script
     assert "--collect-all cryptography" not in build_script
     for module in (
@@ -614,7 +631,7 @@ def test_alpha_five_is_published_as_a_normal_latest_release() -> None:
     assert "--prerelease" not in workflow
     assert (
         "--notes-file release-publication/docs/"
-        "GITHUB_ALPHA_5_6_RELEASE_DRAFT_20260825.md"
+        "GITHUB_ALPHA_6_RELEASE_20260902.md"
     ) in workflow
     assert "--notes-file docs/GITHUB_ALPHA_RELEASE_DRAFT_20260818.md" not in workflow
 

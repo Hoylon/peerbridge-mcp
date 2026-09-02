@@ -5,11 +5,11 @@
     "zh-Hant": {
       access_title: "無法連接本機工作台", access_body: "請由 PeerBridge 桌面程式重新開啟 Modern Workbench。",
       check_updates: "檢查更新", checking_updates: "正在檢查更新…", update_available: "可用版本：{version}", up_to_date: "目前已是最新版", update_failed: "檢查更新失敗",
-      doing_now: "正在做什麼", registered_capability: "已註冊能力", detecting_capabilities: "正在檢測 Agent Skills 與 MCP…", no_capabilities: "沒有偵測到可用能力", capability_picker: "Skills 與 MCP", close: "關閉",
-      local_workbench: "本機工作台", new_room: "新增房間", chat: "對話", back_to_chat: "返回對話", tasks: "工作板", audit: "審計與證據", all_features: "所有功能",
+      doing_now: "正在做什麼", registered_capability: "已註冊能力", detecting_capabilities: "正在檢測 Agent Skills 與 MCP…", no_capabilities: "沒有偵測到可用能力", capability_picker: "Skills 與 MCP", close: "關閉", show_details: "顯示詳情", hide_details: "收起詳情", message_options: "訊息選項",
+      local_workbench: "本機工作台", remote_workbench: "Tailnet 遠端工作台", remote_online: "遠端已連線", share_private_link: "分享到手機", private_link_shared: "已開啟系統分享", new_room: "新增房間", chat: "對話", back_to_chat: "返回對話", tasks: "工作板", audit: "審計與證據", all_features: "所有功能",
       recent_rooms: "最近房間", search_rooms: "搜尋房間", search_rooms_placeholder: "輸入房間名稱", clear_search: "清除搜尋", no_room_matches: "沒有符合的房間", operator: "本機操作者", connecting: "連接中", online: "本機已連線", offline: "重新連接中",
       load_older: "載入較早訊息", empty_title: "開始一個協作回合", empty_body: "向房間發送訊息，已連線的 Agent 會按房間規則處理。",
-      composer_placeholder: "向房間發送訊息，或輸入 / 選擇工作流程", all_agents: "全體 Agent", normal: "一般", high: "高", critical: "緊急",
+      composer_placeholder: "向房間發送訊息，或輸入 / 選擇工作流程", composer_mobile_placeholder: "向房間發送訊息", all_agents: "全體 Agent", normal: "一般", high: "高", critical: "緊急",
       workspace: "工作區", token_usage: "Token 使用量", room_status: "房間狀態", agents: "Agent", round: "回合", work: "工作", seats: "席位",
       messages: "訊息", sent: "已送出", send_failed: "發送失敗", copy: "複製訊息", copied: "已複製", no_operator: "請先加入此房間，才能發送訊息。",
       no_tasks: "目前沒有工作", status: "狀態", claimed_by: "負責者", total: "總計", input: "輸入", output: "輸出", cache: "快取", reasoning: "推理",
@@ -20,7 +20,7 @@
       work_updates: "工作更新", replies: "個回覆", participants: "位參與者", attempt: "嘗試", no_dispatches: "目前沒有派送", no_updates: "目前沒有工作更新",
       dispatch_pending: "待處理", dispatch_claimed: "執行中", dispatch_completed: "已完成", dispatch_failed: "失敗", dispatch_retry: "等待重試", files: "個附件",
       nav_workspace: "工作區", nav_governance: "治理與證據", nav_system: "系統支援", cockpit: "多智能體控制台", review: "互評", change: "變更", trust: "信任與證據", connect: "接入", memory: "記憶", feedback: "意見回饋", announcement: "公告",
-      agent_runtime: "Agent 即時狀態", agent_runtime_hint: "以本機 presence、工作階段與派送事件顯示可觀察活動。", model_route: "模型／路由", current_code_diff: "目前程式碼變更", current_code_diff_hint: "只讀取本專案 Git 工作樹；秘密內容會遮蔽，輸出有大小上限。", recorded_changes: "已記錄變更", code_added: "新增", code_deleted: "刪除", diff_unavailable: "目前無法讀取 Git 變更", diff_clean: "工作樹沒有變更", diff_truncated: "只顯示部分差異", observable_activity: "可觀察活動", activity_offline: "離線", activity_idle: "在線待命", activity_running: "正在執行", activity_searching: "正在搜尋網絡", activity_reasoning: "正在思考", activity_reading: "正在讀取", activity_editing: "正在編輯", activity_waiting: "等待回覆", activity_failed: "執行失敗", activity_completed: "已完成", permission: "權限",
+      agent_runtime: "Agent 即時狀態", agent_runtime_hint: "以本機 presence、工作階段與派送事件顯示可觀察活動。", model_route: "模型／路由", current_code_diff: "目前程式碼變更", current_code_diff_hint: "只讀取本專案 Git 工作樹；秘密內容會遮蔽，輸出有大小上限。", recorded_changes: "已完成變更", code_added: "新增", code_deleted: "刪除", diff_unavailable: "目前無法讀取 Git 變更", diff_clean: "工作樹沒有變更", diff_truncated: "只顯示部分差異", observable_activity: "可觀察活動", activity_offline: "離線", activity_idle: "在線待命", activity_running: "正在執行", activity_searching: "正在搜尋網絡", activity_reasoning: "正在思考", activity_reading: "正在讀取", activity_editing: "正在編輯", activity_waiting: "等待回覆", activity_failed: "執行失敗", activity_completed: "已完成", permission: "權限",
       subject_placeholder: "主旨", automation_mode: "自動模式", automation_off_short: "關閉", automation_once_short: "一輪", automation_discussion_short: "並行回合", automation_free_short: "自由討論", automation_goal_short: "直到目標完成", max_rounds: "最多事件", max_messages: "最多訊息", stagnation: "停滯事件", apply: "套用", pause: "暫停", resume: "恢復", continue: "繼續", stop: "停止", attach: "附件", refresh: "重新整理", fullscreen: "專注對話", exit_fullscreen: "退出專注對話", native_compact: "壓縮上下文", native_fork: "建立分支", native_review: "原生審查", native_review_hint: "輸入框可選填審查指示；留空則審查未提交變更。", native_actions: "官方工作階段操作",
       managed_sessions: "受管工作階段", session_activity: "工作階段活動", operations: "執行佇列", review_requests: "互評請求", review_results: "互評結果", recent_events: "最近事件", trust_records: "信任記錄", permissions: "權限決策", provider_connections: "供應商連線", routes: "模型路由", memory_records: "記憶記錄", briefings: "工作簡報",
       private_feedback: "私密送出", feedback_ready: "回饋入口已就緒", feedback_unavailable: "回饋設定尚未完成", feedback_body: "一般診斷會遮蔽秘密；完整憑證只會在明確同意後於本機加密。", feedback_summary_label: "問題摘要", feedback_summary_placeholder: "一句話說明問題", feedback_contact_label: "聯絡方式（選填）", feedback_contact_placeholder: "電郵或其他聯絡方式", feedback_message_label: "詳細內容", feedback_message_placeholder: "說明發生了甚麼、預期結果及重現步驟", feedback_attachment_hint: "可附畫面或診斷檔；最多 5 個，共 16 MiB。", feedback_credential_label: "完整 API Key 診斷（選填）", feedback_credential_body: "只有勾選同意後，內容才會在本機以支援公鑰加密；不會以明文送出。", feedback_credential_placeholder: "只在需要重現 Key 解析問題時填寫", feedback_credential_consent: "我明確同意在本機加密後隨本次回饋送出。", feedback_submit: "私密送出", feedback_submitting: "正在封裝及送出…", feedback_delivered: "已安全送達，案件編號", feedback_saved: "未能連線，已在本機保存封裝回饋，案件編號", feedback_required: "請填寫問題摘要及詳細內容。", feedback_consent_required: "填寫完整憑證時必須明確勾選加密同意。", feedback_encryption_unavailable: "此版本未設定支援公鑰，不能附加完整憑證。", show: "顯示", hide: "隱藏", announcement_status: "公告來源狀態", announcement_unconfigured: "尚未設定公告 HTTPS 來源；本機不會偽造公告。", announcement_disabled: "公告網絡同步已停用；目前顯示本機快取。", announcement_ready: "公告 HTTPS 來源已就緒。", announcement_updated: "公告已同步", no_announcements: "目前沒有公告", no_records: "目前沒有記錄", enabled: "已啟用", disabled: "已停用", unknown: "未提供", role: "角色", role_saved: "角色已更新", automation_saved: "自動模式已更新", action_failed: "操作失敗", remove: "移除", attachment_limit: "最多 5 個附件，每個 8 MiB，總計 16 MiB。", period_today: "今天", period_7d: "近 7 日", period_30d: "近 30 日", period_all: "全部",
@@ -36,11 +36,11 @@
     "zh-Hans": {
       access_title: "无法连接本地工作台", access_body: "请从 PeerBridge 桌面程序重新打开 Modern Workbench。",
       check_updates: "检查更新", checking_updates: "正在检查更新…", update_available: "可用版本：{version}", up_to_date: "当前已是最新版本", update_failed: "检查更新失败",
-      doing_now: "正在做什么", registered_capability: "已注册能力", detecting_capabilities: "正在检测 Agent Skills 与 MCP…", no_capabilities: "没有检测到可用能力", capability_picker: "Skills 与 MCP", close: "关闭",
-      local_workbench: "本地工作台", new_room: "新建房间", chat: "对话", back_to_chat: "返回对话", tasks: "工作板", audit: "审计与证据", all_features: "所有功能",
+      doing_now: "正在做什么", registered_capability: "已注册能力", detecting_capabilities: "正在检测 Agent Skills 与 MCP…", no_capabilities: "没有检测到可用能力", capability_picker: "Skills 与 MCP", close: "关闭", show_details: "显示详情", hide_details: "收起详情", message_options: "消息选项",
+      local_workbench: "本地工作台", remote_workbench: "Tailnet 远程工作台", remote_online: "远程已连接", share_private_link: "分享到手机", private_link_shared: "已打开系统分享", new_room: "新建房间", chat: "对话", back_to_chat: "返回对话", tasks: "工作板", audit: "审计与证据", all_features: "所有功能",
       recent_rooms: "最近房间", search_rooms: "搜索房间", search_rooms_placeholder: "输入房间名称", clear_search: "清除搜索", no_room_matches: "没有匹配的房间", operator: "本地操作者", connecting: "连接中", online: "本机已连接", offline: "正在重新连接",
       load_older: "加载较早消息", empty_title: "开始一个协作回合", empty_body: "向房间发送消息，已连接的 Agent 会按房间规则处理。",
-      composer_placeholder: "向房间发送消息，或输入 / 选择工作流", all_agents: "全部 Agent", normal: "普通", high: "高", critical: "紧急",
+      composer_placeholder: "向房间发送消息，或输入 / 选择工作流", composer_mobile_placeholder: "向房间发送消息", all_agents: "全部 Agent", normal: "普通", high: "高", critical: "紧急",
       workspace: "工作区", token_usage: "Token 使用量", room_status: "房间状态", agents: "Agent", round: "回合", work: "工作", seats: "席位",
       messages: "消息", sent: "已发送", send_failed: "发送失败", copy: "复制消息", copied: "已复制", no_operator: "请先加入该房间，再发送消息。",
       no_tasks: "当前没有工作", status: "状态", claimed_by: "负责人", total: "总计", input: "输入", output: "输出", cache: "缓存", reasoning: "推理",
@@ -51,7 +51,7 @@
       work_updates: "工作更新", replies: "个回复", participants: "位参与者", attempt: "尝试", no_dispatches: "当前没有派送", no_updates: "当前没有工作更新",
       dispatch_pending: "待处理", dispatch_claimed: "执行中", dispatch_completed: "已完成", dispatch_failed: "失败", dispatch_retry: "等待重试", files: "个附件",
       nav_workspace: "工作区", nav_governance: "治理与证据", nav_system: "系统支持", cockpit: "多智能体控制台", review: "互评", change: "变更", trust: "信任与证据", connect: "接入", memory: "记忆", feedback: "意见反馈", announcement: "公告",
-      agent_runtime: "Agent 实时状态", agent_runtime_hint: "根据本地 presence、工作阶段和派送事件显示可观察活动。", model_route: "模型／路由", current_code_diff: "当前代码变更", current_code_diff_hint: "只读取本项目 Git 工作树；秘密内容会遮蔽，输出有大小上限。", recorded_changes: "已记录变更", code_added: "新增", code_deleted: "删除", diff_unavailable: "当前无法读取 Git 变更", diff_clean: "工作树没有变更", diff_truncated: "仅显示部分差异", observable_activity: "可观察活动", activity_offline: "离线", activity_idle: "在线待命", activity_running: "正在执行", activity_searching: "正在搜索网络", activity_reasoning: "正在思考", activity_reading: "正在读取", activity_editing: "正在编辑", activity_waiting: "等待回复", activity_failed: "执行失败", activity_completed: "已完成", permission: "权限",
+      agent_runtime: "Agent 实时状态", agent_runtime_hint: "根据本地 presence、工作阶段和派送事件显示可观察活动。", model_route: "模型／路由", current_code_diff: "当前代码变更", current_code_diff_hint: "只读取本项目 Git 工作树；秘密内容会遮蔽，输出有大小上限。", recorded_changes: "已完成变更", code_added: "新增", code_deleted: "删除", diff_unavailable: "当前无法读取 Git 变更", diff_clean: "工作树没有变更", diff_truncated: "仅显示部分差异", observable_activity: "可观察活动", activity_offline: "离线", activity_idle: "在线待命", activity_running: "正在执行", activity_searching: "正在搜索网络", activity_reasoning: "正在思考", activity_reading: "正在读取", activity_editing: "正在编辑", activity_waiting: "等待回复", activity_failed: "执行失败", activity_completed: "已完成", permission: "权限",
       subject_placeholder: "主题", automation_mode: "自动模式", automation_off_short: "关闭", automation_once_short: "一轮", automation_discussion_short: "并行轮次", automation_free_short: "自由讨论", automation_goal_short: "直到目标完成", max_rounds: "最多事件", max_messages: "最多消息", stagnation: "停滞事件", apply: "应用", pause: "暂停", resume: "恢复", continue: "继续", stop: "停止", attach: "附件", refresh: "刷新", fullscreen: "专注对话", exit_fullscreen: "退出专注对话", native_compact: "压缩上下文", native_fork: "建立分支", native_review: "原生审查", native_review_hint: "输入框可选填审查指示；留空则审查未提交变更。", native_actions: "官方工作阶段操作",
       managed_sessions: "受管工作阶段", session_activity: "工作阶段活动", operations: "执行队列", review_requests: "互评请求", review_results: "互评结果", recent_events: "最近事件", trust_records: "信任记录", permissions: "权限决策", provider_connections: "供应商连接", routes: "模型路由", memory_records: "记忆记录", briefings: "工作简报",
       private_feedback: "私密发送", feedback_ready: "反馈入口已就绪", feedback_unavailable: "反馈设置尚未完成", feedback_body: "一般诊断会遮蔽秘密；完整凭证只会在明确同意后于本机加密。", feedback_summary_label: "问题摘要", feedback_summary_placeholder: "用一句话说明问题", feedback_contact_label: "联系方式（选填）", feedback_contact_placeholder: "邮箱或其他联系方式", feedback_message_label: "详细内容", feedback_message_placeholder: "说明发生了什么、预期结果和复现步骤", feedback_attachment_hint: "可附截图或诊断文件；最多 5 个，共 16 MiB。", feedback_credential_label: "完整 API Key 诊断（选填）", feedback_credential_body: "只有勾选同意后，内容才会在本机使用支持公钥加密；不会以明文发送。", feedback_credential_placeholder: "只在需要复现 Key 解析问题时填写", feedback_credential_consent: "我明确同意在本机加密后随本次反馈发送。", feedback_submit: "私密发送", feedback_submitting: "正在封装并发送…", feedback_delivered: "已安全送达，工单编号", feedback_saved: "无法连接，已在本地保存封装反馈，工单编号", feedback_required: "请填写问题摘要和详细内容。", feedback_consent_required: "填写完整凭证时必须明确勾选加密同意。", feedback_encryption_unavailable: "此版本未设置支持公钥，不能附加完整凭证。", show: "显示", hide: "隐藏", announcement_status: "公告来源状态", announcement_unconfigured: "尚未设置公告 HTTPS 来源；本机不会伪造公告。", announcement_disabled: "公告网络同步已停用；当前显示本地缓存。", announcement_ready: "公告 HTTPS 来源已就绪。", announcement_updated: "公告已同步", no_announcements: "当前没有公告", no_records: "当前没有记录", enabled: "已启用", disabled: "已停用", unknown: "未提供", role: "角色", role_saved: "角色已更新", automation_saved: "自动模式已更新", action_failed: "操作失败", remove: "移除", attachment_limit: "最多 5 个附件，每个 8 MiB，总计 16 MiB。", period_today: "今天", period_7d: "近 7 日", period_30d: "近 30 日", period_all: "全部",
@@ -67,11 +67,11 @@
     en: {
       access_title: "Local workbench unavailable", access_body: "Open Modern Workbench again from the PeerBridge desktop app.",
       check_updates: "Check for updates", checking_updates: "Checking for updates…", update_available: "Version available: {version}", up_to_date: "You are up to date", update_failed: "Update check failed",
-      doing_now: "Current activity", registered_capability: "Registered capability", detecting_capabilities: "Detecting Agent skills and MCP…", no_capabilities: "No available capabilities detected", capability_picker: "Skills and MCP", close: "Close",
-      local_workbench: "Local workbench", new_room: "New room", chat: "Chat", back_to_chat: "Back to chat", tasks: "Task board", audit: "Audit & evidence", all_features: "All features",
+      doing_now: "Current activity", registered_capability: "Registered capability", detecting_capabilities: "Detecting Agent skills and MCP…", no_capabilities: "No available capabilities detected", capability_picker: "Skills and MCP", close: "Close", show_details: "Show details", hide_details: "Hide details", message_options: "Message options",
+      local_workbench: "Local workbench", remote_workbench: "Tailnet remote workbench", remote_online: "Remote connected", share_private_link: "Share to phone", private_link_shared: "System share opened", new_room: "New room", chat: "Chat", back_to_chat: "Back to chat", tasks: "Task board", audit: "Audit & evidence", all_features: "All features",
       recent_rooms: "Recent rooms", search_rooms: "Search rooms", search_rooms_placeholder: "Enter a room name", clear_search: "Clear search", no_room_matches: "No matching rooms", operator: "Local operator", connecting: "Connecting", online: "Local connection", offline: "Reconnecting",
       load_older: "Load earlier messages", empty_title: "Start a collaboration round", empty_body: "Post to the room and connected agents will act under the room policy.",
-      composer_placeholder: "Message the room, or type / to select a workflow", all_agents: "All agents", normal: "Normal", high: "High", critical: "Critical",
+      composer_placeholder: "Message the room, or type / to select a workflow", composer_mobile_placeholder: "Message the room", all_agents: "All agents", normal: "Normal", high: "High", critical: "Critical",
       workspace: "Workspace", token_usage: "Token usage", room_status: "Room status", agents: "Agents", round: "Round", work: "Work", seats: "Seats",
       messages: "Messages", sent: "Sent", send_failed: "Send failed", copy: "Copy message", copied: "Copied", no_operator: "Join this room before sending a message.",
       no_tasks: "No tasks yet", status: "Status", claimed_by: "Owner", total: "Total", input: "Input", output: "Output", cache: "Cache", reasoning: "Reasoning",
@@ -82,7 +82,7 @@
       work_updates: "Work updates", replies: "replies", participants: "participants", attempt: "attempt", no_dispatches: "No dispatches", no_updates: "No work updates",
       dispatch_pending: "Pending", dispatch_claimed: "Running", dispatch_completed: "Completed", dispatch_failed: "Failed", dispatch_retry: "Retry queued", files: "files",
       nav_workspace: "Workspace", nav_governance: "Governance & evidence", nav_system: "System support", cockpit: "Multi-agent cockpit", review: "Peer review", change: "Changes", trust: "Trust & evidence", connect: "Connections", memory: "Memory", feedback: "Feedback", announcement: "Announcements",
-      agent_runtime: "Live agent status", agent_runtime_hint: "Shows observable activity from local presence, sessions, and dispatch events.", model_route: "Model / route", current_code_diff: "Current code changes", current_code_diff_hint: "Reads only this project's Git worktree. Secrets are redacted and output is bounded.", recorded_changes: "Recorded changes", code_added: "added", code_deleted: "deleted", diff_unavailable: "Git changes are currently unavailable", diff_clean: "The worktree is clean", diff_truncated: "Only part of the diff is shown", observable_activity: "Observable activity", activity_offline: "Offline", activity_idle: "Online · idle", activity_running: "Running", activity_searching: "Searching the web", activity_reasoning: "Reasoning", activity_reading: "Reading", activity_editing: "Editing", activity_waiting: "Waiting for a reply", activity_failed: "Failed", activity_completed: "Completed", permission: "Permission",
+      agent_runtime: "Live agent status", agent_runtime_hint: "Shows observable activity from local presence, sessions, and dispatch events.", model_route: "Model / route", current_code_diff: "Current code changes", current_code_diff_hint: "Reads only this project's Git worktree. Secrets are redacted and output is bounded.", recorded_changes: "Completed changes", code_added: "added", code_deleted: "deleted", diff_unavailable: "Git changes are currently unavailable", diff_clean: "The worktree is clean", diff_truncated: "Only part of the diff is shown", observable_activity: "Observable activity", activity_offline: "Offline", activity_idle: "Online · idle", activity_running: "Running", activity_searching: "Searching the web", activity_reasoning: "Reasoning", activity_reading: "Reading", activity_editing: "Editing", activity_waiting: "Waiting for a reply", activity_failed: "Failed", activity_completed: "Completed", permission: "Permission",
       subject_placeholder: "Subject", automation_mode: "Automation mode", automation_off_short: "Off", automation_once_short: "One round", automation_discussion_short: "Parallel rounds", automation_free_short: "Free discussion", automation_goal_short: "Until goal complete", max_rounds: "Maximum events", max_messages: "Maximum messages", stagnation: "Stagnation events", apply: "Apply", pause: "Pause", resume: "Resume", continue: "Continue", stop: "Stop", attach: "Attach", refresh: "Refresh", fullscreen: "Focus chat", exit_fullscreen: "Exit focus chat", native_compact: "Compact context", native_fork: "Fork session", native_review: "Native review", native_review_hint: "Optionally use the input field for review instructions; leave it empty to review uncommitted changes.", native_actions: "Official session actions",
       managed_sessions: "Managed sessions", session_activity: "Session activity", operations: "Execution queue", review_requests: "Review requests", review_results: "Review results", recent_events: "Recent events", trust_records: "Trust records", permissions: "Permission decisions", provider_connections: "Provider connections", routes: "Model routes", memory_records: "Memory records", briefings: "Task briefings",
       private_feedback: "Private submission", feedback_ready: "Feedback entry is ready", feedback_unavailable: "Feedback setup is incomplete", feedback_body: "Normal diagnostics redact secrets; complete credentials are locally encrypted only after explicit consent.", feedback_summary_label: "Issue summary", feedback_summary_placeholder: "Describe the issue in one line", feedback_contact_label: "Contact (optional)", feedback_contact_placeholder: "Email or another contact method", feedback_message_label: "Details", feedback_message_placeholder: "Describe what happened, the expected result, and reproduction steps", feedback_attachment_hint: "Attach a screenshot or diagnostic file; up to 5 files and 16 MiB total.", feedback_credential_label: "Complete API key diagnostic (optional)", feedback_credential_body: "Only after explicit consent is the value encrypted locally to the support public key. Plaintext is never sent.", feedback_credential_placeholder: "Use only when reproducing a key parsing problem", feedback_credential_consent: "I explicitly consent to local encryption and inclusion with this submission.", feedback_submit: "Submit privately", feedback_submitting: "Sealing and submitting…", feedback_delivered: "Delivered securely. Case", feedback_saved: "Connection unavailable; sealed feedback saved locally. Case", feedback_required: "Enter an issue summary and details.", feedback_consent_required: "Explicit encryption consent is required when a complete credential is entered.", feedback_encryption_unavailable: "This build has no support public key, so complete credentials cannot be attached.", show: "Show", hide: "Hide", announcement_status: "Announcement source", announcement_unconfigured: "No announcement HTTPS source is configured; local mode will not fabricate announcements.", announcement_disabled: "Announcement network sync is disabled; showing the local cache.", announcement_ready: "The announcement HTTPS source is ready.", announcement_updated: "Announcements synchronized", no_announcements: "No announcements", no_records: "No records yet", enabled: "Enabled", disabled: "Disabled", unknown: "Not reported", role: "Role", role_saved: "Role updated", automation_saved: "Automation updated", action_failed: "Action failed", remove: "Remove", attachment_limit: "Up to 5 attachments, 8 MiB each and 16 MiB total.", period_today: "Today", period_7d: "Last 7 days", period_30d: "Last 30 days", period_all: "All time",
@@ -519,7 +519,7 @@
       provider_setup: "直接 API／中轉／本機供應商", provider_setup_hint: "憑證只保存於本機安全儲存；PeerBridge 資料庫只記錄不可逆指紋與端點雜湊。", connection_id: "連線 ID", route_class: "路由類型", endpoint: "API 端點", official: "官方", relay: "中轉", local: "本機", save_provider: "保存供應商",
       model_route_setup: "讀取模型並建立路由", model_route_setup_hint: "模型清單由所選供應商即時回報，不會用預設名稱冒充。", provider_saved: "供應商已保存", providers_discovered: "供應商清單已更新", models_discovered: "模型清單已更新", route_saved: "模型路由已建立", provider_activated: "CC Switch 供應商已切換",
       provider: "供應商", provider_default: "供應商預設",
-      install_agent: "安裝", update_agent: "更新", install_agent_confirm: "PeerBridge 將啟動供應商的官方安裝程序。是否繼續？", agent_installer_started: "官方 Agent 安裝程序已啟動", clipboard_image_attached: "已從剪貼簿加入圖片", terminal_not_started: "終端尚未啟動", start_terminal: "啟動終端", model: "模型", reasoning_mode: "推理強度", publisher_guide: "官方安裝指南", attachment_only_message: "附件", all_session_timeline: "全部終端時間軸", attachment_type_invalid: "附件格式不受支援", attachment_count_limit: "附件最多 5 個", attachment_file_size_limit: "每個附件不可超過 8 MiB", attachment_total_size_limit: "附件總大小不可超過 16 MiB", verify_audit_chain: "驗證審計鏈", audit_chain_verified: "審計鏈驗證通過", mark_all_read: "全部標為已讀", announcements_marked_read: "公告已標為已讀", usage_truncated: "所選期間的趨勢資料已截斷", schedule_next_run: "下次執行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供應商未設定模型 API 端點", confirm_ccswitch_switch: "確認把 {app} 切換到 {provider}？", bootstrap_failed: "本機資料載入失敗；可按重新整理重試", acpx_runtime: "ACPX 執行環境", acpx_required: "Grok 與 Kimi 的持續工作階段需要 ACPX", install_dependency: "安裝依賴", dispatches: "派送", events: "事件", memories: "記憶", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "請先填寫必要的工作 ID 或證據包路徑", edit_schedule: "編輯排程", start_review_workflow: "派發互評流程", continue_history: "從此歷史繼續", history_continued: "已建立可寫續談房間"
+      install_agent: "安裝", update_agent: "更新", install_agent_confirm: "PeerBridge 將啟動供應商的官方安裝程序。是否繼續？", agent_installer_started: "官方 Agent 安裝程序已啟動", clipboard_image_attached: "已從剪貼簿加入圖片", terminal_not_started: "終端尚未啟動", start_terminal: "啟動終端", model: "模型", reasoning_mode: "推理強度", publisher_guide: "官方安裝指南", attachment_only_message: "附件", all_session_timeline: "全部終端時間軸", attachment_type_invalid: "附件格式不受支援", attachment_count_limit: "附件最多 5 個", attachment_file_size_limit: "每個附件不可超過 8 MiB", attachment_total_size_limit: "附件總大小不可超過 16 MiB", verify_audit_chain: "驗證審計鏈", audit_chain_verified: "審計鏈驗證通過", mark_all_read: "全部標為已讀", announcements_marked_read: "公告已標為已讀", usage_truncated: "所選期間的趨勢資料已截斷", schedule_next_run: "下次執行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供應商未設定模型 API 端點", confirm_ccswitch_switch: "確認把 {app} 切換到 {provider}？", bootstrap_failed: "本機資料載入失敗；可按重新整理重試", acpx_runtime: "ACPX 執行環境", acpx_required: "Grok 與 Kimi 的持續工作階段需要 ACPX", install_dependency: "安裝依賴", dispatches: "派送", events: "事件", memories: "記憶", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "請先填寫必要的工作 ID 或證據包路徑", edit_schedule: "編輯排程", start_review_workflow: "派發互評流程", continue_history: "從此歷史繼續", history_continued: "已建立可寫續談房間", remote_control: "遠端控制", remote_short: "遠端", more: "更多", tailscale_status: "Tailscale", remote_backend: "遠端工作台", remote_surface: "功能介面", tailcat_status: "Tailcat", remote_workspace: "完整遠端工作台", remote_workspace_hint: "手機及遠端電腦使用與桌面相同的房間、工作、Agent、工具活動、審計、記憶和用量介面。", remote_port: "本機連接埠", start_remote: "啟動／重新驗證", copy_private_link: "複製私人連結", public_origin: "私人網址", local_backend: "本機 Backend", remote_security: "安全邊界", remote_security_value: "Tailscale identity + 私人 fragment token；Funnel 必須關閉", tailcat_hint: "預設自動啟動 Port、SSH 和 Exit node；可隨時關閉。", protected_ssh: "受 client allow-list 保護", command_proxy: "單一命令代理", explicit_only: "只可顯式啟用", remote_ready: "遠端工作台已就緒", remote_unavailable: "遠端工作台未啟動", private_link_copied: "私人連結已複製", remote_management_local_only: "遠端生命週期只可在本機控制室操作"
     },
     "zh-Hans": {
       configure_agent: "设置 Agent", view_terminal: "查看终端", code_files: "个文件", models_truncated: "模型列表已达到显示上限", activity_stale: "连接已过期", appearance: "外观", choose_appearance: "选择外观", choose_appearance_hint: "选择 Pixel Control Room 或 Modern Workbench；重启后应用。", pixel_appearance_hint: "原本深色像素风、高密度终端和控制界面。", modern_appearance_hint: "对话优先，整合模型、权限、变更和证据。", save_appearance: "保存外观", appearance_saved: "外观已保存，重启后应用",
@@ -528,7 +528,7 @@
       provider_setup: "直接 API／中转／本地供应商", provider_setup_hint: "凭证只保存在本地安全存储；PeerBridge 数据库仅记录不可逆指纹和端点哈希。", connection_id: "连接 ID", route_class: "路由类型", endpoint: "API 端点", official: "官方", relay: "中转", local: "本地", save_provider: "保存供应商",
       model_route_setup: "读取模型并创建路由", model_route_setup_hint: "模型清单由所选供应商实时返回，不会使用预设名称冒充。", provider_saved: "供应商已保存", providers_discovered: "供应商列表已更新", models_discovered: "模型列表已更新", route_saved: "模型路由已创建", provider_activated: "CC Switch 供应商已切换",
       provider: "供应商", provider_default: "供应商默认",
-      install_agent: "安装", update_agent: "更新", install_agent_confirm: "PeerBridge 将启动供应商的官方安装程序。是否继续？", agent_installer_started: "官方 Agent 安装程序已启动", clipboard_image_attached: "已从剪贴板添加图片", terminal_not_started: "终端尚未启动", start_terminal: "启动终端", model: "模型", reasoning_mode: "推理强度", publisher_guide: "官方安装指南", attachment_only_message: "附件", all_session_timeline: "全部终端时间轴", attachment_type_invalid: "附件格式不受支持", attachment_count_limit: "附件最多 5 个", attachment_file_size_limit: "每个附件不能超过 8 MiB", attachment_total_size_limit: "附件总大小不能超过 16 MiB", verify_audit_chain: "验证审计链", audit_chain_verified: "审计链验证通过", mark_all_read: "全部标为已读", announcements_marked_read: "公告已标为已读", usage_truncated: "所选期间的趋势数据已截断", schedule_next_run: "下次执行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供应商未设置模型 API 端点", confirm_ccswitch_switch: "确认将 {app} 切换到 {provider}？", bootstrap_failed: "本地数据加载失败；可点击刷新重试", acpx_runtime: "ACPX 运行环境", acpx_required: "Grok 和 Kimi 的持续工作阶段需要 ACPX", install_dependency: "安装依赖", dispatches: "派送", events: "事件", memories: "记忆", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "请先填写必要的工作 ID 或证据包路径", edit_schedule: "编辑计划", start_review_workflow: "派发互评流程", continue_history: "从此历史继续", history_continued: "已创建可写续聊房间"
+      install_agent: "安装", update_agent: "更新", install_agent_confirm: "PeerBridge 将启动供应商的官方安装程序。是否继续？", agent_installer_started: "官方 Agent 安装程序已启动", clipboard_image_attached: "已从剪贴板添加图片", terminal_not_started: "终端尚未启动", start_terminal: "启动终端", model: "模型", reasoning_mode: "推理强度", publisher_guide: "官方安装指南", attachment_only_message: "附件", all_session_timeline: "全部终端时间轴", attachment_type_invalid: "附件格式不受支持", attachment_count_limit: "附件最多 5 个", attachment_file_size_limit: "每个附件不能超过 8 MiB", attachment_total_size_limit: "附件总大小不能超过 16 MiB", verify_audit_chain: "验证审计链", audit_chain_verified: "审计链验证通过", mark_all_read: "全部标为已读", announcements_marked_read: "公告已标为已读", usage_truncated: "所选期间的趋势数据已截断", schedule_next_run: "下次执行", expires: "到期", consumed: "已使用", ccswitch_missing_endpoint: "此供应商未设置模型 API 端点", confirm_ccswitch_switch: "确认将 {app} 切换到 {provider}？", bootstrap_failed: "本地数据加载失败；可点击刷新重试", acpx_runtime: "ACPX 运行环境", acpx_required: "Grok 和 Kimi 的持续工作阶段需要 ACPX", install_dependency: "安装依赖", dispatches: "派送", events: "事件", memories: "记忆", reason_low: "低", reason_medium: "中", reason_high: "高", reason_xhigh: "特高", reason_max: "最高", proof_required: "请先填写必要的工作 ID 或证据包路径", edit_schedule: "编辑计划", start_review_workflow: "派发互评流程", continue_history: "从此历史继续", history_continued: "已创建可写续聊房间", remote_control: "远程控制", remote_short: "远程", more: "更多", tailscale_status: "Tailscale", remote_backend: "远程工作台", remote_surface: "功能界面", tailcat_status: "Tailcat", remote_workspace: "完整远程工作台", remote_workspace_hint: "手机和远程电脑使用与桌面相同的房间、工作、Agent、工具活动、审计、记忆和用量界面。", remote_port: "本地端口", start_remote: "启动／重新验证", copy_private_link: "复制私人链接", public_origin: "私人网址", local_backend: "本地 Backend", remote_security: "安全边界", remote_security_value: "Tailscale identity + 私人 fragment token；Funnel 必须关闭", tailcat_hint: "默认自动启动 Port、SSH 和 Exit node；可随时关闭。", protected_ssh: "受 client allow-list 保护", command_proxy: "单一命令代理", explicit_only: "只能显式启用", remote_ready: "远程工作台已就绪", remote_unavailable: "远程工作台未启动", private_link_copied: "私人链接已复制", remote_management_local_only: "远程生命周期只能在本地控制室操作"
     },
     en: {
       configure_agent: "Configure agent", view_terminal: "View terminal", code_files: "files", models_truncated: "Model list reached the display limit", activity_stale: "Connection is stale", appearance: "Appearance", choose_appearance: "Choose appearance", choose_appearance_hint: "Choose Pixel Control Room or Modern Workbench. The selection applies after restart.", pixel_appearance_hint: "Original dark pixel style with dense terminals and controls.", modern_appearance_hint: "Conversation-first workspace with model, permission, diff, and evidence controls.", save_appearance: "Save appearance", appearance_saved: "Appearance saved; restart to apply",
@@ -537,16 +537,44 @@
       provider_setup: "Direct API, relay, or local provider", provider_setup_hint: "Credentials stay in local secure storage. The PeerBridge database stores only irreversible fingerprints and endpoint hashes.", connection_id: "Connection ID", route_class: "Route class", endpoint: "API endpoint", official: "Official", relay: "Relay", local: "Local", save_provider: "Save provider",
       model_route_setup: "Discover models and create a route", model_route_setup_hint: "The selected provider advertises the model list live; PeerBridge does not invent model names.", provider_saved: "Provider saved", providers_discovered: "Provider list updated", models_discovered: "Model list updated", route_saved: "Model route created", provider_activated: "CC Switch provider changed",
       provider: "Provider", provider_default: "Provider default",
-      install_agent: "Install", update_agent: "Update", install_agent_confirm: "PeerBridge will start the publisher's official installer. Continue?", agent_installer_started: "Official Agent installer started", clipboard_image_attached: "Image attached from clipboard", terminal_not_started: "Terminal not started", start_terminal: "Start terminal", model: "Model", reasoning_mode: "Reasoning effort", publisher_guide: "Official installation guide", attachment_only_message: "Attachment", all_session_timeline: "All-terminal timeline", attachment_type_invalid: "This attachment type is not supported", attachment_count_limit: "Up to 5 attachments", attachment_file_size_limit: "Each attachment must be no larger than 8 MiB", attachment_total_size_limit: "Attachments must total no more than 16 MiB", verify_audit_chain: "Verify audit chain", audit_chain_verified: "Audit chain verified", mark_all_read: "Mark all read", announcements_marked_read: "Announcements marked as read", usage_truncated: "Trend data is truncated for the selected period", schedule_next_run: "Next run", expires: "Expires", consumed: "Consumed", ccswitch_missing_endpoint: "This provider has no model API endpoint", confirm_ccswitch_switch: "Switch {app} to {provider}?", bootstrap_failed: "Local data failed to load. Use Refresh to retry.", acpx_runtime: "ACPX runtime", acpx_required: "Grok and Kimi persistent sessions require ACPX", install_dependency: "Install dependency", dispatches: "Dispatches", events: "Events", memories: "Memories", reason_low: "Low", reason_medium: "Medium", reason_high: "High", reason_xhigh: "Extra high", reason_max: "Maximum", proof_required: "Enter the required task ID or proof-bundle path first", edit_schedule: "Edit schedule", start_review_workflow: "Start review workflow", continue_history: "Continue from this history", history_continued: "Writable continuation room created"
+      install_agent: "Install", update_agent: "Update", install_agent_confirm: "PeerBridge will start the publisher's official installer. Continue?", agent_installer_started: "Official Agent installer started", clipboard_image_attached: "Image attached from clipboard", terminal_not_started: "Terminal not started", start_terminal: "Start terminal", model: "Model", reasoning_mode: "Reasoning effort", publisher_guide: "Official installation guide", attachment_only_message: "Attachment", all_session_timeline: "All-terminal timeline", attachment_type_invalid: "This attachment type is not supported", attachment_count_limit: "Up to 5 attachments", attachment_file_size_limit: "Each attachment must be no larger than 8 MiB", attachment_total_size_limit: "Attachments must total no more than 16 MiB", verify_audit_chain: "Verify audit chain", audit_chain_verified: "Audit chain verified", mark_all_read: "Mark all read", announcements_marked_read: "Announcements marked as read", usage_truncated: "Trend data is truncated for the selected period", schedule_next_run: "Next run", expires: "Expires", consumed: "Consumed", ccswitch_missing_endpoint: "This provider has no model API endpoint", confirm_ccswitch_switch: "Switch {app} to {provider}?", bootstrap_failed: "Local data failed to load. Use Refresh to retry.", acpx_runtime: "ACPX runtime", acpx_required: "Grok and Kimi persistent sessions require ACPX", install_dependency: "Install dependency", dispatches: "Dispatches", events: "Events", memories: "Memories", reason_low: "Low", reason_medium: "Medium", reason_high: "High", reason_xhigh: "Extra high", reason_max: "Maximum", proof_required: "Enter the required task ID or proof-bundle path first", edit_schedule: "Edit schedule", start_review_workflow: "Start review workflow", continue_history: "Continue from this history", history_continued: "Writable continuation room created", remote_control: "Remote control", remote_short: "Remote", more: "More", tailscale_status: "Tailscale", remote_backend: "Remote workspace", remote_surface: "Feature surface", tailcat_status: "Tailcat", remote_workspace: "Full remote workspace", remote_workspace_hint: "Phones and remote computers use the same rooms, work, Agents, tool activity, audit, memory, and usage interface as desktop.", remote_port: "Local port", start_remote: "Start / revalidate", copy_private_link: "Copy private link", public_origin: "Private origin", local_backend: "Local backend", remote_security: "Security boundary", remote_security_value: "Tailscale identity + private fragment token; Funnel must stay disabled", tailcat_hint: "Automatically starts Port, SSH, and Exit node by default; it can be switched off at any time.", protected_ssh: "Protected by the client allow-list", command_proxy: "Single-command proxy", explicit_only: "Explicit enable only", remote_ready: "Remote workspace ready", remote_unavailable: "Remote workspace is not running", private_link_copied: "Private link copied", remote_management_local_only: "Remote lifecycle management is available only in the local control room"
+    }
+  };
+
+  const remoteSetupTranslations = {
+    "zh-Hant": {
+      connect_device: "連接裝置", phone: "手機", another_computer: "另一部電腦",
+      same_tailnet: "登入同一個 Tailscale 網絡", phone_tailnet_hint: "手機開啟 Tailscale 後，不需要安裝 PeerBridge。", computer_tailnet_hint: "另一部電腦只需 Tailscale 和瀏覽器，不需要再安裝 PeerBridge。",
+      enable_remote_step: "啟動安全遠端工作台", enable_remote_hint: "只在本機按一次；PeerBridge 會核對 HTTPS、Funnel 關閉及私人憑證。",
+      open_private_link: "在裝置開啟私人連結", open_phone_hint: "使用系統分享或複製連結到手機。", open_computer_hint: "複製連結，在另一部電腦的瀏覽器開啟。",
+      tailcat_advanced: "Tailcat 遠端工具", tailcat_requires_cli: "PeerBridge 會安裝經 SHA 驗證的官方 Tailcat，並建立只供已配對裝置使用的 client key。", tailcat_persistent: "重新開啟 PeerBridge 後會自動恢復；關閉主開關會停止整個受管程序。",
+      tailcat_auto_start: "自動啟動", tailcat_on_demand: "按需要使用", tailcat_client_side: "在連接裝置按需要使用", tailcat_preparing: "正在準備安全連線...", tailcat_installing: "正在下載並驗證官方 Tailcat v0.4.0...", tailcat_provisioning: "正在建立受保護的裝置身份...", tailcat_starting: "正在啟動 Port、SSH 和 Exit node...", tailcat_running: "Port、SSH 和 Exit node 已自動啟動，只接受已配對裝置。", tailcat_stopped: "Tailcat 已停止。", tailcat_failed: "Tailcat 未能啟動", tailcat_restart: "重新啟動", tailcat_copy_address: "複製連接地址", tailcat_open_pairing: "開啟配對資料夾", tailcat_address_copied: "Tailcat 連接地址已複製", tailcat_pairing_opened: "已開啟配對資料夾", tailcat_local_only: "Tailcat 開關只可在本機控制室使用", tailcat_toggling: "正在更新 Tailcat...", tailcat_service_running: "運行中", tailcat_service_stopped: "已停止", remote_pair_required: "這條手機連結已過期或不完整。請在桌面 PeerBridge 的「遠端控制」重新按「分享到手機」，不需要重啟工作台。", remote_pair_failed: "手機連結無效或已使用。請由桌面重新分享一條新連結。"
+    },
+    "zh-Hans": {
+      connect_device: "连接设备", phone: "手机", another_computer: "另一台电脑",
+      same_tailnet: "登录同一个 Tailscale 网络", phone_tailnet_hint: "手机开启 Tailscale 后，无需安装 PeerBridge。", computer_tailnet_hint: "另一台电脑只需 Tailscale 和浏览器，无需再安装 PeerBridge。",
+      enable_remote_step: "启动安全远程工作台", enable_remote_hint: "只在本机点击一次；PeerBridge 会核对 HTTPS、Funnel 关闭及私人凭证。",
+      open_private_link: "在设备打开私人链接", open_phone_hint: "使用系统分享或复制链接到手机。", open_computer_hint: "复制链接，在另一台电脑的浏览器打开。",
+      tailcat_advanced: "Tailcat 远程工具", tailcat_requires_cli: "PeerBridge 会安装经过 SHA 验证的官方 Tailcat，并创建只供已配对设备使用的 client key。", tailcat_persistent: "重新打开 PeerBridge 后会自动恢复；关闭总开关会停止整个受管进程。",
+      tailcat_auto_start: "自动启动", tailcat_on_demand: "按需使用", tailcat_client_side: "在连接设备按需使用", tailcat_preparing: "正在准备安全连接...", tailcat_installing: "正在下载并验证官方 Tailcat v0.4.0...", tailcat_provisioning: "正在创建受保护的设备身份...", tailcat_starting: "正在启动 Port、SSH 和 Exit node...", tailcat_running: "Port、SSH 和 Exit node 已自动启动，只接受已配对设备。", tailcat_stopped: "Tailcat 已停止。", tailcat_failed: "Tailcat 无法启动", tailcat_restart: "重新启动", tailcat_copy_address: "复制连接地址", tailcat_open_pairing: "打开配对文件夹", tailcat_address_copied: "Tailcat 连接地址已复制", tailcat_pairing_opened: "已打开配对文件夹", tailcat_local_only: "Tailcat 开关只能在本地控制室使用", tailcat_toggling: "正在更新 Tailcat...", tailcat_service_running: "运行中", tailcat_service_stopped: "已停止", remote_pair_required: "这条手机链接已过期或不完整。请在桌面 PeerBridge 的“远程控制”重新点击“分享到手机”，无需重启工作台。", remote_pair_failed: "手机链接无效或已使用。请从桌面重新分享一条新链接。"
+    },
+    en: {
+      connect_device: "Connect a device", phone: "Phone", another_computer: "Another computer",
+      same_tailnet: "Sign in to the same Tailscale network", phone_tailnet_hint: "Turn on Tailscale on the phone; PeerBridge does not need to be installed there.", computer_tailnet_hint: "The other computer needs only Tailscale and a browser, not another PeerBridge install.",
+      enable_remote_step: "Start the secure remote workspace", enable_remote_hint: "Do this once locally. PeerBridge verifies HTTPS, Funnel-off state, and the private credential.",
+      open_private_link: "Open the private link on the device", open_phone_hint: "Use system Share or copy the link to the phone.", open_computer_hint: "Copy the link and open it in the other computer's browser.",
+      tailcat_advanced: "Tailcat remote tools", tailcat_requires_cli: "PeerBridge installs the SHA-verified official Tailcat release and creates a client key restricted to paired devices.", tailcat_persistent: "PeerBridge restores it automatically on launch; the master switch stops the entire managed process.",
+      tailcat_auto_start: "Auto-start", tailcat_on_demand: "Use on demand", tailcat_client_side: "Use on demand on the connected device", tailcat_preparing: "Preparing the secure connection...", tailcat_installing: "Downloading and verifying official Tailcat v0.4.0...", tailcat_provisioning: "Creating protected device identities...", tailcat_starting: "Starting Port, SSH, and Exit node...", tailcat_running: "Port, SSH, and Exit node started automatically for paired devices only.", tailcat_stopped: "Tailcat is stopped.", tailcat_failed: "Tailcat could not start", tailcat_restart: "Restart", tailcat_copy_address: "Copy connection address", tailcat_open_pairing: "Open pairing folder", tailcat_address_copied: "Tailcat connection address copied", tailcat_pairing_opened: "Pairing folder opened", tailcat_local_only: "Tailcat can be switched only from the local control room", tailcat_toggling: "Updating Tailcat...", tailcat_service_running: "Running", tailcat_service_stopped: "Stopped", remote_pair_required: "This phone link is expired or incomplete. In desktop PeerBridge, open Remote control and share a fresh phone link; the workspace does not need to be restarted.", remote_pair_failed: "This phone link is invalid or already used. Share a fresh link from the desktop."
     }
   };
 
   const state = {
     token: "", locale: localStorage.getItem("peerbridge.locale") || "zh-Hant", data: null, roomId: "lobby",
     view: "chat", signature: "", etag: "", timer: null, loading: false, older: [], firstRender: true, tutorialAutoChecked: false,
+    remoteStatus: null, remoteLoading: false, remoteDevice: localStorage.getItem("peerbridge.remoteDevice") || "phone",
     attachments: [], managedAttachments: [], managedTurnAttachments: Object.create(null), feedbackAttachments: [],
     cockpitMode: "grid", selectedSessionId: "", sessionDetailTab: "terminal", usagePeriod: "30d", chatFocus: false, roomSearch: "", ccswitchProviders: [], ccswitchModels: [], providerModels: [], historyContinuationSourceRoom: "",
-    worktreeDiff: null, worktreeDiffLoading: false, agentLaunchSelections: Object.create(null), preparedApprovalMode: "", discoveredCapabilities: null, capabilityDiscoveryPending: false,
+    worktreeDiff: null, worktreeDiffLoading: false, selectedDiffPath: "*", agentLaunchSelections: Object.create(null), preparedApprovalMode: "", discoveredCapabilities: null, capabilityDiscoveryPending: false,
     renderSignatures: Object.create(null)
   };
   const MAX_DIFF_RENDER_LINES = 4000;
@@ -573,6 +601,7 @@
   const byId = (id) => document.getElementById(id);
   const t = (key) => (translations[state.locale] || translations.en)[key]
     || (integrationTranslations[state.locale] || integrationTranslations.en)[key]
+    || (remoteSetupTranslations[state.locale] || remoteSetupTranslations.en)[key]
     || (capabilityTranslations[state.locale] || capabilityTranslations.en)[key]
     || (controlTranslations[state.locale] || controlTranslations.en)[key]
     || key;
@@ -813,6 +842,36 @@
     return ["Bearer", state.token].join(" ");
   }
 
+  const validViews = new Set(["chat", "cockpit", "work", "review", "change", "audit", "trust", "connect", "remote", "memory", "feedback", "usage", "announcement"]);
+
+  function routeUrl(view = state.view, roomId = state.roomId) {
+    const query = new URLSearchParams();
+    if (roomId && roomId !== "lobby") query.set("room_id", roomId);
+    if (view && view !== "chat") query.set("view", view);
+    const suffix = query.toString();
+    return `${location.pathname}${suffix ? `?${suffix}` : ""}`;
+  }
+
+  function navigateView(view, { replace = false, roomId = state.roomId, refreshRoom = false } = {}) {
+    const target = validViews.has(view) ? view : "chat";
+    const roomChanged = roomId !== state.roomId;
+    state.view = target;
+    state.roomId = roomId || "lobby";
+    const method = replace ? "replaceState" : "pushState";
+    history[method]({ view: state.view, room_id: state.roomId }, "", routeUrl());
+    if (roomChanged || refreshRoom) {
+      state.older = [];
+      state.signature = "";
+      state.firstRender = true;
+      void fetchState(true);
+    } else {
+      render();
+    }
+    if (state.view === "change") void fetchWorktreeDiff(false);
+    if (state.view === "remote") void fetchRemoteStatus();
+    closeMobilePanels();
+  }
+
   const localRequestTimeoutMessage = () => state.locale === "zh-Hans"
     ? "本地请求超时；请在活动记录中核对最终结果。"
     : state.locale === "en"
@@ -876,6 +935,41 @@
     });
   }
 
+  function renderAgentEventList(containerId, rows, sessionNames = new Map()) {
+    const container = byId(containerId); if (!container) return; container.replaceChildren();
+    if (!rows.length) { container.append(node("div", "panel-empty", t("no_records"))); return; }
+    rows.forEach((entry) => {
+      const activity = eventActivity(entry);
+      const active = activity.tone === "working";
+      const eventType = entry.kind || entry.stream || t("observable_activity");
+      const sessionName = sessionNames.get(entry.session_id) || "";
+      const row = node("article", `record-row agent-event-row ${active ? "is-running" : activity.tone}`);
+      row.dataset.eventKind = String(entry.kind || "");
+      if (active) row.setAttribute("aria-busy", "true");
+      const head = node("div", "record-head");
+      const title = node("div", "agent-event-title");
+      title.append(node("i", "agent-event-dot"), node("strong", "", [sessionName, eventType].filter(Boolean).join(" · ")));
+      head.append(title, node("span", `status-badge ${activity.tone}`, t(activity.key)));
+      row.append(head);
+      if (entry.summary) row.append(node("p", "agent-event-summary", entry.summary));
+      const evidenceValues = [entry.stream, entry.state_after, entry.source_type].filter(Boolean);
+      const metaValues = [entry.sequence, timeLabel(entry.created_utc), (entry.sha256 || "").slice(0, 12)].filter(Boolean);
+      if (evidenceValues.length || metaValues.length) {
+        const detail = node("details", "agent-event-detail");
+        detail.append(node("summary", "", t("evidence")));
+        const body = node("div", "agent-event-detail-body");
+        if (evidenceValues.length) body.append(node("p", "", evidenceValues.join(" · ")));
+        if (metaValues.length) {
+          const meta = node("div", "record-meta");
+          metaValues.forEach((value) => meta.append(node("span", "", displayValue(value))));
+          body.append(meta);
+        }
+        detail.append(body); row.append(detail);
+      }
+      container.append(row);
+    });
+  }
+
   function applyLocale() {
     document.documentElement.lang = state.locale;
     if (byId("locale-select")) byId("locale-select").value = state.locale;
@@ -919,7 +1013,8 @@
 
   function setConnection(online) {
     const el = byId("connection-state"); el.classList.toggle("online", online); el.classList.toggle("offline", !online);
-    el.querySelector("span").textContent = online ? t("online") : t("offline");
+    const remote = state.data?.client_surface === "remote";
+    el.querySelector("span").textContent = online ? t(remote ? "remote_online" : "online") : t("offline");
   }
 
   function setChatFocus(enabled) {
@@ -931,8 +1026,7 @@
     button.title = label;
     button.setAttribute("aria-label", label);
     if (state.chatFocus && state.view !== "chat") {
-      state.view = "chat";
-      render();
+      navigateView("chat", { replace: true });
     }
   }
 
@@ -1085,7 +1179,7 @@
         : `${room.active_member_count} ${t("agents")} · ${room.message_count} ${t("messages")} · ${timeLabel(room.updated_utc) || "--"}`;
       const copy = node("span", "room-copy"); copy.append(node("strong", "", room.name || room.room_id)); copy.append(node("span", "", detail));
       button.append(copy, node("span", "room-badge", String(room.message_count || 0)));
-      button.addEventListener("click", () => { state.view = "chat"; state.roomId = room.room_id; state.older = []; state.signature = ""; state.firstRender = true; fetchState(true); closeMobilePanels(); });
+      button.addEventListener("click", () => navigateView("chat", { roomId: room.room_id, refreshRoom: true }));
       list.append(button);
     });
     if (!visibleRooms.length) list.append(node("div", "panel-empty", t("no_room_matches")));
@@ -1129,6 +1223,101 @@
     return [...groups.values()].sort((a, b) => a.firstSequence - b.firstSequence);
   }
 
+  function appendRichInline(container, value) {
+    const text = String(value || "");
+    const pattern = /\[([^\]]{1,200})\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/g;
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+      const index = Number(match.index || 0);
+      if (index > cursor) container.append(document.createTextNode(text.slice(cursor, index)));
+      const href = match[2] || match[3];
+      try {
+        const parsed = new URL(href);
+        if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("unsupported URL");
+        const link = node("a", "message-inline-link", match[1] || href);
+        link.href = parsed.href; link.target = "_blank"; link.rel = "noopener noreferrer";
+        container.append(link);
+      } catch (_error) {
+        container.append(document.createTextNode(match[0]));
+      }
+      cursor = index + match[0].length;
+    }
+    if (cursor < text.length) container.append(document.createTextNode(text.slice(cursor)));
+  }
+
+  function renderMessageCodeBlock(language, lines) {
+    const block = node("section", "message-code-block");
+    const header = node("header", "message-code-header");
+    header.append(node("span", "", language || "text"));
+    const copy = node("button", "message-code-copy", t("copy")); copy.type = "button";
+    const content = lines.join("\n");
+    copy.addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText(content); }
+      catch (_error) { const fallback = node("textarea"); fallback.value = content; fallback.setAttribute("readonly", ""); fallback.style.position = "fixed"; fallback.style.opacity = "0"; document.body.append(fallback); fallback.select(); document.execCommand("copy"); fallback.remove(); }
+      copy.textContent = t("copied"); window.setTimeout(() => { copy.textContent = t("copy"); }, 1200);
+    });
+    header.append(copy); block.append(header);
+    const body = node("div", "message-code-body");
+    lines.forEach((line, index) => {
+      const row = node("div", "message-code-row");
+      row.append(node("span", "message-code-line", String(index + 1)), node("code", "", line || " "));
+      body.append(row);
+    });
+    block.append(body); return block;
+  }
+
+  function markdownTableCells(line) {
+    const trimmed = String(line || "").trim().replace(/^\|/, "").replace(/\|$/, "");
+    return trimmed.split("|").slice(0, 12).map((cell) => cell.trim());
+  }
+
+  function renderMessageTable(lines) {
+    const wrap = node("div", "message-table-wrap");
+    const table = node("table", "message-data-table");
+    const head = node("thead"); const headRow = node("tr");
+    markdownTableCells(lines[0]).forEach((cell) => { const th = node("th"); appendRichInline(th, cell); headRow.append(th); });
+    head.append(headRow); table.append(head);
+    const body = node("tbody");
+    lines.slice(2, 102).forEach((line) => { const row = node("tr"); markdownTableCells(line).forEach((cell) => { const td = node("td"); appendRichInline(td, cell); row.append(td); }); body.append(row); });
+    table.append(body); wrap.append(table); return wrap;
+  }
+
+  function renderRichMessageBody(value) {
+    const root = node("div", "message-body message-body-rich");
+    const lines = String(value || "").replaceAll("\r\n", "\n").split("\n");
+    for (let index = 0; index < lines.length;) {
+      const fence = lines[index].match(/^```\s*([^`]*)$/);
+      if (fence) {
+        const code = []; index += 1;
+        while (index < lines.length && !/^```\s*$/.test(lines[index])) { code.push(lines[index]); index += 1; }
+        if (index < lines.length) index += 1;
+        root.append(renderMessageCodeBlock(fence[1].trim(), code));
+        continue;
+      }
+      if (index + 1 < lines.length && lines[index].includes("|") && /^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{3,}:?\s*\|?\s*$/.test(lines[index + 1])) {
+        const tableLines = [lines[index], lines[index + 1]]; index += 2;
+        while (index < lines.length && lines[index].includes("|") && tableLines.length < 102) { tableLines.push(lines[index]); index += 1; }
+        root.append(renderMessageTable(tableLines));
+        continue;
+      }
+      if (!lines[index].trim()) { index += 1; continue; }
+      const heading = lines[index].match(/^#{1,3}\s+(.+)$/);
+      if (heading) { const title = node("strong", "message-body-heading"); appendRichInline(title, heading[1]); root.append(title); index += 1; continue; }
+      if (/^\s*[-*]\s+/.test(lines[index])) {
+        const list = node("ul", "message-body-list");
+        while (index < lines.length && /^\s*[-*]\s+/.test(lines[index])) { const item = node("li"); appendRichInline(item, lines[index].replace(/^\s*[-*]\s+/, "")); list.append(item); index += 1; }
+        root.append(list); continue;
+      }
+      const paragraphLines = [];
+      while (index < lines.length && lines[index].trim() && !/^```/.test(lines[index]) && !/^#{1,3}\s+/.test(lines[index]) && !/^\s*[-*]\s+/.test(lines[index])) {
+        paragraphLines.push(lines[index]); index += 1;
+      }
+      if (paragraphLines.length) { const paragraph = node("p"); appendRichInline(paragraph, paragraphLines.join("\n")); root.append(paragraph); }
+    }
+    if (!root.childElementCount && !root.textContent) root.append(document.createTextNode(String(value || "")));
+    return root;
+  }
+
   function renderMessageCard(message) {
     const wrap = node("article", "message" + (message.sender === "human-operator" ? " own" : " agent-reply"));
     wrap.append(node("div", "message-avatar", initials(message.sender)));
@@ -1145,7 +1334,7 @@
     meta.append(node("strong", "", message.sender || "Agent"), node("span", "", timeLabel(message.created_utc)), copy);
     main.append(meta);
     if (message.subject) main.append(node("div", "message-subject", message.subject));
-    main.append(node("p", "message-body", message.body));
+    main.append(renderRichMessageBody(message.body));
     const route = node("div", "message-route-row");
     const routeValues = [message.observed_provider_id || message.requested_provider_id, message.observed_model_id || message.requested_model_id, message.observed_reasoning_mode || message.requested_reasoning_mode];
     routeValues.filter(Boolean).forEach((value) => route.append(node("span", "route-chip", value)));
@@ -1172,6 +1361,50 @@
     return rail;
   }
 
+  function collaborationRoundFinished(group) {
+    const task = (state.data?.tasks || []).find((entry) => entry.task_id === group.taskId);
+    if (task && terminalStatus(task.status)) return true;
+    const dispatches = group.sourceMessages.flatMap((message) => messageDispatches(message.message_id));
+    if (!dispatches.length) return false;
+    const terminalDispatches = new Set(["completed", "failed", "dead_letter", "cancelled", "canceled"]);
+    return dispatches.every((entry) => terminalDispatches.has(String(entry.status || "").toLowerCase()));
+  }
+
+  function renderTransientChanges(group) {
+    const changes = (state.data?.changes || []).filter((entry) => entry.task_id === group.taskId);
+    if (!changes.length || collaborationRoundFinished(group)) return null;
+    const label = state.locale === "en" ? "Files changing in this turn" : state.locale === "zh-Hans" ? "本轮正在变更的文件" : "本回合正在變更的檔案";
+    const openLabel = state.locale === "en" ? "Open review" : state.locale === "zh-Hans" ? "打开审查" : "開啟審查";
+    const paths = [...new Set(changes.flatMap((entry) => entry.changed_paths || []).filter(Boolean))];
+    const card = node("aside", "transient-change-card");
+    const head = node("div", "transient-change-head");
+    head.append(node("span", "transient-change-pulse"), node("strong", "", label), node("span", "", `${paths.length} ${t("code_files")}`));
+    card.append(head);
+    const list = node("div", "transient-change-files");
+    paths.forEach((path) => {
+      const file = (state.worktreeDiff?.files || []).find((entry) => entry.path === path) || {};
+      const row = node("button", "transient-change-file"); row.type = "button"; row.title = path;
+      row.append(node("span", "diff-file-path", path));
+      const stat = node("span", "diff-file-stat");
+      if (file.binary) stat.textContent = "BIN";
+      else if (file.additions !== undefined || file.deletions !== undefined) stat.append(node("span", "diff-stat-add", `+${file.additions ?? "?"}`), node("span", "diff-stat-delete", `−${file.deletions ?? "?"}`));
+      row.append(stat);
+      row.addEventListener("click", () => { state.selectedDiffPath = path; navigateView("change"); void fetchWorktreeDiff(); });
+      list.append(row);
+    });
+    card.append(list);
+    const summaries = changes.map((entry) => entry.summary || entry.test_summary).filter(Boolean);
+    if (summaries.length) {
+      const detail = node("details", "transient-change-detail");
+      detail.append(node("summary", "", t("observable_activity")), node("p", "", summaries.join("\n")));
+      card.append(detail);
+    }
+    const open = node("button", "text-button transient-change-open", openLabel); open.type = "button";
+    open.addEventListener("click", () => { state.selectedDiffPath = "*"; navigateView("change"); void fetchWorktreeDiff(); });
+    card.append(open);
+    return card;
+  }
+
   function renderMessages() {
     const list = byId("message-list"); const timeline = byId("timeline");
     const nearBottom = timeline.scrollHeight - timeline.scrollTop - timeline.clientHeight < 110;
@@ -1181,11 +1414,15 @@
       state.data?.room_id,
       rows,
       state.data?.dispatches || [],
+      state.data?.tasks || [],
+      state.data?.changes || [],
+      state.worktreeDiff?.bounded_patch_sha256 || "",
       Boolean(state.data?.page?.has_older)
     ]);
     if (state.renderSignatures.messages === signature) return;
     state.renderSignatures.messages = signature;
     list.replaceChildren();
+    let transientChangesVisible = false;
     groupMessages(rows).forEach((group) => {
       const section = node("section", "collaboration-run");
       const header = node("header", "run-header");
@@ -1199,8 +1436,11 @@
       const promptList = node("div", "prompt-list"); humanMessages.forEach((message) => promptList.append(renderMessageCard(message))); if (humanMessages.length) section.append(promptList);
       const dispatchRail = renderDispatchRail(group.sourceMessages); if (dispatchRail) section.append(dispatchRail);
       if (agentMessages.length) { const responseGrid = node("div", "response-grid"); agentMessages.forEach((message) => responseGrid.append(renderMessageCard(message))); section.append(responseGrid); }
+      const transientChanges = renderTransientChanges(group);
+      if (transientChanges) { section.append(transientChanges); transientChangesVisible = true; }
       list.append(section);
     });
+    if (transientChangesVisible && !state.worktreeDiff && !state.worktreeDiffLoading) void fetchWorktreeDiff();
     const empty = rows.length === 0; byId("empty-chat").hidden = !empty; byId("load-older").hidden = !(state.data?.page?.has_older);
     if (state.firstRender || nearBottom) requestAnimationFrame(() => { timeline.scrollTop = timeline.scrollHeight; state.firstRender = false; });
   }
@@ -1337,7 +1577,23 @@
     if (byId("board-task-count")) byId("board-task-count").textContent = String(rows.length);
     const list = byId("tasks-list"); list.replaceChildren();
     if (!rows.length) { list.append(node("div", "empty-state", t("no_tasks"))); return; }
-    rows.forEach((task) => { const row = node("div", "summary-row"); const title = node("div", ""); title.append(node("strong", "", task.task_id), node("div", "message-subject", task.summary)); row.append(title, node("span", "", `${t("status")}: ${task.status || "--"}`), node("span", "", `${t("claimed_by")}: ${task.claimed_by || "--"}`)); list.append(row); });
+    rows.forEach((task) => {
+      const status = String(task.status || "pending").toLowerCase();
+      const failed = /fail|reject|cancel/.test(status);
+      const complete = !failed && terminalStatus(status);
+      const active = !complete && !failed && /active|claimed|running|progress/.test(status);
+      const row = node("article", `task-ledger-row ${failed ? "failed" : complete ? "complete" : active ? "active" : "pending"}`);
+      row.dataset.taskState = status;
+      const marker = node("span", "task-state-marker", complete ? "✓" : active ? "›" : failed ? "!" : "·");
+      const copy = node("div", "task-ledger-copy");
+      copy.append(node("strong", "", task.summary || task.task_id), node("small", "", task.task_id));
+      const stateBadge = node("span", `status-badge ${failed ? "danger" : complete ? "success" : active ? "active" : "muted"}`, displayValue(task.status));
+      row.append(marker, copy, stateBadge);
+      const meta = node("div", "task-ledger-meta");
+      [task.claimed_by ? `${t("claimed_by")}: ${task.claimed_by}` : "", timeLabel(task.updated_utc)].filter(Boolean).forEach((value) => meta.append(node("span", "", value)));
+      if (meta.childElementCount) row.append(meta);
+      list.append(row);
+    });
   }
 
   function renderSessionDetails(sessions, events) {
@@ -1361,12 +1617,7 @@
           ? timeDifference
           : Number(right.sequence || 0) - Number(left.sequence || 0);
       });
-      renderRecordList("session-event-list", ordered, (entry) => ({
-        title: `${sessionNames.get(entry.session_id) || entry.session_id || "Agent"} · ${entry.summary || entry.kind || entry.stream || "--"}`,
-        status: entry.kind,
-        body: [entry.stream, entry.state_after, entry.source_type].filter(Boolean).join(" · "),
-        meta: [entry.sequence, timeLabel(entry.created_utc), (entry.sha256 || "").slice(0, 12)]
-      }));
+      renderAgentEventList("session-event-list", ordered, sessionNames);
       return;
     }
     if (!selected) {
@@ -1383,12 +1634,7 @@
     byId("session-event-count").textContent = String(selectedEvents.length);
     if (state.sessionDetailTab === "activity") {
       detail.hidden = true; eventList.hidden = false;
-      renderRecordList("session-event-list", selectedEvents, (entry) => ({
-        title: entry.summary || entry.kind || entry.stream,
-        status: entry.kind,
-        body: [entry.stream, entry.state_after, entry.source_type].filter(Boolean).join(" · "),
-        meta: [entry.sequence, timeLabel(entry.created_utc), (entry.sha256 || "").slice(0, 12)]
-      }));
+      renderAgentEventList("session-event-list", selectedEvents);
       return;
     }
     detail.hidden = false; eventList.hidden = true;
@@ -1813,10 +2059,28 @@
     const list = byId("operation-list"); list.replaceChildren();
     if (!rows.length) list.append(node("div", "panel-empty", t("no_records")));
     rows.forEach((entry) => {
-      const row = node("article", "record-row operation-row"); const head = node("div", "record-head");
-      head.append(node("strong", "", entry.task_text || entry.workflow_id || entry.operation_id), node("span", `status-badge ${dispatchTone(entry.status)}`, displayValue(entry.status))); row.append(head);
-      if (entry.terminal_detail || entry.terminal_outcome) row.append(node("p", "", entry.terminal_detail || entry.terminal_outcome));
-      const meta = node("div", "record-meta"); [workflowLabel({ workflow_id: entry.workflow_id }), entry.requested_by, `${t("attempt")} ${entry.attempt_count || 0}/${entry.max_attempts || 0}`, timeLabel(entry.updated_utc)].filter(Boolean).forEach((value) => meta.append(node("span", "", value))); row.append(meta);
+      const status = String(entry.status || "pending").toLowerCase();
+      const failed = /failed|dead_letter|unavailable/.test(status);
+      const completed = !failed && terminalStatus(status);
+      const active = !completed && !failed && ["running", "claimed", "active"].includes(status);
+      const row = node("article", `record-row operation-row ${failed ? "is-failed" : completed ? "is-complete" : active ? "is-running" : "is-waiting"}`);
+      row.dataset.operationState = status;
+      if (active) row.setAttribute("aria-busy", "true");
+      const head = node("div", "record-head");
+      const summaryCopy = node("div", "operation-summary");
+      summaryCopy.append(
+        node("strong", "", entry.task_text || entry.workflow_id || entry.operation_id),
+        node("small", "", [workflowLabel({ workflow_id: entry.workflow_id }), `${t("attempt")} ${entry.attempt_count || 0}/${entry.max_attempts || 0}`].filter(Boolean).join(" · "))
+      );
+      head.append(summaryCopy, node("span", `status-badge ${dispatchTone(entry.status)}`, displayValue(entry.status)));
+      row.append(head);
+      const detail = node("details", "operation-detail");
+      detail.append(node("summary", "", t("observable_activity")));
+      const detailBody = node("div", "operation-detail-body");
+      if (entry.terminal_detail || entry.terminal_outcome) detailBody.append(node("p", "", entry.terminal_detail || entry.terminal_outcome));
+      const meta = node("div", "record-meta");
+      [entry.requested_by, entry.operation_id, `${t("timeout_seconds")}: ${entry.timeout_seconds || 0}`, timeLabel(entry.updated_utc), (entry.sha256 || "").slice(0, 12)].filter(Boolean).forEach((value) => meta.append(node("span", "", value)));
+      detailBody.append(meta); detail.append(detailBody); row.append(detail);
       if (!terminalStatus(entry.status) && !entry.cancellation_requested) {
         const actions = node("div", "record-actions"); const cancel = node("button", "danger-button", t("cancel_operation")); cancel.type = "button";
         cancel.addEventListener("click", async () => { cancel.disabled = true; try { await postAction("/api/operation/cancel", { operation_id: entry.operation_id, reason: "Operator cancelled from Workbench" }); toast(t("operation_cancelled")); } catch (error) { toast(`${t("action_failed")}: ${error.message}`); } finally { cancel.disabled = false; } });
@@ -2090,6 +2354,47 @@
     }));
   }
 
+  function splitWorktreePatch(diff) {
+    const sections = [];
+    let current = null;
+    String(diff?.patch || "").split("\n").forEach((line) => {
+      if (line.startsWith("diff --git ")) {
+        current = { path: diff.files?.[sections.length]?.path || "", lines: [] };
+        sections.push(current);
+      }
+      if (current) current.lines.push(line);
+    });
+    return sections;
+  }
+
+  function appendDiffLine(container, line, counters) {
+    if (line.startsWith("diff --git ") || line.startsWith("index ") || line.startsWith("--- ") || line.startsWith("+++ ")) return;
+    let className = "diff-line";
+    let oldNumber = "";
+    let newNumber = "";
+    if (line.startsWith("@@")) {
+      className += " diff-hunk";
+      const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) { counters.old = Number(match[1]); counters.new = Number(match[2]); }
+    } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      className += " diff-add";
+      newNumber = String(counters.new++);
+    } else if (line.startsWith("-") && !line.startsWith("---")) {
+      className += " diff-delete";
+      oldNumber = String(counters.old++);
+    } else if (!line.startsWith("\\ No newline")) {
+      oldNumber = String(counters.old++);
+      newNumber = String(counters.new++);
+    }
+    const row = node("div", className);
+    row.append(
+      node("span", "diff-line-number", oldNumber),
+      node("span", "diff-line-number", newNumber),
+      node("code", "diff-line-code", line || " ")
+    );
+    container.append(row);
+  }
+
   function renderWorktreeDiff() {
     const summary = byId("worktree-diff-summary");
     const files = byId("worktree-diff-files");
@@ -2112,39 +2417,59 @@
       viewer.append(node("div", "panel-empty", t("diff_unavailable")));
       return;
     }
+    const fileRows = diff.files || [];
+    byId("review-file-count").textContent = String(fileRows.length);
     summary.textContent = `${diff.file_count || 0} ${t("code_files")} · +${diff.additions || 0} / −${diff.deletions || 0}`;
-    (diff.files || []).forEach((entry) => {
-      const row = node("div", "diff-file-row");
-      row.append(node("span", `diff-file-status status-${String(entry.status || "m").toLowerCase()}`, entry.status || "M"));
-      row.append(node("span", "diff-file-path", entry.path || "--"));
+    if (state.selectedDiffPath !== "*" && !fileRows.some((entry) => entry.path === state.selectedDiffPath)) state.selectedDiffPath = "*";
+    const allLabel = state.locale === "en" ? "All changes" : state.locale === "zh-Hans" ? "全部变更" : "全部變更";
+    const addFileButton = (entry, path) => {
+      const row = node("button", `diff-file-row${state.selectedDiffPath === path ? " active" : ""}`);
+      row.type = "button";
+      row.title = path === "*" ? allLabel : entry.path;
+      row.append(node("span", `diff-file-status status-${String(entry.status || "m").toLowerCase()}`, entry.status || "Σ"));
+      row.append(node("span", "diff-file-path", path === "*" ? allLabel : entry.path || "--"));
       const stat = node("span", "diff-file-stat");
       if (entry.binary) stat.textContent = "BIN";
-      else {
-        stat.append(node("span", "diff-stat-add", `+${entry.additions ?? "?"}`), node("span", "diff-stat-delete", `−${entry.deletions ?? "?"}`));
-      }
-      row.append(stat); files.append(row);
-    });
-    if (!(diff.files || []).length) files.append(node("div", "panel-empty", t("diff_clean")));
+      else stat.append(node("span", "diff-stat-add", `+${entry.additions ?? "?"}`), node("span", "diff-stat-delete", `−${entry.deletions ?? "?"}`));
+      row.append(stat);
+      row.addEventListener("click", () => { state.selectedDiffPath = path; renderWorktreeDiff(); viewer.scrollTo({ top: 0, left: 0, behavior: "auto" }); });
+      files.append(row);
+    };
+    if (fileRows.length) addFileButton({ status: "", additions: diff.additions || 0, deletions: diff.deletions || 0 }, "*");
+    fileRows.forEach((entry) => addFileButton(entry, entry.path));
+    if (!fileRows.length) files.append(node("div", "panel-empty", t("diff_clean")));
     if (!diff.patch) {
       viewer.append(node("div", "panel-empty", diff.dirty ? t("diff_unavailable") : t("diff_clean")));
       return;
     }
-    const code = node("div", "diff-code");
-    const patchLines = String(diff.patch).split("\n");
-    const visiblePatchLines = patchLines.slice(0, MAX_DIFF_RENDER_LINES);
-    visiblePatchLines.forEach((line) => {
-      let className = "diff-line";
-      if (line.startsWith("diff --git") || line.startsWith("index ")) className += " diff-file-header";
-      else if (line.startsWith("@@")) className += " diff-hunk";
-      else if (line.startsWith("+") && !line.startsWith("+++")) className += " diff-add";
-      else if (line.startsWith("-") && !line.startsWith("---")) className += " diff-delete";
-      else if (line.startsWith("+++ ") || line.startsWith("--- ")) className += " diff-path";
-      code.append(node("div", className, line || " "));
-    });
-    viewer.append(code);
-    if (diff.patch_truncated || diff.files_truncated || patchLines.length > visiblePatchLines.length) {
-      viewer.append(node("div", "diff-truncated", t("diff_truncated")));
+    const sections = splitWorktreePatch(diff);
+    const visibleSections = state.selectedDiffPath === "*" ? sections : sections.filter((section) => section.path === state.selectedDiffPath);
+    if (!visibleSections.length) {
+      viewer.append(node("div", "panel-empty", t("diff_unavailable")));
+      return;
     }
+    let renderedLines = 0;
+    visibleSections.forEach((section) => {
+      if (renderedLines >= MAX_DIFF_RENDER_LINES) return;
+      const file = fileRows.find((entry) => entry.path === section.path) || {};
+      const block = node("article", "diff-file-section");
+      const head = node("header", "diff-file-section-header");
+      head.append(node("strong", "", section.path || "--"));
+      const stats = node("span", "diff-file-stat");
+      if (file.binary) stats.textContent = "BIN";
+      else stats.append(node("span", "diff-stat-add", `+${file.additions ?? "?"}`), node("span", "diff-stat-delete", `−${file.deletions ?? "?"}`));
+      head.append(stats); block.append(head);
+      const code = node("div", "diff-code");
+      const counters = { old: 0, new: 0 };
+      section.lines.forEach((line) => {
+        if (renderedLines >= MAX_DIFF_RENDER_LINES) return;
+        appendDiffLine(code, line, counters);
+        renderedLines += 1;
+      });
+      block.append(code); viewer.append(block);
+    });
+    const totalLines = visibleSections.reduce((count, section) => count + section.lines.length, 0);
+    if (diff.patch_truncated || diff.files_truncated || totalLines > renderedLines) viewer.append(node("div", "diff-truncated", t("diff_truncated")));
   }
 
   async function fetchWorktreeDiff(force = false) {
@@ -2161,7 +2486,10 @@
     } catch (error) {
       state.worktreeDiff = { available: false, reason: localizedErrorMessage(error.message), files: [], patch: "" };
     } finally {
-      state.worktreeDiffLoading = false; renderWorktreeDiff();
+      state.worktreeDiffLoading = false;
+      renderWorktreeDiff();
+      state.renderSignatures.messages = "";
+      renderMessages();
     }
   }
 
@@ -2488,10 +2816,17 @@
     if (!state.data) return;
     document.querySelectorAll(".content-view").forEach((el) => el.classList.toggle("active-view", el.id === `${state.view}-view`));
     document.querySelectorAll(".nav-item").forEach((el) => el.classList.toggle("active", el.dataset.view === state.view));
+    document.querySelectorAll("[data-mobile-view]").forEach((el) => el.classList.toggle("active", el.dataset.mobileView === state.view));
     byId("chat-home").hidden = state.view === "chat";
     byId("announcement-button").classList.toggle("active", state.view === "announcement");
     const room = state.data.rooms.find((row) => row.room_id === state.data.room_id);
-    byId("room-title").textContent = room?.name || state.data.room_id; byId("room-context").textContent = `${state.data.scope} · ${state.data.members.length} ${t("agents")}`; byId("scope-label").textContent = state.data.scope; byId("scope-chip").textContent = state.data.scope; byId("header-scope").textContent = state.data.scope;
+    const remoteSurface = state.data?.client_surface === "remote";
+    byId("room-title").textContent = room?.name || state.data.room_id;
+    byId("room-context").textContent = `${state.data.scope} · ${state.data.members.length} ${t("agents")}`;
+    byId("scope-label").textContent = state.data.scope;
+    byId("scope-chip").textContent = remoteSurface ? "REMOTE" : state.data.scope;
+    byId("header-scope").textContent = remoteSurface ? `REMOTE · ${state.data.scope}` : state.data.scope;
+    byId("workbench-mode-label").textContent = t(remoteSurface ? "remote_workbench" : "local_workbench");
     byId("appearance-current").textContent = state.data?.appearance?.selected === "pixel" ? "Pixel" : "Modern";
     const historyRecord = state.data.history_import?.selected || null;
     const historyNotice = byId("history-notice"); historyNotice.hidden = !historyRecord;
@@ -2509,8 +2844,295 @@
     byId("discussion-controls").hidden = !automation.active_discussion;
     ["send-button", "message-body", "message-subject", "attachment-button", "recipient", "composer-permission", "priority", "save-automation"].forEach((id) => { byId(id).disabled = !state.data.operator_active; });
     if (state.data.operator_active) updateComposerPermissionControls();
-    byId("message-body").placeholder = state.data.operator_active ? t("composer_placeholder") : historyRecord ? t("history_read_only") : t("no_operator");
-    renderRooms(); renderMessages(); renderAgents(); renderTasks(); renderCockpit(); renderOperations(); renderReviews(); renderChanges(); renderAudit(); renderTrust(); renderConnections(); renderMemory(); renderUsage(); renderSupport(); renderRound(); renderActivity(); renderEvidence();
+    const composerPlaceholder = window.matchMedia("(max-width: 760px)").matches ? t("composer_mobile_placeholder") : t("composer_placeholder");
+    byId("message-body").placeholder = state.data.operator_active ? composerPlaceholder : historyRecord ? t("history_read_only") : t("no_operator");
+    renderRooms(); renderMessages(); renderAgents(); renderTasks(); renderCockpit(); renderOperations(); renderReviews(); renderChanges(); renderAudit(); renderTrust(); renderConnections(); renderMemory(); renderUsage(); renderSupport(); renderRound(); renderActivity(); renderEvidence(); renderRemoteStatus(); applyClientSurfacePolicy(); resizeComposerInput();
+  }
+
+  function applyClientSurfacePolicy() {
+    const remote = state.data?.client_surface === "remote";
+    document.documentElement.dataset.clientSurface = remote ? "remote" : "local";
+    if (!remote) return;
+    const localOnlyMessage = state.locale === "en"
+      ? "Available only in the local desktop control room"
+      : state.locale === "zh-Hans"
+        ? "仅可在本地桌面控制室使用"
+        : "只可在本機桌面控制室使用";
+    const localOnlySelectors = [
+      "#import-history",
+      "#continue-history",
+      "#appearance-button",
+      "#update-check-button",
+      "#attachment-button",
+      "#attachment-input",
+      "#automation-menu input",
+      "#automation-menu select",
+      "#automation-menu button",
+      "#seat-add",
+      "#seat-remove",
+      "#seat-agent",
+      "#seat-provider",
+      "#seat-model",
+      "#seat-reasoning",
+      "#seat-route",
+      "#seat-role",
+      "#seat-remove-member",
+      ".role-select",
+      "#managed-session-form input",
+      "#managed-session-form select",
+      "#managed-session-form textarea",
+      "#managed-session-form button",
+      "#session-list button",
+      "#session-list input",
+      "#agent-runtime-strip button",
+      "#agent-runtime-strip select",
+      "#workflow-form input",
+      "#workflow-form select",
+      "#workflow-form textarea",
+      "#workflow-form button",
+      "#schedule-form input",
+      "#schedule-form select",
+      "#schedule-form textarea",
+      "#schedule-form button",
+      ".schedule-row button",
+      "#start-review-workflow",
+      "#trust-view input",
+      "#trust-view select",
+      "#trust-view textarea",
+      "#trust-view button",
+      "#connect-view input",
+      "#connect-view select",
+      "#connect-view textarea",
+      "#connect-view button",
+      "#feedback-view input",
+      "#feedback-view select",
+      "#feedback-view textarea",
+      "#feedback-view button",
+      "#remote-start",
+      "#remote-copy-link",
+      "#remote-share-link",
+      "#tailcat-enabled",
+      "#tailcat-restart",
+      "#tailcat-copy-address",
+      "#tailcat-open-pairing",
+      "#refresh-announcements",
+      "#appearance-dialog input",
+      "#appearance-dialog button[type=submit]"
+    ];
+    document.querySelectorAll(localOnlySelectors.join(",")).forEach((control) => {
+      control.disabled = true;
+      control.setAttribute("aria-disabled", "true");
+      control.title = localOnlyMessage;
+    });
+  }
+
+  function renderRemoteDevice() {
+    if (!["phone", "computer"].includes(state.remoteDevice)) state.remoteDevice = "phone";
+    document.querySelectorAll("[data-remote-device]").forEach((button) => button.classList.toggle("active", button.dataset.remoteDevice === state.remoteDevice));
+    byId("remote-device-hint").textContent = t(state.remoteDevice === "phone" ? "phone_tailnet_hint" : "computer_tailnet_hint");
+    byId("remote-open-hint").textContent = t(state.remoteDevice === "phone" ? "open_phone_hint" : "open_computer_hint");
+    byId("remote-share-link").hidden = state.remoteDevice !== "phone";
+  }
+
+  function renderTailcatStatus(value, managementAvailable) {
+    const tailcat = value || {};
+    const panel = document.querySelector(".tailcat-panel");
+    const enabled = tailcat.enabled !== false;
+    const running = Boolean(tailcat.running);
+    const phase = String(tailcat.phase || (enabled ? "waiting" : "disabled"));
+    const canManage = Boolean(managementAvailable && tailcat.management_available !== false);
+    byId("tailcat-enabled").checked = enabled;
+    byId("tailcat-enabled").disabled = !canManage;
+    byId("tailcat-toggle-label").textContent = t(enabled ? "enabled" : "disabled");
+    panel.classList.toggle("is-running", running);
+    panel.classList.toggle("is-failed", phase === "failed");
+    panel.classList.toggle("is-disabled", !enabled);
+    const phaseKeys = {
+      installing: "tailcat_installing",
+      provisioning: "tailcat_provisioning",
+      starting: "tailcat_starting",
+      running: "tailcat_running",
+      stopped: "tailcat_stopped",
+      disabled: "tailcat_stopped",
+      waiting: "tailcat_preparing"
+    };
+    const message = phase === "failed"
+      ? `${t("tailcat_failed")}: ${String(tailcat.error_code || t("unknown")).replaceAll("_", " ")}`
+      : t(phaseKeys[phase] || "tailcat_preparing");
+    byId("tailcat-status-message").textContent = canManage ? message : `${message} ${t("tailcat_local_only")}`;
+    const serviceText = running ? t("tailcat_service_running") : t("tailcat_service_stopped");
+    byId("tailcat-port-status").textContent = running ? `${serviceText} · ${tailcat.port || 8765}` : serviceText;
+    byId("tailcat-ssh-status").textContent = running ? `${serviceText} · ${tailcat.ssh_port || 22}` : serviceText;
+    byId("tailcat-exit-status").textContent = serviceText;
+    document.querySelectorAll("[data-tailcat-service]").forEach((row) => row.classList.toggle("is-running", running));
+    byId("tailcat-restart").disabled = !canManage || !enabled || ["installing", "provisioning", "starting"].includes(phase);
+    byId("tailcat-copy-address").disabled = !canManage || !running || !tailcat.address_ready;
+    byId("tailcat-open-pairing").disabled = !canManage || !tailcat.pairing_folder_ready;
+  }
+
+  function renderRemoteStatus() {
+    renderRemoteDevice();
+    const value = state.remoteStatus;
+    if (!value) return;
+    const tailscale = value.tailscale || {};
+    const backend = value.backend || {};
+    const serve = value.serve || {};
+    const tailcat = value.tailcat || {};
+    const remoteReady = Boolean(
+      backend.running
+      && backend.surface === "full-workspace"
+      && serve.configured
+      && serve.tailnet_only
+      && !serve.funnel_enabled
+      && value.private_access_file_available
+    );
+    byId("remote-tailscale").textContent = tailscale.online ? "ONLINE" : (tailscale.installed ? "OFFLINE" : "--");
+    byId("remote-backend").textContent = backend.running ? `PID ${backend.process_id}` : t("remote_unavailable");
+    byId("remote-surface").textContent = backend.surface || "--";
+    byId("remote-tailcat").textContent = tailcat.running ? "RUNNING" : (tailcat.enabled === false ? "OFF" : String(tailcat.phase || "--").toUpperCase());
+    byId("remote-origin").textContent = serve.public_origin || tailscale.dns_name || "--";
+    byId("remote-local-backend").textContent = serve.local_backend || (backend.port ? `127.0.0.1:${backend.port}` : "--");
+    byId("remote-summary").textContent = remoteReady ? t("remote_ready") : t("remote_unavailable");
+    byId("remote-nav-status").textContent = remoteReady ? "ON" : "--";
+    byId("remote-start").disabled = !value.management_available;
+    byId("remote-copy-link").disabled = !value.management_available || !remoteReady;
+    byId("remote-share-link").disabled = !value.management_available || !remoteReady;
+    document.querySelector('.remote-setup-step[data-step="network"]')?.classList.toggle("ready", Boolean(tailscale.online));
+    document.querySelector('.remote-setup-step[data-step="server"]')?.classList.toggle("ready", remoteReady);
+    document.querySelector('.remote-setup-step[data-step="share"]')?.classList.toggle("ready", remoteReady);
+    renderTailcatStatus(tailcat, value.management_available);
+    if (!value.management_available) byId("remote-status").textContent = t("remote_management_local_only");
+  }
+
+  async function fetchRemoteStatus() {
+    if (!state.token || state.remoteLoading) return;
+    state.remoteLoading = true;
+    try {
+      const response = await fetchWithTimeout("/api/remote/status", {
+        headers: { Authorization: authorizationValue() },
+        cache: "no-store"
+      }, 15000);
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(localizedErrorMessage(result.error || String(response.status)));
+      state.remoteStatus = result;
+      renderRemoteStatus();
+    } catch (error) {
+      byId("remote-status").textContent = `${t("action_failed")}: ${error.message}`;
+    } finally {
+      state.remoteLoading = false;
+    }
+  }
+
+  async function startRemoteWorkspace() {
+    const button = byId("remote-start");
+    button.disabled = true;
+    byId("remote-status").textContent = "…";
+    try {
+      const port = Number(byId("remote-port").value);
+      state.remoteStatus = await postAction("/api/remote/start", { port }, { timeoutMs: 90000 });
+      byId("remote-status").textContent = t("remote_ready");
+      renderRemoteStatus();
+    } catch (error) {
+      byId("remote-status").textContent = `${t("action_failed")}: ${error.message}`;
+    } finally {
+      if (state.remoteStatus) renderRemoteStatus();
+      else button.disabled = false;
+    }
+  }
+
+  async function setTailcatEnabled(event) {
+    const control = event.currentTarget;
+    const enabled = Boolean(control.checked);
+    control.disabled = true;
+    byId("tailcat-status-message").textContent = t("tailcat_toggling");
+    try {
+      const result = await postAction("/api/tailcat/enabled", { enabled });
+      state.remoteStatus = { ...(state.remoteStatus || {}), tailcat: result };
+      renderRemoteStatus();
+    } catch (error) {
+      control.checked = !enabled;
+      byId("tailcat-status-message").textContent = `${t("action_failed")}: ${error.message}`;
+      await fetchRemoteStatus();
+    }
+  }
+
+  async function restartTailcat() {
+    const button = byId("tailcat-restart");
+    button.disabled = true;
+    byId("tailcat-status-message").textContent = t("tailcat_toggling");
+    try {
+      const result = await postAction("/api/tailcat/restart", {});
+      state.remoteStatus = { ...(state.remoteStatus || {}), tailcat: result };
+      renderRemoteStatus();
+    } catch (error) {
+      byId("tailcat-status-message").textContent = `${t("action_failed")}: ${error.message}`;
+    } finally {
+      if (state.remoteStatus) renderRemoteStatus();
+      else button.disabled = false;
+    }
+  }
+
+  async function copyTailcatAddress() {
+    const button = byId("tailcat-copy-address");
+    button.disabled = true;
+    try {
+      const result = await postAction("/api/tailcat/access", {});
+      await navigator.clipboard.writeText(String(result.connection_address || ""));
+      toast(t("tailcat_address_copied"));
+    } catch (error) {
+      toast(`${t("action_failed")}: ${error.message}`);
+    } finally {
+      if (state.remoteStatus) renderRemoteStatus();
+      else button.disabled = false;
+    }
+  }
+
+  async function openTailcatPairingFolder() {
+    const button = byId("tailcat-open-pairing");
+    button.disabled = true;
+    try {
+      await postAction("/api/tailcat/open-pairing-folder", {});
+      toast(t("tailcat_pairing_opened"));
+    } catch (error) {
+      toast(`${t("action_failed")}: ${error.message}`);
+    } finally {
+      if (state.remoteStatus) renderRemoteStatus();
+      else button.disabled = false;
+    }
+  }
+
+  async function copyRemoteAccessLink() {
+    const button = byId("remote-copy-link");
+    button.disabled = true;
+    try {
+      const result = await postAction("/api/remote/access", {});
+      await navigator.clipboard.writeText(String(result.access_url || ""));
+      byId("remote-status").textContent = t("private_link_copied");
+    } catch (error) {
+      byId("remote-status").textContent = `${t("action_failed")}: ${error.message}`;
+    } finally {
+      renderRemoteStatus();
+    }
+  }
+
+  async function shareRemoteAccessLink() {
+    const button = byId("remote-share-link");
+    button.disabled = true;
+    try {
+      const result = await postAction("/api/remote/access", {});
+      const accessUrl = String(result.access_url || "");
+      if (navigator.share) {
+        await navigator.share({ title: "PeerBridge", url: accessUrl });
+        byId("remote-status").textContent = t("private_link_shared");
+      } else {
+        await navigator.clipboard.writeText(accessUrl);
+        byId("remote-status").textContent = t("private_link_copied");
+      }
+    } catch (error) {
+      if (error?.name !== "AbortError") byId("remote-status").textContent = `${t("action_failed")}: ${error.message}`;
+    } finally {
+      renderRemoteStatus();
+    }
   }
 
   async function fetchState(force = false) {
@@ -2739,13 +3361,11 @@
   }
 
   function openReviewWorkflow() {
-    state.view = "work";
-    render();
+    navigateView("work");
     byId("workflow-template").value = "implement-review";
     renderWorkflowControls();
     byId("workflow-task").focus();
     byId("work-view").scrollTo({ top: 0, left: 0, behavior: "auto" });
-    closeMobilePanels();
   }
 
   function prepareManagedTaskFromComposer(body, approvalMode) {
@@ -2759,7 +3379,7 @@
       toast(t("managed_permission_unavailable"));
       return false;
     }
-    state.view = "cockpit";
+    navigateView("cockpit");
     state.preparedApprovalMode = approvalMode;
     render();
     byId("managed-agent").value = managed.agent_id;
@@ -2801,7 +3421,7 @@
       };
       const response = await fetch("/api/message", { method: "POST", headers: { Authorization: authorizationValue(), "Content-Type": "application/json" }, body: JSON.stringify(payload) });
       const result = await response.json(); if (!response.ok) throw new Error(result.error || String(response.status));
-      byId("message-body").value = ""; byId("message-subject").value = ""; state.attachments = []; renderAttachments(); byId("send-status").textContent = t("sent"); state.etag = ""; await fetchState(true);
+      byId("message-body").value = ""; resizeComposerInput(); byId("message-subject").value = ""; state.attachments = []; renderAttachments(); byId("send-status").textContent = t("sent"); state.etag = ""; await fetchState(true);
     } catch (error) { byId("send-status").textContent = t("send_failed"); toast(`${t("send_failed")}: ${error.message}`); }
     finally { button.disabled = !state.data?.operator_active; window.setTimeout(() => { byId("send-status").textContent = ""; }, 2500); }
   }
@@ -2816,15 +3436,25 @@
   }
 
   function restorePanelSizes() {
-    [["--sidebar", 190, 320], ["--inspector", 260, 420]].forEach(([property, minimum, maximum]) => {
+    const layoutVersionKey = "peerbridge.workbenchPanelLayoutVersion";
+    if (localStorage.getItem(layoutVersionKey) !== "2") {
+      localStorage.setItem("peerbridge.workbench--sidebar", "248");
+      localStorage.setItem("peerbridge.workbench--inspector", "304");
+      localStorage.setItem(layoutVersionKey, "2");
+    }
+    [["--sidebar", 200, 380], ["--inspector", 260, 480]].forEach(([property, minimum, maximum]) => {
       const stored = Number(localStorage.getItem(`peerbridge.workbench${property}`));
       if (Number.isFinite(stored) && stored > 0) setPanelSize(property, stored, minimum, maximum);
     });
   }
 
-  function bindPanelResize(handleId, panelId, property, minimum, maximum, direction) {
+  function bindPanelResize(handleId, panelId, property, minimum, maximum, direction, defaultSize) {
     const handle = byId(handleId); const panel = byId(panelId);
-    const updateAria = () => handle.setAttribute("aria-valuenow", String(Math.round(panel.getBoundingClientRect().width)));
+    const updateAria = () => {
+      const width = Math.round(panel.getBoundingClientRect().width);
+      handle.setAttribute("aria-valuenow", String(width));
+      handle.setAttribute("aria-valuetext", `${width}px`);
+    };
     handle.addEventListener("pointerdown", (event) => {
       if (window.matchMedia("(max-width: 1120px)").matches) return;
       event.preventDefault(); handle.setPointerCapture(event.pointerId); handle.classList.add("dragging"); document.body.classList.add("panel-dragging");
@@ -2839,10 +3469,50 @@
       const next = event.key === "Home" ? minimum : event.key === "End" ? maximum : current + ((event.key === "ArrowRight" ? 12 : -12) * direction);
       setPanelSize(property, next, minimum, maximum); updateAria();
     });
+    handle.addEventListener("dblclick", () => { setPanelSize(property, defaultSize, minimum, maximum); updateAria(); });
     updateAria();
   }
 
-  function closeMobilePanels() { byId("sidebar").classList.remove("open"); byId("inspector").classList.remove("open"); }
+  function setMobileSidebar(open) {
+    const sidebar = byId("sidebar");
+    const backdrop = byId("mobile-sidebar-backdrop");
+    const expanded = Boolean(open && window.matchMedia("(max-width: 760px)").matches);
+    sidebar.classList.toggle("open", expanded);
+    backdrop.hidden = !expanded;
+    byId("mobile-more").setAttribute("aria-expanded", String(expanded));
+    byId("sidebar-toggle").setAttribute("aria-expanded", String(expanded));
+  }
+
+  function closeMobilePanels() { setMobileSidebar(false); byId("inspector").classList.remove("open"); }
+
+  function setOverviewExpanded(expanded) {
+    const overview = byId("collaboration-overview");
+    const button = byId("overview-toggle");
+    overview.classList.toggle("expanded", Boolean(expanded));
+    button.setAttribute("aria-expanded", String(Boolean(expanded)));
+    button.title = t(expanded ? "hide_details" : "show_details");
+    button.setAttribute("aria-label", button.title);
+  }
+
+  function setComposerOptionsOpen(open) {
+    const composer = byId("composer");
+    const button = byId("composer-options-toggle");
+    composer.classList.toggle("options-open", Boolean(open));
+    button.setAttribute("aria-expanded", String(Boolean(open)));
+    if (!open) byId("automation-menu").removeAttribute("open");
+    resizeComposerInput();
+  }
+
+  function resizeComposerInput() {
+    const input = byId("message-body");
+    if (!input || !window.matchMedia("(max-width: 760px)").matches) {
+      if (input) input.style.height = "";
+      return;
+    }
+    input.style.height = "40px";
+    if (!input.value) return;
+    input.style.height = `${Math.min(112, Math.max(40, input.scrollHeight))}px`;
+  }
 
   function startHistoryContinuation() {
     if (!state.data?.history_import?.selected) return;
@@ -2936,7 +3606,7 @@
       }
       state.roomId = result.room_id; state.older = []; state.signature = ""; state.firstRender = true; state.etag = "";
       byId("history-dialog").close(); byId("history-form").reset(); status.textContent = "";
-      await fetchState(true); state.view = "chat"; render(); toast(t("history_imported"));
+      await fetchState(true); navigateView("chat", { roomId: result.room_id, replace: true }); toast(t("history_imported"));
     } catch (error) {
       status.textContent = `${t("action_failed")}: ${error.message}`; toast(status.textContent);
     } finally { updateHistorySubmitState(); }
@@ -3326,14 +3996,33 @@
 
   function bind() {
     document.querySelectorAll(".nav-item").forEach((button) => button.addEventListener("click", () => {
-      state.view = button.dataset.view;
-      render();
-      if (state.view === "change") fetchWorktreeDiff(false);
+      navigateView(button.dataset.view);
       document.querySelector(".content-view.active-view")?.scrollTo({ top: 0, left: 0, behavior: "auto" });
-      closeMobilePanels();
     }));
-    byId("chat-home").addEventListener("click", () => { state.view = "chat"; render(); });
-    byId("announcement-button").addEventListener("click", () => { state.view = "announcement"; render(); });
+    byId("chat-home").addEventListener("click", () => {
+      if (history.state?.view) history.back(); else navigateView("chat");
+    });
+    byId("announcement-button").addEventListener("click", () => navigateView("announcement"));
+    document.querySelectorAll("[data-mobile-view]").forEach((button) => button.addEventListener("click", () => navigateView(button.dataset.mobileView)));
+    byId("mobile-more").addEventListener("click", () => setMobileSidebar(!byId("sidebar").classList.contains("open")));
+    byId("sidebar-toggle").addEventListener("click", () => setMobileSidebar(!byId("sidebar").classList.contains("open")));
+    byId("mobile-sidebar-close").addEventListener("click", () => setMobileSidebar(false));
+    byId("mobile-sidebar-backdrop").addEventListener("click", () => setMobileSidebar(false));
+    byId("overview-toggle").addEventListener("click", () => setOverviewExpanded(!byId("collaboration-overview").classList.contains("expanded")));
+    byId("composer-options-toggle").addEventListener("click", () => setComposerOptionsOpen(!byId("composer").classList.contains("options-open")));
+    byId("remote-refresh").addEventListener("click", fetchRemoteStatus);
+    byId("remote-start").addEventListener("click", startRemoteWorkspace);
+    byId("remote-copy-link").addEventListener("click", copyRemoteAccessLink);
+    byId("remote-share-link").addEventListener("click", shareRemoteAccessLink);
+    byId("tailcat-enabled").addEventListener("change", setTailcatEnabled);
+    byId("tailcat-restart").addEventListener("click", restartTailcat);
+    byId("tailcat-copy-address").addEventListener("click", copyTailcatAddress);
+    byId("tailcat-open-pairing").addEventListener("click", openTailcatPairingFolder);
+    document.querySelectorAll("[data-remote-device]").forEach((button) => button.addEventListener("click", () => {
+      state.remoteDevice = button.dataset.remoteDevice;
+      localStorage.setItem("peerbridge.remoteDevice", state.remoteDevice);
+      renderRemoteDevice();
+    }));
     byId("room-search-button").addEventListener("click", () => { const popover = byId("room-search-popover"); popover.hidden = !popover.hidden; byId("room-search-button").setAttribute("aria-expanded", String(!popover.hidden)); if (!popover.hidden) byId("room-search-input").focus(); });
     byId("room-search-input").addEventListener("input", (event) => { state.roomSearch = event.target.value; renderRooms(); });
     byId("room-search-clear").addEventListener("click", () => { state.roomSearch = ""; byId("room-search-input").value = ""; renderRooms(); byId("room-search-input").focus(); });
@@ -3346,7 +4035,7 @@
       state.sessionDetailTab = button.dataset.sessionTab;
       renderCockpit();
     }));
-    byId("composer").addEventListener("submit", sendMessage); byId("message-body").addEventListener("input", renderSlashPalette); byId("message-body").addEventListener("keydown", (event) => { if (event.key === "Escape") { closeSlashPalette(); return; } if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); byId("composer").requestSubmit(); } });
+    byId("composer").addEventListener("submit", sendMessage); byId("message-body").addEventListener("input", () => { renderSlashPalette(); resizeComposerInput(); }); byId("message-body").addEventListener("keydown", (event) => { if (event.key === "Escape") { closeSlashPalette(); return; } if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); byId("composer").requestSubmit(); } });
     document.addEventListener("pointerdown", (event) => {
       const palette = byId("slash-palette");
       if (!palette.hidden && !palette.contains(event.target) && event.target !== byId("message-body")) closeSlashPalette();
@@ -3445,13 +4134,13 @@
         button.disabled = false;
       }
     });
-    byId("refresh-button").addEventListener("click", () => fetchState(true)); byId("chat-focus-button").addEventListener("click", () => setChatFocus(!state.chatFocus)); byId("sidebar-toggle").addEventListener("click", () => byId("sidebar").classList.toggle("open")); byId("inspector-toggle").addEventListener("click", () => byId("inspector").classList.toggle("open")); byId("inspector-close").addEventListener("click", () => byId("inspector").classList.remove("open"));
+    byId("refresh-button").addEventListener("click", () => fetchState(true)); byId("chat-focus-button").addEventListener("click", () => setChatFocus(!state.chatFocus)); byId("inspector-toggle").addEventListener("click", () => byId("inspector").classList.toggle("open")); byId("inspector-close").addEventListener("click", () => byId("inspector").classList.remove("open"));
     byId("refresh-announcements").addEventListener("click", refreshAnnouncements);
     byId("mark-announcements-read").addEventListener("click", markAnnouncementsRead);
     byId("audit-verify").addEventListener("click", verifyAuditChain);
     byId("worktree-diff-refresh").addEventListener("click", () => fetchWorktreeDiff(true));
     byId("start-review-workflow").addEventListener("click", openReviewWorkflow);
-    bindPanelResize("sidebar-resizer", "sidebar", "--sidebar", 190, 320, 1); bindPanelResize("inspector-resizer", "inspector", "--inspector", 260, 420, -1);
+    bindPanelResize("sidebar-resizer", "sidebar", "--sidebar", 200, 380, 1, 248); bindPanelResize("inspector-resizer", "inspector", "--inspector", 260, 480, -1, 304);
     byId("locale-select").addEventListener("change", async (event) => {
       state.locale = event.target.value;
       localStorage.setItem("peerbridge.locale", state.locale);
@@ -3466,19 +4155,63 @@
       }
     });
     byId("load-older").addEventListener("click", async () => { const before = state.data?.page?.oldest_sequence; if (!before) return; try { const response = await fetch(`/api/bootstrap?room_id=${encodeURIComponent(state.roomId)}&before_sequence=${before}`, { headers: { Authorization: authorizationValue() }, cache: "no-store" }); if (!response.ok) throw new Error(String(response.status)); const payload = await response.json(); state.older = [...payload.messages, ...state.older]; state.data.page.has_older = payload.page.has_older; renderMessages(); } catch (error) { toast(error.message); } });
-    document.addEventListener("keydown", (event) => { if (event.key !== "Escape") return; if (state.chatFocus) setChatFocus(false); const search = byId("room-search-popover"); if (!search.hidden) { search.hidden = true; byId("room-search-button").setAttribute("aria-expanded", "false"); } });
+    document.addEventListener("keydown", (event) => { if (event.key !== "Escape") return; if (byId("sidebar").classList.contains("open")) setMobileSidebar(false); if (byId("composer").classList.contains("options-open")) setComposerOptionsOpen(false); if (state.chatFocus) setChatFocus(false); const search = byId("room-search-popover"); if (!search.hidden) { search.hidden = true; byId("room-search-button").setAttribute("aria-expanded", "false"); } });
+    window.addEventListener("resize", () => { if (!window.matchMedia("(max-width: 760px)").matches) closeMobilePanels(); resizeComposerInput(); });
+    window.addEventListener("popstate", () => {
+      const query = new URLSearchParams(location.search);
+      const nextView = validViews.has(query.get("view")) ? query.get("view") : "chat";
+      const nextRoom = query.get("room_id") || "lobby";
+      const roomChanged = nextRoom !== state.roomId;
+      state.view = nextView;
+      state.roomId = nextRoom;
+      if (roomChanged) {
+        state.older = [];
+        state.signature = "";
+        state.firstRender = true;
+        void fetchState(true);
+      } else {
+        render();
+      }
+      if (state.view === "remote") void fetchRemoteStatus();
+      if (state.view === "change") void fetchWorktreeDiff(false);
+      closeMobilePanels();
+    });
   }
 
-  function start() {
+  async function exchangeRemotePairCode(pairCode) {
+    const response = await fetchWithTimeout("/api/remote/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pair_code: pairCode }),
+      cache: "no-store"
+    }, 15000);
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.access_token) throw new Error(result.error || String(response.status));
+    return String(result.access_token);
+  }
+
+  async function start() {
     const params = new URLSearchParams(location.hash.slice(1));
     const fragmentToken = params.get("access_token") || "";
     if (fragmentToken) sessionStorage.setItem(workbenchSessionStorageKey, fragmentToken);
     state.token = fragmentToken || sessionStorage.getItem(workbenchSessionStorageKey) || "";
-    const query = new URLSearchParams(location.search); state.roomId = query.get("room_id") || "lobby";
-    history.replaceState(null, "", `${location.pathname}${location.search}`); restorePanelSizes(); bind(); applyLocale();
-    if (!state.token) { byId("access-gate").hidden = false; return; }
-    byId("app").hidden = false; fetchState(true); state.timer = window.setInterval(() => fetchState(false), 2500);
+    const query = new URLSearchParams(location.search); const pairCode = query.get("pair_code") || ""; state.roomId = query.get("room_id") || "lobby"; state.view = validViews.has(query.get("view")) ? query.get("view") : "chat";
+    if (!state.token && pairCode) {
+      try {
+        state.token = await exchangeRemotePairCode(pairCode);
+        sessionStorage.setItem(workbenchSessionStorageKey, state.token);
+      } catch (_error) {
+        history.replaceState({ view: state.view, room_id: state.roomId }, "", routeUrl());
+        restorePanelSizes(); bind(); applyLocale();
+        byId("access-body").textContent = t("remote_pair_failed");
+        byId("access-gate").hidden = false;
+        return;
+      }
+    }
+    history.replaceState({ view: state.view, room_id: state.roomId }, "", routeUrl()); restorePanelSizes(); bind(); applyLocale(); setOverviewExpanded(false); setComposerOptionsOpen(false);
+    if (!state.token) { if (location.hostname.endsWith(".ts.net")) byId("access-body").textContent = t("remote_pair_required"); byId("access-gate").hidden = false; return; }
+    byId("app").hidden = false; fetchState(true); if (state.view === "remote") void fetchRemoteStatus(); if (state.view === "change") void fetchWorktreeDiff(false); state.timer = window.setInterval(() => { fetchState(false); if (state.view === "remote") void fetchRemoteStatus(); }, 2500);
   }
 
-  start();
+  void start();
 })();

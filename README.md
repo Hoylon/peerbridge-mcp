@@ -4,11 +4,12 @@
 
 <h1 align="center">PeerBridge MCP</h1>
 
-<p align="center"><strong>A provider-native adapter, collaboration, and governance layer for multi-Agent engineering.</strong></p>
+<p align="center"><strong>A local-first, auditable multi-Agent control room for coding, review, evidence, and private remote work.</strong></p>
 
 <p align="center">
   Run Codex, Claude Code, Grok, Kimi, provider APIs, OpenAI-compatible endpoints, and local
-  models as one auditable engineering team without flattening their native capabilities.
+  models as one governed engineering team across desktop and phone without flattening their
+  native capabilities.
 </p>
 
 <p align="center">
@@ -18,13 +19,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.6"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.5.6-2563eb" alt="PeerBridge Alpha 5.6 release"></a>
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.6"><img src="https://img.shields.io/badge/release-v0.1.0--alpha.6-2563eb" alt="PeerBridge Alpha 6 release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/source-Apache--2.0-475569" alt="Apache 2.0 source license"></a>
   <a href="SECURITY.md"><img src="https://img.shields.io/badge/security-policy-0f766e" alt="Security policy"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.6"><strong>Download Windows Alpha</strong></a>
+  <a href="https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.6"><strong>Download Windows Alpha</strong></a>
   · <a href="#quickstart">Quickstart</a>
   · <a href="#features">Features</a>
   · <a href="docs/technical-showcase.md">Technical showcase</a>
@@ -39,8 +40,8 @@
 
 ## Start in 30 seconds
 
-1. Download `PeerBridgeControlRoom-0.1.0a5.post6-windows-x64-portable.zip` from the
-   [Alpha 5.6 release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.5.6).
+1. Download `PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip` from the
+   [Alpha 6 release](https://github.com/Hoylon/peerbridge-mcp/releases/tag/v0.1.0-alpha.6).
 2. Compare the ZIP's SHA-256 with `SHA256SUMS.txt` on the release page.
 3. Extract the **complete ZIP** to a writable folder and double-click
    `Launch PeerBridge.cmd`.
@@ -80,7 +81,7 @@ stagnation, or explicit limits, and the operator can intervene at any time.
 | Governed write access | Permission cards, approved isolated Git worktrees, source-state checks, diffs, and proof records stay human-controlled. |
 | Durable project context | Selected history imports, room memory, task briefings, and handoffs are source-bound instead of silently merged. |
 | Reviewable decisions | Agent activity, answers, evidence, mutual scores, audits, token usage, and stale-proof warnings remain visible. |
-| Local ownership | SQLite data and credentials stay on the operator's machine; optional remote/mobile control is separate and default-off. |
+| Local ownership | SQLite data and credentials stay on the operator's machine; browser remote control remains private, while the allow-listed Tailcat companion is visible and enabled by default. |
 
 ## Technical differentiators
 
@@ -111,8 +112,9 @@ verified with zero writes. It contains no provider credential or lease capabilit
 
 Operational continuity and commercialization are explicit design boundaries. See
 [memory and long-running operations](docs/operations-memory.md) and the
-[open-core boundary](docs/open-core-boundary.md). The remote/mobile module is
-**Experimental and default-off**. Roadmap entries are not capability claims.
+[open-core boundary](docs/open-core-boundary.md). Tailscale Serve remains the private
+browser transport; Tailcat CLI connectivity is visible and enabled by default but remains
+independently allow-listed. Roadmap entries are not capability claims.
 
 ## Why
 
@@ -243,7 +245,7 @@ directly until the operator changes Appearance and restarts.
 
 ### Windows portable app
 
-Download `PeerBridgeControlRoom-0.1.0a5.post6-windows-x64-portable.zip` from the GitHub
+Download `PeerBridgeControlRoom-0.1.0a6-windows-x64-portable.zip` from the GitHub
 Alpha release, extract the complete ZIP to a writable folder, and double-click
 `Launch PeerBridge.cmd`. The portable app creates its local workspace under
 `%LOCALAPPDATA%\PeerBridge\workspace`; it does not include provider credentials or
@@ -443,11 +445,16 @@ active room discussion. It does not turn the browser into an arbitrary shell or 
 
 See [private remote and mobile control](docs/remote-mobile.md) for the security boundary,
 tests, phone setup, and the explicit prohibition on public Tailscale Funnel exposure.
+Desktop Copy/Share creates a short-lived one-use pairing link that survives messaging-app
+fragment stripping, exchanges only after Tailscale identity verification, and leaves the
+real session credential in browser session storage rather than the shared URL.
 
-An optional [Tailcat remote toolkit](docs/tailcat-remote.md) wraps the official Tailcat CLI
-for ephemeral port forwarding, protected SSH proxying, file transfer, SOCKS5 commands, and
-an explicitly gated exit-node experiment. Tailcat remains a separate, default-off transport
-tool; it does not replace PeerBridge room authorization or the production browser path.
+The [Tailcat remote toolkit](docs/tailcat-remote.md) is visible and enabled by default. On
+first local launch it installs a pinned, SHA-verified official build, provisions protected
+client/server identities, and auto-starts an allow-listed PeerBridge port, SSH forwarding,
+and exit node. Its small master switch stops the owned process; file transfer and SOCKS5
+remain on-demand. Tailcat does not replace PeerBridge room authorization or the production
+browser path.
 The exact mapping from the three design/remote references to implemented PeerBridge
 features is recorded in [interface and remote research sources](docs/interface-research-sources.md).
 

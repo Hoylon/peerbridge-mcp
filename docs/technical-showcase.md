@@ -93,4 +93,5 @@ their normal tools; PeerBridge governs identity, coordination, approval, and evi
 - A route label is not proof of upstream model provenance.
 - Peer review does not grant shell permission or apply a patch.
 - Proof Bundles are useful only when verified against trusted source state.
-- Remote/mobile control remains Experimental and default-off.
+- Tailscale Serve browser control remains private and explicitly configured. The separate
+  client-key-allow-listed Tailcat companion is visible and enabled by default.

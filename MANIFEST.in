@@ -2,3 +2,5 @@ include LICENSE
 include TRADEMARKS.md
 include BRAND_ASSETS.md
 include THIRD_PARTY_NOTICES.md
+recursive-include src/peerbridge_mcp *.py
+recursive-include tests *.py

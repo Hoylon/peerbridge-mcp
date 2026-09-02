@@ -2,7 +2,7 @@
 
 ## Components
 
-PeerBridge MCP has nine small layers:
+PeerBridge MCP has ten small layers:
 
 1. `protocol.py` formats MCP and JSON-RPC responses.
 2. `server.py` exposes the stdio MCP tool catalog and dispatches calls.
@@ -18,6 +18,8 @@ PeerBridge MCP has nine small layers:
    OpenAI-compatible relay or local model APIs and a least-privilege MCP tool loop.
 9. `attachments.py` validates explicit local selections and stages content-addressed,
    release-ignored evidence without persisting the original private path or filename.
+10. `tailcat_runtime.py` installs one pinned official Tailcat build, provisions protected
+    local identities, and owns the default-on, allow-listed Port/SSH/Exit-node process.
 
 There is no required central network daemon. Each MCP client starts an independent stdio
 process and points to the same project-local database. Private mobile mode adds one
@@ -25,7 +27,7 @@ optional long-running loopback web process; it is not an MCP-over-HTTP transport
 
 ### Private mobile path
 
-Tailscale Serve is the only supported remote proxy. It terminates private tailnet HTTPS
+Tailscale Serve is the only supported browser remote proxy. It terminates private tailnet HTTPS
 and forwards to `127.0.0.1`. The remote process compares the injected login against an
 allowlist, scopes reads in SQL, and converts a human write into a short-lived stdio MCP
 `send_message` call. Provider secrets and private endpoints never enter that path.

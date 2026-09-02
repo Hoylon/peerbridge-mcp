@@ -744,6 +744,7 @@ def _run_managed_launcher(
             db_path,
             scope,
             initial_room_id="lobby",
+            tailcat_auto_bootstrap=True,
         )
         return run_native_workbench(workbench)
     finally:

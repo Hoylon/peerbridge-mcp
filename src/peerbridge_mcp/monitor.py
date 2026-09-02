@@ -413,7 +413,53 @@ def configure_windows_app_identity() -> bool:
         setter = shell32.SetCurrentProcessExplicitAppUserModelID
         setter.argtypes = (ctypes.c_wchar_p,)
         setter.restype = ctypes.c_long
-        return setter(WINDOWS_APP_USER_MODEL_ID) == 0
+        configured = setter(WINDOWS_APP_USER_MODEL_ID) == 0
+        if configured:
+            try:
+                import winreg
+
+                _png_path, ico_path = packaged_icon_paths()
+                if ico_path.is_file():
+                    key_path = (
+                        "Software\\Classes\\AppUserModelId\\"
+                        + WINDOWS_APP_USER_MODEL_ID
+                    )
+                    with winreg.CreateKeyEx(
+                        winreg.HKEY_CURRENT_USER,
+                        key_path,
+                        0,
+                        winreg.KEY_SET_VALUE,
+                    ) as key:
+                        winreg.SetValueEx(
+                            key,
+                            "DisplayName",
+                            0,
+                            winreg.REG_SZ,
+                            "PeerBridge MCP Control Room",
+                        )
+                        winreg.SetValueEx(
+                            key,
+                            "IconUri",
+                            0,
+                            winreg.REG_SZ,
+                            str(ico_path.resolve()),
+                        )
+                    shell32.SHChangeNotify.argtypes = (
+                        ctypes.c_long,
+                        ctypes.c_uint,
+                        ctypes.c_void_p,
+                        ctypes.c_void_p,
+                    )
+                    shell32.SHChangeNotify.restype = None
+                    shell32.SHChangeNotify(
+                        0x08000000,  # SHCNE_ASSOCCHANGED
+                        0,
+                        None,
+                        None,
+                    )
+            except (AttributeError, OSError):
+                pass
+        return configured
     except (AttributeError, OSError):
         return False
 
